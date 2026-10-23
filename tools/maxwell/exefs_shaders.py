@@ -68,12 +68,12 @@ def find(d):
 
 
 def main():
-    if len(sys.argv) != 4 or sys.argv[2] != "--extract":
+    if len(sys.argv) not in (4, 5) or sys.argv[2] != "--extract":
         sys.exit(__doc__.strip().splitlines()[-1])
     d = open(sys.argv[1], "rb").read()
     out = os.path.normpath(sys.argv[3])
     repo_private = os.path.realpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "private"))
-    if not os.path.realpath(out).startswith(repo_private + os.sep):
+    if "--allow-external" not in sys.argv and not os.path.realpath(out).startswith(repo_private + os.sep):
         sys.exit(f"refusing to write outside private/: {out}")
     known = set()  # blocks already extracted from RomFS containers (sibling directories)
     parent = os.path.dirname(os.path.abspath(out))

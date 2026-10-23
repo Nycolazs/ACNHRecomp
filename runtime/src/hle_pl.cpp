@@ -64,6 +64,7 @@ const Font& font(uint32_t type) {
     // Liberation Sans has Arial's metrics; else the common distribution fonts.
     candidates.push_back("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf");
     candidates.push_back("/usr/share/fonts/liberation-sans/LiberationSans-Regular.ttf");
+    candidates.push_back("/usr/share/fonts/liberation/LiberationSans-Regular.ttf");
     candidates.push_back("/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf");
     candidates.push_back("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf");
 #endif
