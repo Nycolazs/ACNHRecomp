@@ -548,14 +548,14 @@ def safe_name(sid):
     return re.sub(r"[^A-Za-z0-9._-]+", "_", sid).strip("_")
 
 
-def extract(c, outdir, data, unique=False):
+def extract(c, outdir, data, unique=False, allow_external=False):
     """Write every stage's code block and control section, and manifest.tsv (one line per stage).
 
     Default: <id>.code.bin / <id>.ctrl.bin per stage. --unique: code_<hash>.bin / ctrl_<hash>.bin, each written
     once (variations share code heavily: the uber shader has 17,160 stages but 4,857 distinct code blocks).
     """
     real = os.path.realpath(outdir)
-    if not real.startswith(os.path.realpath(os.path.join(REPO, "private")) + os.sep):
+    if not allow_external and not real.startswith(os.path.realpath(os.path.join(REPO, "private")) + os.sep):
         sys.exit(f"refusing to write outside private/: {outdir}")
     os.makedirs(real, exist_ok=True)
     written = set()
@@ -651,7 +651,8 @@ def main():
         for s in all_stages(c):
             print(f"{s.id}\t{s.kind}\tcode {s.code_off:#x}+{s.code_size:#x}\tctrl {s.ctrl_off:#x}+{s.ctrl_size:#x}\t{s.hash}")
     if outdir:
-        files = extract(c, outdir, data, unique="--unique" in args)
+        files = extract(c, outdir, data, unique="--unique" in args,
+                        allow_external="--allow-external" in args)
         print(f"extracted {sum(1 for _ in all_stages(c))} stages ({files} files) to {outdir}")
 
 

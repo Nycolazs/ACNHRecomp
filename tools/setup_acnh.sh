@@ -172,11 +172,21 @@ recomp main 0x4000000000
 
 # ---- shaders --------------------------------------------------------------------------------------------------
 say "shaders (Maxwell -> SPIR-V)"
-if [ ! -f "$G/spirv/summary.txt" ] || force shaders; then
+# A partial shader pass can leave summary.txt behind. These System shaders draw the first screen and
+# the final full-screen composite; without them the game presents a solid dark frame.
+REQUIRED_SHADERS=(3e0b1b8150a18396 80943c5713feea83 b157817611dd7497)
+missing_shaders=0
+for hash in "${REQUIRED_SHADERS[@]}"; do
+  [ -f "$G/spirv/$hash.spv" ] || missing_shaders=1
+done
+if [ ! -f "$G/spirv/summary.txt" ] || [ "$missing_shaders" = 1 ] || force shaders; then
   JOBS=$NPROC tools/extract_shaders.sh "$G"
   VAL=(--no-val); command -v spirv-val >/dev/null && VAL=(--spirv-val "$(command -v spirv-val)")
   dotnet "$HARNESS" --batch "$G/shaders_extracted" --out "$G/spirv" --jobs "$NPROC" "${VAL[@]}" > "$G/logs/spirv.log" 2>&1
 fi
+for hash in "${REQUIRED_SHADERS[@]}"; do
+  [ -f "$G/spirv/$hash.spv" ] || { echo "missing required shader $hash after translation"; exit 1; }
+done
 head -1 "$G/spirv/summary.txt"
 
 # ---- fonts ----------------------------------------------------------------------------------------------------
@@ -186,7 +196,8 @@ mkdir -p "$G/fonts"
 # to host fonts (runtime/src/hle_pl.cpp); ACNH ships its own fonts in its RomFS for almost all text.
 if [ ! -f "$G/fonts/shared_5.ttf" ]; then
   for f in /System/Library/Fonts/Supplemental/Arial\ Unicode.ttf /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf \
-           /usr/share/fonts/TTF/DejaVuSans.ttf /usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf; do
+           /usr/share/fonts/TTF/DejaVuSans.ttf /usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf \
+           /usr/share/fonts/liberation/LiberationSans-Regular.ttf; do
     [ -f "$f" ] && { "$PY" tools/fonts/make_button_font.py --base "$f" --out "$G/fonts/shared_5.ttf" >/dev/null; break; }
   done
 fi

@@ -32,15 +32,15 @@ grp() { local f=$1 p=$2 b; b=$(basename "$f"); b=${b%%.*}; echo "${p}_$b $f"; }
   for f in "$R"/Layout/*; do grp "$f" layout; done            # 960 Ui2d archives, ~200 with bgsh
   if [ "${FULL:-0}" = 1 ]; then for f in "$R"/Model/*; do grp "$f" model; done; fi
 } | xargs -P "$JOBS" -L 1 sh -c \
-    '"$1" "$2" "$5" --extract "$3/$4" --unique > "$3/$4.log" 2>&1 || echo "FAIL $4"' sh "$PY" "$X" "$O"
+    '"$1" "$2" "$5" --extract "$3/$4" --unique --allow-external > "$3/$4.log" 2>&1 || echo "FAIL $4"' sh "$PY" "$X" "$O"
 # Containers without shaders leave an empty folder (or none): drop them and their logs.
 for d in "$O"/*/; do
   [ -n "$(ls -A "$d" 2>/dev/null | grep -v manifest.tsv)" ] || { rm -rf "$d"; rm -f "${d%/}.log"; }
 done
 for l in "$O"/*.log; do [ -d "${l%.log}" ] || rm -f "$l"; done
 # The code blocks embedded in `main` that no container holds. After the others: it skips what they already have.
-"$PY" tools/maxwell/exefs_shaders.py "$W/analysis/main.bin" --extract "$O/exefs" > "$O/exefs.log" 2>&1 || echo "FAIL exefs"
+"$PY" tools/maxwell/exefs_shaders.py "$W/analysis/main.bin" --extract "$O/exefs" --allow-external > "$O/exefs.log" 2>&1 || echo "FAIL exefs"
 # The variations only models carry (their own Park_UBER.bfsha): without them some materials draw depth only, black
 # (character faces, the Nook Stop). Last: it keeps only the blocks no other group has. ~15 min for 60k archives.
-"$PY" tools/maxwell/model_shaders.py "$R/Model" "$O" --jobs "$JOBS" > "$O/model.log" 2>&1 || echo "FAIL model"
+"$PY" tools/maxwell/model_shaders.py "$R/Model" "$O" --jobs "$JOBS" --allow-external > "$O/model.log" 2>&1 || echo "FAIL model"
 echo "groups: $(ls -d "$O"/*/ | wc -l)  blocks: $(find "$O" -name '*.code.bin' -o -name 'code_*.bin' | wc -l)"

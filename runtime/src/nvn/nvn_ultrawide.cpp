@@ -177,6 +177,11 @@ bool uw_widen_texture(Texture& t) {
     // Render targets (flags 8), the window textures (display, 1) and the scene colour (flags 0); not packaged assets (4).
     static const bool off = std::getenv("NX_SCREEN_SCALE") && std::getenv("NX_SCREEN_SCALE")[0] == '0';
     if (off || t.target != 1 || (t.flags & 4) || t.width < 16 || t.height < 9) return false;
+    // ACNH copies fixed-size NV12 movie planes into these textures. Widening them leaves part of each
+    // plane unwritten because the buffer-to-texture copy still covers only the original dimensions.
+    if (t.flags == 0 && ((t.format == 0x1 && t.width == 1920 && t.height == 1080) ||
+                         (t.format == 0x5 && t.width == 960 && t.height == 540)))
+        return false;
     double r = double(t.width) / double(t.height);
     if (std::fabs(r - k169) / k169 > 0.03) return false;
     // The 1920x1080 and 1280x720 chains (halved down to the bloom's 30x17, heights padded: 480x272), not a UI layer
