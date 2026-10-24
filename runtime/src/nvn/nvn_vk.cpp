@@ -54,6 +54,7 @@ VkSurfaceTransformFlagBitsKHR g_sc_transform = VK_SURFACE_TRANSFORM_IDENTITY_BIT
 VkFormat g_sc_format = VK_FORMAT_B8G8R8A8_UNORM;
 VkSemaphore g_acquired = VK_NULL_HANDLE, g_rendered = VK_NULL_HANDLE;
 VkBool32 g_depth_clip_control = VK_FALSE;
+bool g_dynamic_rendering = true;  // vkCmdBeginRendering usable (core 1.3 or VK_KHR_dynamic_rendering)
 bool g_integrated = false;
 bool g_require_sg32 = false;  // compute pipelines are made with a required subgroup size of 32 (Maxwell's warp)  // the chosen GPU is an integrated one (unified memory, the GPU is the long side)
 VkPhysicalDeviceFeatures g_features{};  // the core features enabled (vk_features())
@@ -197,10 +198,31 @@ bool init() {
     VkPhysicalDeviceVulkan12Features f12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
     VkPhysicalDeviceFragmentShaderInterlockFeaturesEXT finterlock{
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADER_INTERLOCK_FEATURES_EXT};
-    features.pNext = &f11;
-    f11.pNext = &f12;
-    f12.pNext = &f13;
-    void** tail = &f13.pNext;
+    // The core feature structs of the version the device has: Qualcomm's own driver for the Adreno 6xx is Vulkan
+    // 1.1, where a 1.2 or 1.3 struct is invalid, and draw parameters then come in their own struct.
+    VkPhysicalDeviceProperties dprops{};
+    p_vkGetPhysicalDeviceProperties(g_physical, &dprops);
+    const uint32_t api = dprops.apiVersion;
+    VkPhysicalDeviceShaderDrawParametersFeatures fdraw{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES};
+    VkPhysicalDeviceDynamicRenderingFeatures fdyn{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES};
+    void** tail;
+    if (api >= VK_API_VERSION_1_3) {
+        features.pNext = &f11;
+        f11.pNext = &f12;
+        f12.pNext = &f13;
+        tail = &f13.pNext;
+    } else if (api >= VK_API_VERSION_1_2) {
+        features.pNext = &f11;
+        f11.pNext = &f12;
+        tail = &f12.pNext;
+    } else {
+        features.pNext = &fdraw;
+        tail = &fdraw.pNext;
+    }
+    if (api < VK_API_VERSION_1_3 && has_extension(dext, "VK_KHR_dynamic_rendering")) {
+        dexts.push_back("VK_KHR_dynamic_rendering");
+        *tail = &fdyn, tail = &fdyn.pNext;
+    }
     if (has_extension(dext, "VK_EXT_fragment_shader_interlock")) {
         dexts.push_back("VK_EXT_fragment_shader_interlock");
         *tail = &finterlock, tail = &finterlock.pNext;
@@ -232,6 +254,9 @@ bool init() {
             g_require_sg32 ? "pinned to 32" : "left to the driver");
     }
     g_depth_clip_control = fclip.depthClipControl;
+    g_dynamic_rendering = api >= VK_API_VERSION_1_3 ? f13.dynamicRendering == VK_TRUE : fdyn.dynamicRendering == VK_TRUE;
+    log("nvn/vk: Vulkan %u.%u device, dynamic rendering %s", VK_API_VERSION_MAJOR(api), VK_API_VERSION_MINOR(api),
+        g_dynamic_rendering ? "yes" : "no: render pass objects");
     g_features = features.features;
     // NX_ASTC_DECODE=1|linear|srgb: the CPU decoder even where the GPU has ASTC (to compare the two on one GPU).
     set_astc_native(g_features.textureCompressionASTC_LDR);
@@ -254,9 +279,10 @@ bool init() {
     dci.pNext = &features;
     if (!check(p_create_device(g_physical, &dci, nullptr, &g_device), "vkCreateDevice")) return false;
     p_vkGetDeviceQueue(g_device, g_family, 0, &g_queue);
-    if (!plat::headless() || std::getenv("NX_UI_OPEN"))  // the settings screen (ui/ui.cpp)
+    static const bool ui_off = std::getenv("NX_UI") && std::getenv("NX_UI")[0] == '0';  // NX_UI=0: no settings screen
+    if ((!plat::headless() || std::getenv("NX_UI_OPEN")) && !ui_off)  // the settings screen (ui/ui.cpp)
         ui::ui_vulkan_ready(reinterpret_cast<PFN_vkGetInstanceProcAddr>(g_gipa), g_instance, g_physical, g_device, g_family,
-                            g_queue);
+                            g_queue, g_dynamic_rendering);
 
     VkCommandPoolCreateInfo pci{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
     pci.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
@@ -430,6 +456,7 @@ VkPhysicalDevice vk_physical() { return g_physical; }
 VkQueue vk_queue() { return g_queue; }
 uint32_t vk_queue_family() { return g_family; }
 bool vk_depth_clip_control() { return g_depth_clip_control; }
+bool vk_dynamic_rendering() { return g_dynamic_rendering; }
 const VkPhysicalDeviceFeatures& vk_features() { return g_features; }
 bool gpu_is_integrated() { return g_integrated; }
 bool gpu_require_subgroup32() { return g_require_sg32; }

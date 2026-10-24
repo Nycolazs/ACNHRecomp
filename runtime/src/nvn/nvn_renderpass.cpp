@@ -103,8 +103,8 @@ VkRenderPass pass_for(uint32_t count, const VkFormat* colors, VkFormat depth, co
 bool render_pass_objects() {
     static const bool on = [] {
         const char* e = std::getenv("NX_RENDER_PASS_OBJECTS");
-        bool v = e && e[0] == '1';
-        if (v) log("nvn/vk: render pass and framebuffer objects instead of dynamic rendering (NX_RENDER_PASS_OBJECTS)");
+        bool v = (e && e[0] == '1') || !vk_dynamic_rendering();
+        if (v) log("nvn/vk: render pass and framebuffer objects instead of dynamic rendering");
         return v;
     }();
     return on;

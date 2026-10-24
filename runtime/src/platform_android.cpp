@@ -20,7 +20,11 @@
 #include <sys/mman.h>
 #include <time.h>
 #include <malloc.h>
+#include <dirent.h>
 #include <unistd.h>
+#include <sys/stat.h>
+#include <sys/system_properties.h>
+#include <adrenotools/driver.h>
 
 #include <algorithm>
 #include <atomic>
@@ -43,6 +47,7 @@
 
 #include "kernel.h"
 #include "platform.h"
+#include "config.h"
 #include "platform_android.h"
 
 #ifndef MAP_FIXED_NOREPLACE
@@ -54,6 +59,9 @@ void boot();
 }
 
 namespace nx::plat {
+
+std::string g_native_lib_dir;  // ApplicationInfo.nativeLibraryDir: Turnip and libadrenotools' hooks
+std::string g_cache_dir;       // the app's own internal folder
 
 namespace {
 android_app* g_app = nullptr;
@@ -362,7 +370,37 @@ float default_render_scale() {
 
 // ---- Vulkan ---------------------------------------------------------------------------------------------------
 
+void* load_vulkan();
+
+// The GPU driver (video.gpu_driver, NX_GPU_DRIVER: auto, turnip or system). On a Snapdragon phone, "auto" loads
+// Turnip (Mesa's Vulkan driver for Adreno, in the APK: tools/build_turnip.sh) through libadrenotools instead of the
+// phone's own driver: the Adreno 6xx ones phones ship are Vulkan 1.1, without dynamic rendering, and drew nothing of
+// the game. "system" keeps the phone's driver.
 void* vulkan_get_instance_proc_addr() {
+    // Loaded once: a second libadrenotools load is a second copy of the driver, whose functions do not know the first
+    // one's objects (the settings screen crashed binding its font texture's memory).
+    static void* const once = [] { return load_vulkan(); }();
+    return once;
+}
+
+void* load_vulkan() {
+    std::string pick = std::getenv("NX_GPU_DRIVER") ? std::getenv("NX_GPU_DRIVER") : nx::config_get("video.gpu_driver", "auto");
+    char vk[PROP_VALUE_MAX] = {};
+    __system_property_get("ro.hardware.vulkan", vk);
+    const std::string turnip = g_native_lib_dir + "/libvulkan_freedreno.so";
+    if (pick != "system" && std::strcmp(vk, "adreno") == 0 && !g_native_lib_dir.empty() && access(turnip.c_str(), R_OK) == 0) {
+        std::string tmp = g_cache_dir + "/adrenotools/";
+        mkdir(tmp.c_str(), 0700);
+        std::string libs = g_native_lib_dir + "/";
+        if (void* h = adrenotools_open_libvulkan(RTLD_NOW, ADRENOTOOLS_DRIVER_CUSTOM, tmp.c_str(), libs.c_str(), libs.c_str(),
+                                                 "libvulkan_freedreno.so", nullptr, nullptr)) {
+            if (void* gipa = dlsym(h, "vkGetInstanceProcAddr")) {
+                nx::log("vulkan: Turnip (Mesa) through libadrenotools, instead of the phone's Adreno driver");
+                return gipa;
+            }
+        }
+        nx::log("vulkan: Turnip could not be loaded (%s): the phone's driver", dlerror());
+    }
     void* lib = dlopen("libvulkan.so", RTLD_NOW | RTLD_LOCAL);
     return lib ? dlsym(lib, "vkGetInstanceProcAddr") : nullptr;
 }
@@ -554,7 +592,46 @@ static void request_all_files_access(android_app* app) {
     if (env->ExceptionCheck()) env->ExceptionClear();
 }
 
+static std::string native_library_dir(android_app* app) {
+    JNIEnv* env = nullptr;
+    app->activity->vm->AttachCurrentThread(&env, nullptr);
+    jobject act = app->activity->clazz;
+    jobject info = env->CallObjectMethod(act, env->GetMethodID(env->GetObjectClass(act), "getApplicationInfo",
+                                                               "()Landroid/content/pm/ApplicationInfo;"));
+    if (env->ExceptionCheck() || !info) return env->ExceptionClear(), "";
+    jfieldID f = env->GetFieldID(env->GetObjectClass(info), "nativeLibraryDir", "Ljava/lang/String;");
+    auto js = static_cast<jstring>(env->GetObjectField(info, f));
+    std::string out;
+    if (const char* cs = js ? env->GetStringUTFChars(js, nullptr) : nullptr) out = cs, env->ReleaseStringUTFChars(js, cs);
+    return out;
+}
+
 static bool has_data(const std::string& root) { return access((root + "/analysis/main.bin").c_str(), R_OK) == 0; }
+
+// The app's own folders on every storage volume, the phone's first and then memory cards
+// (Context.getExternalFilesDirs(null)): the app may not list /storage, but it reads these without any permission.
+static std::vector<std::string> external_files_dirs(android_app* app) {
+    std::vector<std::string> out;
+    JNIEnv* env = nullptr;
+    app->activity->vm->AttachCurrentThread(&env, nullptr);
+    jobject act = app->activity->clazz;
+    jclass c = env->GetObjectClass(act);
+    jmethodID m = env->GetMethodID(c, "getExternalFilesDirs", "(Ljava/lang/String;)[Ljava/io/File;");
+    auto dirs = m ? static_cast<jobjectArray>(env->CallObjectMethod(act, m, nullptr)) : nullptr;
+    if (env->ExceptionCheck()) env->ExceptionClear(), dirs = nullptr;
+    for (jsize i = 0; dirs && i < env->GetArrayLength(dirs); i++) {
+        jobject f = env->GetObjectArrayElement(dirs, i);
+        if (!f) continue;  // a volume not mounted now
+        jmethodID path = env->GetMethodID(env->GetObjectClass(f), "getAbsolutePath", "()Ljava/lang/String;");
+        auto js = static_cast<jstring>(env->CallObjectMethod(f, path));
+        if (const char* cs = js ? env->GetStringUTFChars(js, nullptr) : nullptr) {
+            out.emplace_back(cs);
+            env->ReleaseStringUTFChars(js, cs);
+        }
+        env->DeleteLocalRef(f);
+    }
+    return out;  // the thread stays attached, as for the other calls here
+}
 
 extern "C" void android_main(android_app* app) {
     using namespace nx::plat;
@@ -562,6 +639,8 @@ extern "C" void android_main(android_app* app) {
     // Game data: Internal storage/<game title> (put there by the player, needs all-files access) or the app's own
     // external files folder (adb push).
     // The folder picked on the home screen (games/<game>/java Home.java writes <files>/data_root.txt) comes first.
+    g_native_lib_dir = native_library_dir(app);
+    g_cache_dir = app->activity->internalDataPath ? app->activity->internalDataPath : "";
     std::string chosen;
     if (app->activity->internalDataPath) {
         std::ifstream f(std::string(app->activity->internalDataPath) + "/data_root.txt");
@@ -569,7 +648,15 @@ extern "C" void android_main(android_app* app) {
         while (!chosen.empty() && (chosen.back() == '\r' || chosen.back() == '\n' || chosen.back() == ' ')) chosen.pop_back();
     }
     const std::string shared = !chosen.empty() ? chosen : std::string("/storage/emulated/0/") + nx::game::kInfo.title;
-    const std::string own = app->activity->externalDataPath ? app->activity->externalDataPath : shared;
+    std::string own = app->activity->externalDataPath ? app->activity->externalDataPath : shared;
+    // The app's folder on a memory card, where the data (10 GB for ACNH) usually goes: the phone's own storage is
+    // smaller. The first folder that has the data wins, the phone's own first.
+    if (!has_data(own))
+        for (const std::string& d : external_files_dirs(app))
+            if (has_data(d)) {
+                own = d;
+                break;
+            }
     if (!has_data(own) && !has_all_files_access(app)) {
         request_all_files_access(app);
         while (!has_all_files_access(app)) {  // keep the app responsive until the switch is turned on

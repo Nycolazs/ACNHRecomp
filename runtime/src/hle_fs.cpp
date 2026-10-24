@@ -9,6 +9,8 @@
 #include <cstdio>
 #include <filesystem>
 #include <map>
+#include <unordered_map>
+#include <set>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -70,10 +72,15 @@ struct File {
     FILE* f;
     std::string path;
     uint64_t written = 0;  // bytes the game wrote through this handle (logged at the close: saves)
+    int64_t base = 0, size = -1;  // a file inside the packed RomFS: its bytes in the pack (size -1: a file of its own)
+    bool owns = true;             // the packed RomFS's FILE is shared by all its files
     File(FILE* file, std::string p) : f(file), path(std::move(p)) {}
+    File(FILE* pack, std::string p, int64_t at, int64_t n) : f(pack), path(std::move(p)), base(at), size(n), owns(false) {}
     File(const File&) = delete;  // owns the FILE: one instance only
     File& operator=(const File&) = delete;
-    ~File() { std::fclose(f); }
+    ~File() {
+        if (owns) std::fclose(f);
+    }
 };
 std::map<uint64_t, std::shared_ptr<File>> g_files;
 
@@ -97,10 +104,66 @@ const std::string* find_virtual(const fs::path& resolved) {
             return &data;
     return nullptr;
 }
+struct DirEntry {
+    std::string name;
+    bool dir = false;
+    int64_t size = 0;
+};
 struct Dir {
-    std::vector<fs::directory_entry> entries;
+    std::vector<DirEntry> entries;
     size_t pos = 0;
 };
+
+// The packed RomFS (tools/pack_romfs.py): <data root>/romfs.pak, when there, serves every RomFS file from one file
+// instead of the ~100,000 under extract/romfs. On a phone's memory card (exFAT, 128 KiB clusters) the loose files
+// took twice their size and each open was a slow lookup. Format: "NXRP", u32 version 1, u32 count, then per file
+// u16 path length, the path ('/' separated, relative to the RomFS), u64 offset, u64 size; the data after.
+struct Pak {
+    FILE* f = nullptr;
+    std::unordered_map<std::string, std::pair<int64_t, int64_t>> files;  // path -> (offset, size)
+    std::unordered_map<std::string, std::vector<DirEntry>> dirs;        // directory ("" the root) -> its entries
+};
+const Pak* pak() {
+    static const Pak* p = []() -> const Pak* {
+        FILE* f = plat::fopen_utf8(plat::data_root() + "/romfs.pak", "rb");
+        if (!f) return nullptr;
+        auto* k = new Pak;
+        k->f = f;
+        char magic[4];
+        uint32_t version = 0, count = 0;
+        if (std::fread(magic, 1, 4, f) != 4 || std::memcmp(magic, "NXRP", 4) != 0 || std::fread(&version, 4, 1, f) != 1 ||
+            version != 1 || std::fread(&count, 4, 1, f) != 1) {
+            log("fs: romfs.pak: not a packed RomFS");
+            return nullptr;
+        }
+        std::set<std::string> seen_dirs;
+        for (uint32_t i = 0; i < count; i++) {
+            uint16_t len = 0;
+            int64_t off = 0, size = 0;
+            std::string path;
+            if (std::fread(&len, 2, 1, f) != 1) return nullptr;
+            path.resize(len);
+            if (std::fread(path.data(), 1, len, f) != len || std::fread(&off, 8, 1, f) != 1 || std::fread(&size, 8, 1, f) != 1)
+                return nullptr;
+            k->files[path] = {off, size};
+            // Its parent directories, each listed once in its own parent.
+            std::string child = path;
+            int64_t child_size = size;
+            bool child_dir = false;
+            for (;;) {
+                size_t slash = child.rfind('/');
+                std::string parent = slash == std::string::npos ? "" : child.substr(0, slash);
+                std::string name = slash == std::string::npos ? child : child.substr(slash + 1);
+                k->dirs[parent].push_back({name, child_dir, child_dir ? 0 : child_size});
+                if (parent.empty() || !seen_dirs.insert(parent).second) break;
+                child = parent, child_dir = true;
+            }
+        }
+        log("fs: packed RomFS: %u files from romfs.pak", count);
+        return k;
+    }();
+    return p;
+}
 std::map<uint64_t, Dir> g_dirs;
 uint64_t g_next = 1;
 
@@ -167,6 +230,19 @@ fs::path resolve(const std::string& guest) {
         }
     }
     return it->second / fs::u8path(rest);
+}
+
+// The path inside the packed RomFS of a resolved host path, when it is one of the RomFS's own (not a mod's or an
+// override's) and the pack is there; else nullptr.
+const Pak* in_pak(const fs::path& p, std::string& rel) {
+    const Pak* k = pak();
+    if (!k) return nullptr;
+    static const std::string romfs = utf8(data_root() / "extract" / "romfs");
+    std::string s = utf8(p);
+    if (s.compare(0, romfs.size(), romfs) != 0 || (s.size() > romfs.size() && s[romfs.size()] != '/')) return nullptr;
+    rel = s.size() > romfs.size() ? s.substr(romfs.size() + 1) : "";
+    while (!rel.empty() && rel.back() == '/') rel.pop_back();
+    return k;
 }
 
 void mount(const std::string& name, const fs::path& p) {
@@ -336,6 +412,13 @@ void GetEntryType(CPU& c) {  // (DirectoryEntryType* out, path)
         c.x[0] = kOk;
         return;
     }
+    std::string rel;
+    if (const Pak* k = in_pak(p, rel)) {
+        bool file = k->files.count(rel) != 0, dir = rel.empty() || k->dirs.count(rel) != 0;
+        if (file || dir) st<uint32_t>(c.x[0], dir ? 0 : 1);
+        c.x[0] = file || dir ? kOk : kPathNotFound;
+        return;
+    }
     std::error_code ec;
     if (p.empty() || !fs::exists(p, ec)) {
         c.x[0] = kPathNotFound;
@@ -363,6 +446,23 @@ void OpenFile(CPU& c) {  // (FileHandle* out, path, int mode: 1 read, 2 write, 4
         st<uint64_t>(c.x[0], h);
         note_open("OpenFile", guest, "virtual");
         if (trace_fs()) log("fs: OpenFile(%s) -> virtual, %zu bytes", guest.c_str(), v->size());
+        c.x[0] = kOk;
+        return;
+    }
+    std::string rel;
+    if (const Pak* k = in_pak(p, rel)) {
+        auto it = k->files.find(rel);
+        if (it == k->files.end() || (mode & 2)) {
+            note_open("OpenFile", guest, "not found");
+            if (trace_fs()) log("fs: OpenFile(%s) not in romfs.pak", guest.c_str());
+            c.x[0] = kPathNotFound;
+            return;
+        }
+        uint64_t h = g_next++;
+        g_files[h] = std::make_shared<File>(k->f, guest, it->second.first, it->second.second);
+        st<uint64_t>(c.x[0], h);
+        note_open("OpenFile", guest, "ok");
+        if (trace_fs()) log("fs: OpenFile(%s, %d) -> %llu (packed)", guest.c_str(), mode, (unsigned long long)h);
         c.x[0] = kOk;
         return;
     }
@@ -409,6 +509,11 @@ void GetFileSize(CPU& c) {  // (s64* out, FileHandle)
         c.x[0] = kTargetNotFound;
         return;
     }
+    if (file->size >= 0) {  // packed
+        st<int64_t>(c.x[0], file->size);
+        c.x[0] = kOk;
+        return;
+    }
     std::lock_guard lk(g_fs);  // the FILE position is shared with writers
     FILE* f = file->f;
     int64_t cur = plat::ftell64(f);
@@ -421,6 +526,11 @@ void GetFileSize(CPU& c) {  // (s64* out, FileHandle)
 
 uint64_t read_at(const File& file, int64_t off, uint64_t buf, uint64_t size) {
     uint64_t t0 = plat::monotonic_ns();
+    if (file.size >= 0) {  // packed: within the file's bytes of the pack
+        if (off < 0 || off >= file.size) return 0;
+        size = std::min<uint64_t>(size, uint64_t(file.size - off));
+        off += file.base;
+    }
     uint64_t n = plat::read_at(file.f, off, reinterpret_cast<void*>(buf), size);
     uint64_t ms = (plat::monotonic_ns() - t0) / 1'000'000;
     if (g_trace) log("fs: read %s at %lld size %llu -> %llu", file.path.c_str(), (long long)off, (unsigned long long)size,
@@ -489,6 +599,23 @@ void OpenDirectory(CPU& c) {  // (DirectoryHandle* out, path, int mode: 1 dirs, 
     std::lock_guard lk(g_fs);
     fs::path p = resolve(cstr(c.x[1]));
     int mode = int(c.x[2]);
+    std::string rel;
+    if (const Pak* k = in_pak(p, rel)) {
+        auto it = k->dirs.find(rel);
+        note_open("OpenDirectory", cstr(c.x[1]), it != k->dirs.end() ? "ok" : "not found");
+        if (it == k->dirs.end()) {
+            c.x[0] = kPathNotFound;
+            return;
+        }
+        Dir d;
+        for (const DirEntry& e : it->second)
+            if ((e.dir && (mode & 1)) || (!e.dir && (mode & 2))) d.entries.push_back(e);
+        uint64_t h = g_next++;
+        g_dirs[h] = std::move(d);
+        st<uint64_t>(c.x[0], h);
+        c.x[0] = kOk;
+        return;
+    }
     std::error_code ec;
     bool found = !p.empty() && fs::is_directory(p, ec);
     note_open("OpenDirectory", cstr(c.x[1]), found ? "ok" : "not found");
@@ -500,7 +627,9 @@ void OpenDirectory(CPU& c) {  // (DirectoryHandle* out, path, int mode: 1 dirs, 
     Dir d;
     for (auto& e : fs::directory_iterator(p, ec)) {
         bool dir = e.is_directory();
-        if ((dir && (mode & 1)) || (!dir && (mode & 2))) d.entries.push_back(e);
+        auto u8 = e.path().filename().u8string();
+        if ((dir && (mode & 1)) || (!dir && (mode & 2)))
+            d.entries.push_back({std::string(u8.begin(), u8.end()), dir, dir ? 0 : int64_t(e.file_size(ec))});
     }
     uint64_t h = g_next++;
     g_dirs[h] = std::move(d);
@@ -521,12 +650,9 @@ void ReadDirectory(CPU& c) {  // (s64* out_count, DirectoryEntry* entries, Direc
         const auto& e = d.entries[d.pos];
         uint64_t out = c.x[1] + uint64_t(n) * 0x310;
         std::memset(reinterpret_cast<void*>(out), 0, 0x310);
-        auto u8 = e.path().filename().u8string();
-        std::string name(u8.begin(), u8.end());
-        std::memcpy(reinterpret_cast<void*>(out), name.c_str(), std::min<size_t>(name.size(), 0x300));
-        bool dir = e.is_directory();
-        st<int8_t>(out + 0x304, dir ? 0 : 1);
-        st<int64_t>(out + 0x308, dir ? 0 : int64_t(e.file_size()));
+        std::memcpy(reinterpret_cast<void*>(out), e.name.c_str(), std::min<size_t>(e.name.size(), 0x300));
+        st<int8_t>(out + 0x304, e.dir ? 0 : 1);
+        st<int64_t>(out + 0x308, e.size);
     }
     st<int64_t>(c.x[0], n);
     c.x[0] = kOk;

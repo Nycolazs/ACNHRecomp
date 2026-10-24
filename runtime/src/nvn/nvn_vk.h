@@ -219,8 +219,10 @@ void clears_flush(VkCommandBuffer cb);  // outside a pass: the pending clears in
 void clears_begin_submit();
 void clears_log();
 bool pass_open();  // a render pass is being recorded
-// Render pass and framebuffer objects instead of dynamic rendering (nvn_renderpass.cpp, NX_RENDER_PASS_OBJECTS).
+// Render pass and framebuffer objects instead of dynamic rendering (nvn_renderpass.cpp, NX_RENDER_PASS_OBJECTS; always
+// on a device without dynamic rendering, such as the Adreno 6xx's own Vulkan 1.1 driver).
 bool render_pass_objects();
+bool vk_dynamic_rendering();
 VkFormat unused_slot_format();  // a pipeline's format for a colour slot with no image
 VkRenderPass compatible_render_pass(uint32_t count, const VkFormat* colors, VkFormat depth);
 void begin_render_pass(VkCommandBuffer cb, uint32_t count, const VkFormat* formats,

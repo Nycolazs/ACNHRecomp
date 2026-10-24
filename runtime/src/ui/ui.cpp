@@ -10,7 +10,9 @@
 // stack vertically (settings.cpp).
 #include "ui/ui.h"
 
+#if !defined(__ANDROID__)
 #include <SDL3/SDL.h>
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -60,6 +62,7 @@ void push(const Input& in) {
     if (g_in.size() < 512) g_in.push_back(in);
 }
 
+#if !defined(__ANDROID__)
 ImGuiKey imgui_key(SDL_Scancode sc) {
     switch (sc) {
         case SDL_SCANCODE_TAB: return ImGuiKey_Tab;
@@ -88,6 +91,7 @@ ImGuiKey imgui_key(SDL_Scancode sc) {
         default: return ImGuiKey_None;
     }
 }
+#endif
 
 // ---- Vulkan ---------------------------------------------------------------------------------------------------
 
@@ -103,6 +107,14 @@ struct Vk {
     PFN_vkCmdPipelineBarrier CmdPipelineBarrier = nullptr;
     PFN_vkCmdBeginRendering CmdBeginRendering = nullptr;
     PFN_vkCmdEndRendering CmdEndRendering = nullptr;
+    // Without dynamic rendering (the Adreno 6xx's own Vulkan 1.1 driver): a render pass and a framebuffer per image.
+    PFN_vkCreateRenderPass CreateRenderPass = nullptr;
+    PFN_vkDestroyRenderPass DestroyRenderPass = nullptr;
+    PFN_vkCreateFramebuffer CreateFramebuffer = nullptr;
+    PFN_vkDestroyFramebuffer DestroyFramebuffer = nullptr;
+    PFN_vkCmdBeginRenderPass CmdBeginRenderPass = nullptr;
+    PFN_vkCmdEndRenderPass CmdEndRenderPass = nullptr;
+    bool dynamic = true;
     PFN_vkDeviceWaitIdle DeviceWaitIdle = nullptr;
 } g_vk;
 
@@ -110,6 +122,33 @@ bool g_vk_ok = false;           // functions loaded
 bool g_imgui_ok = false;        // ImGui's Vulkan backend initialized
 VkFormat g_format = VK_FORMAT_UNDEFINED;
 std::map<VkImage, VkImageView> g_views;
+VkRenderPass g_pass = VK_NULL_HANDLE;                   // render pass mode: loads and stores the swapchain image
+std::map<VkImage, std::pair<VkFramebuffer, VkExtent2D>> g_framebuffers;
+
+VkRenderPass make_pass(VkFormat format) {
+    VkAttachmentDescription a{};
+    a.format = format;
+    a.samples = VK_SAMPLE_COUNT_1_BIT;
+    a.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+    a.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    a.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    a.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    a.initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    a.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    VkAttachmentReference ref{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+    VkSubpassDescription sub{};
+    sub.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    sub.colorAttachmentCount = 1;
+    sub.pColorAttachments = &ref;
+    VkRenderPassCreateInfo ci{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
+    ci.attachmentCount = 1;
+    ci.pAttachments = &a;
+    ci.subpassCount = 1;
+    ci.pSubpasses = &sub;
+    VkRenderPass rp = VK_NULL_HANDLE;
+    g_vk.CreateRenderPass(g_vk.device, &ci, nullptr, &rp);
+    return rp;
+}
 
 PFN_vkVoidFunction load(const char* name, void* user) {
     (void)user;
@@ -179,12 +218,17 @@ bool init_imgui(VkFormat format) {
         io.ConfigNavMoveSetMousePos = false;
         ui_set_language(config_get("ui.language", "auto"));
     }
-    if (!ImGui_ImplVulkan_LoadFunctions(VK_API_VERSION_1_3, load, nullptr)) {
+    // The device's own version: on a Vulkan 1.1 device (the Adreno 6xx's driver) ImGui must not take 1.3 paths.
+    const uint32_t api = g_vk.dynamic ? VK_API_VERSION_1_3 : VK_API_VERSION_1_1;
+    if (!ImGui_ImplVulkan_LoadFunctions(api, load, nullptr)) {
         log("ui: Vulkan functions for ImGui missing: no settings screen");
         return false;
     }
     ImGui_ImplVulkan_InitInfo ii{};
-    ii.ApiVersion = VK_API_VERSION_1_3;
+    ii.ApiVersion = api;
+    ii.CheckVkResultFn = [](VkResult r) {
+        if (r != VK_SUCCESS) log("ui: Vulkan call in ImGui's backend failed: %d", int(r));
+    };
     ii.Instance = g_vk.instance;
     ii.PhysicalDevice = g_vk.physical;
     ii.Device = g_vk.device;
@@ -194,12 +238,19 @@ bool init_imgui(VkFormat format) {
     ii.MinImageCount = 2;
     ii.ImageCount = 3;
     ii.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
-    ii.UseDynamicRendering = true;
-    ii.PipelineRenderingCreateInfo = {VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
-    ii.PipelineRenderingCreateInfo.colorAttachmentCount = 1;
     static VkFormat fmt;
     fmt = format;
-    ii.PipelineRenderingCreateInfo.pColorAttachmentFormats = &fmt;
+    if (g_vk.dynamic) {
+        ii.UseDynamicRendering = true;
+        ii.PipelineRenderingCreateInfo = {VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
+        ii.PipelineRenderingCreateInfo.colorAttachmentCount = 1;
+        ii.PipelineRenderingCreateInfo.pColorAttachmentFormats = &fmt;
+    } else {
+        if (g_pass) g_vk.DestroyRenderPass(g_vk.device, g_pass, nullptr);
+        g_pass = make_pass(format);
+        ii.UseDynamicRendering = false;
+        ii.RenderPass = g_pass;
+    }
     if (!ImGui_ImplVulkan_Init(&ii)) {
         log("ui: ImGui Vulkan backend failed: no settings screen");
         return false;
@@ -272,8 +323,9 @@ void draw_fps_overlay(float scale) {
 }  // namespace
 
 void ui_vulkan_ready(PFN_vkGetInstanceProcAddr gipa, VkInstance instance, VkPhysicalDevice physical, VkDevice device,
-                     uint32_t family, VkQueue queue) {
+                     uint32_t family, VkQueue queue, bool dynamic_rendering) {
     g_vk.gipa = gipa, g_vk.instance = instance, g_vk.physical = physical, g_vk.device = device;
+    g_vk.dynamic = dynamic_rendering;
     g_vk.family = family, g_vk.queue = queue;
     g_vk.CreateImageView = dev_fn<PFN_vkCreateImageView>("vkCreateImageView");
     g_vk.DestroyImageView = dev_fn<PFN_vkDestroyImageView>("vkDestroyImageView");
@@ -283,8 +335,16 @@ void ui_vulkan_ready(PFN_vkGetInstanceProcAddr gipa, VkInstance instance, VkPhys
     g_vk.CmdEndRendering = dev_fn<PFN_vkCmdEndRendering>("vkCmdEndRendering");
     if (!g_vk.CmdEndRendering) g_vk.CmdEndRendering = dev_fn<PFN_vkCmdEndRendering>("vkCmdEndRenderingKHR");
     g_vk.DeviceWaitIdle = dev_fn<PFN_vkDeviceWaitIdle>("vkDeviceWaitIdle");
-    g_vk_ok = g_vk.CreateImageView && g_vk.CmdPipelineBarrier && g_vk.CmdBeginRendering && g_vk.CmdEndRendering;
-    if (!g_vk_ok) log("ui: no dynamic rendering on this device: no settings screen");
+    g_vk.CreateRenderPass = dev_fn<PFN_vkCreateRenderPass>("vkCreateRenderPass");
+    g_vk.DestroyRenderPass = dev_fn<PFN_vkDestroyRenderPass>("vkDestroyRenderPass");
+    g_vk.CreateFramebuffer = dev_fn<PFN_vkCreateFramebuffer>("vkCreateFramebuffer");
+    g_vk.DestroyFramebuffer = dev_fn<PFN_vkDestroyFramebuffer>("vkDestroyFramebuffer");
+    g_vk.CmdBeginRenderPass = dev_fn<PFN_vkCmdBeginRenderPass>("vkCmdBeginRenderPass");
+    g_vk.CmdEndRenderPass = dev_fn<PFN_vkCmdEndRenderPass>("vkCmdEndRenderPass");
+    g_vk_ok = g_vk.CreateImageView && g_vk.CmdPipelineBarrier &&
+              (g_vk.dynamic ? g_vk.CmdBeginRendering && g_vk.CmdEndRendering
+                            : g_vk.CreateRenderPass && g_vk.CreateFramebuffer && g_vk.CmdBeginRenderPass);
+    if (!g_vk_ok) log("ui: Vulkan functions missing: no settings screen");
 }
 
 void ui_record(VkCommandBuffer cb, VkImage image, VkFormat format, VkExtent2D extent) {
@@ -328,19 +388,41 @@ void ui_record(VkCommandBuffer cb, VkImage image, VkFormat format, VkExtent2D ex
             VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
             VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
             VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
-    VkRenderingAttachmentInfo att{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
-    att.imageView = view;
-    att.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    att.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
-    att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    VkRenderingInfo ri{VK_STRUCTURE_TYPE_RENDERING_INFO};
-    ri.renderArea = {{0, 0}, extent};
-    ri.layerCount = 1;
-    ri.colorAttachmentCount = 1;
-    ri.pColorAttachments = &att;
-    g_vk.CmdBeginRendering(cb, &ri);
-    ImGui_ImplVulkan_RenderDrawData(dd, cb);
-    g_vk.CmdEndRendering(cb);
+    if (g_vk.dynamic) {
+        VkRenderingAttachmentInfo att{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+        att.imageView = view;
+        att.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        att.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+        att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        VkRenderingInfo ri{VK_STRUCTURE_TYPE_RENDERING_INFO};
+        ri.renderArea = {{0, 0}, extent};
+        ri.layerCount = 1;
+        ri.colorAttachmentCount = 1;
+        ri.pColorAttachments = &att;
+        g_vk.CmdBeginRendering(cb, &ri);
+        ImGui_ImplVulkan_RenderDrawData(dd, cb);
+        g_vk.CmdEndRendering(cb);
+    } else {
+        auto& fb = g_framebuffers[image];
+        if (fb.first && (fb.second.width != extent.width || fb.second.height != extent.height))
+            g_vk.DestroyFramebuffer(g_vk.device, fb.first, nullptr), fb.first = VK_NULL_HANDLE;
+        if (!fb.first) {
+            VkFramebufferCreateInfo fci{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
+            fci.renderPass = g_pass;
+            fci.attachmentCount = 1;
+            fci.pAttachments = &view;
+            fci.width = extent.width, fci.height = extent.height, fci.layers = 1;
+            g_vk.CreateFramebuffer(g_vk.device, &fci, nullptr, &fb.first);
+            fb.second = extent;
+        }
+        VkRenderPassBeginInfo bi{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+        bi.renderPass = g_pass;
+        bi.framebuffer = fb.first;
+        bi.renderArea = {{0, 0}, extent};
+        g_vk.CmdBeginRenderPass(cb, &bi, VK_SUBPASS_CONTENTS_INLINE);
+        ImGui_ImplVulkan_RenderDrawData(dd, cb);
+        g_vk.CmdEndRenderPass(cb);
+    }
     barrier(cb, image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
             VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, 0, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
             VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
@@ -348,6 +430,8 @@ void ui_record(VkCommandBuffer cb, VkImage image, VkFormat format, VkExtent2D ex
 
 void ui_swapchain_changed() {
     if (!g_vk_ok) return;
+    for (auto& [image, fb] : g_framebuffers) g_vk.DestroyFramebuffer(g_vk.device, fb.first, nullptr);
+    g_framebuffers.clear();
     for (auto& [image, view] : g_views) g_vk.DestroyImageView(g_vk.device, view, nullptr);
     g_views.clear();
 }
@@ -364,6 +448,7 @@ void ui_shutdown() {
 
 // ---- main thread ----------------------------------------------------------------------------------------------
 
+#if !defined(__ANDROID__)
 void ui_event(const SDL_Event& e) {
     switch (e.type) {
         case SDL_EVENT_KEY_DOWN:
@@ -412,6 +497,19 @@ void ui_event(const SDL_Event& e) {
             break;
         default: break;
     }
+}
+
+#else
+void ui_event(const SDL_Event&) {}
+#endif
+
+bool ui_touch(float x, float y, bool down) {
+    static bool held = false;
+    if (!g_visible && !held) return false;
+    push({Input::MousePos, 0, false, x, y});
+    if (down != held) push({Input::MouseButton, 0, down});
+    held = down;
+    return true;
 }
 
 bool ui_pad(uint64_t buttons, int32_t lx, int32_t ly) {

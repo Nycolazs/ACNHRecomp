@@ -22,7 +22,8 @@ std::string find_font(bool cjk, const std::string& user_font) {
              "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Bold.ttc",
              "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", "/System/Library/Fonts/PingFang.ttc",
              "/System/Library/Fonts/Hiragino Sans GB.ttc", "C:\\Windows\\Fonts\\msyhbd.ttc",
-             "C:\\Windows\\Fonts\\YuGothB.ttc", "C:\\Windows\\Fonts\\malgunbd.ttf"};
+             "C:\\Windows\\Fonts\\YuGothB.ttc", "C:\\Windows\\Fonts\\malgunbd.ttf",
+             "/system/fonts/NotoSansCJK-Regular.ttc"};
     } else {
         if (!user_font.empty()) c.push_back(user_font);  // a font of the player's choice
         for (const char* p :
@@ -30,7 +31,8 @@ std::string find_font(bool cjk, const std::string& user_font) {
               "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf", "/usr/share/fonts/noto/NotoSans-Bold.ttf",
               "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
               "/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf", "/System/Library/Fonts/Supplemental/Arial Rounded Bold.ttf",
-              "/System/Library/Fonts/Helvetica.ttc", "C:\\Windows\\Fonts\\segoeuib.ttf", "C:\\Windows\\Fonts\\arialbd.ttf"})
+              "/System/Library/Fonts/Helvetica.ttc", "C:\\Windows\\Fonts\\segoeuib.ttf", "C:\\Windows\\Fonts\\arialbd.ttf",
+              "/system/fonts/RobotoStatic-Regular.ttf", "/system/fonts/Roboto-Regular.ttf"})
             c.push_back(p);
     }
     std::error_code ec;

@@ -6,7 +6,9 @@
 // the control on the right (under them when narrow). Sizes are in design pixels times `scale` (ui.cpp).
 #include "ui/settings.h"
 
+#if !defined(__ANDROID__)
 #include <SDL3/SDL.h>
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -426,6 +428,11 @@ void page_controls() {
     });
     row("controls.rumble", nullptr, [&](float w) { toggle("input.rumble", true, w); });
     row("controls.deadzone", nullptr, [&](float w) { slider("input.deadzone", 5, 50, 24, "%d%%", w); });
+#if defined(__ANDROID__)
+    // Phones: the on-screen controls instead of keyboard keys.
+    row("controls.touch", "controls.touch.desc", [&](float w) { toggle("input.touch_controls", true, w); });
+    row("controls.touch_opacity", nullptr, [&](float w) { slider("input.touch_opacity", 10, 100, 60, "%d%%", w); });
+#else
     ImGui::Dummy(ImVec2(0, 6 * g_scale));
     ImGui::PushFont(nullptr);
     ImGui::TextUnformatted(tr("controls.keyboard"));
@@ -463,6 +470,7 @@ void page_controls() {
         config_save();
         toast(tr("common.saved"));
     }
+#endif
 }
 
 // Saves: what is there, backups, import/export (saves.h). Folder answers come from the platform's picker.
@@ -630,7 +638,9 @@ void report_section() {
         plat::open_path(std::string(dir.begin(), dir.end()));
     }
     ImGui::SameLine();
+#if !defined(__ANDROID__)
     if (button(tr("report.github"))) SDL_OpenURL("https://github.com/Nycolazs/ACNHRecomp/issues/new");
+#endif
 }
 
 void page_about() {

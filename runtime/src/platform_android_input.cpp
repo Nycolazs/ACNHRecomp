@@ -44,6 +44,7 @@
 #include "platform.h"
 #include "platform_android.h"
 #include "touch_layout.h"
+#include "ui/ui.h"
 
 // Android input: game controllers and touch (split from platform_android.cpp).
 namespace nx::plat {
@@ -140,7 +141,15 @@ int32_t on_input(android_app*, AInputEvent* e) {
         return 1;
     }
     if ((src & AINPUT_SOURCE_TOUCHSCREEN) != AINPUT_SOURCE_TOUCHSCREEN) return 0;
-    if (!touch_enabled()) return 0;  // NX_TOUCH_SHOW=0
+    {  // The settings screen, while open, takes the first finger as its mouse (whatever the on-screen controls).
+        int32_t kind0 = AMotionEvent_getAction(e) & AMOTION_EVENT_ACTION_MASK;
+        bool up = kind0 == AMOTION_EVENT_ACTION_UP || kind0 == AMOTION_EVENT_ACTION_CANCEL;
+        if (nx::ui::ui_touch(AMotionEvent_getX(e, 0), AMotionEvent_getY(e, 0), !up)) {
+            g_touches.clear();
+            return 1;
+        }
+    }
+    if (!touch_enabled()) return 0;  // NX_TOUCH_SHOW=0, or turned off in the settings
     int32_t action = AMotionEvent_getAction(e);
     int32_t kind = action & AMOTION_EVENT_ACTION_MASK;
     size_t index = size_t((action & AMOTION_EVENT_ACTION_POINTER_INDEX_MASK) >> AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT);
@@ -202,14 +211,23 @@ void read_pad(PadState& p) {
             float dx = (t.x - t.x0) / radius, dy = (t.y - t.y0) / radius;
             p.lx = int32_t(std::clamp(dx, -1.f, 1.f) * kStickMax);
             p.ly = int32_t(std::clamp(-dy, -1.f, 1.f) * kStickMax);
-            // A drawn layout's stick pushed nearly all the way holds Y too (Wonder: dash), so running needs no second
-            // thumb on the right side.
-            if (drawn && std::abs(dx) > 0.85f) p.buttons |= kY;
+            // A drawn layout's stick pushed nearly all the way also holds the run button (Wonder: Y, dash; ACNH: B,
+            // run), so running needs no second thumb on the right side.
+            static const uint64_t run = std::strcmp(nx::game::kInfo.id, "acnh") == 0 ? kB : kY;
+            if (drawn && std::hypot(dx, dy) > 0.9f) p.buttons |= run;
         } else {
             p.buttons |= t.button;
         }
     }
     input_script(p);  // NX_INPUT_SCRIPT (config.txt): scripted runs on the phone, as on the Mac
+    // The gear opens and closes the settings screen; it is not a pad button.
+    static bool gear_held = false;
+    bool gear = p.buttons & kSettingsButton;
+    if (gear && !gear_held) nx::ui::ui_toggle();
+    gear_held = gear;
+    p.buttons &= ~kSettingsButton;
+    // The settings screen takes the controller while it is open (and watches for its Minus + Plus combo).
+    if (nx::ui::ui_pad(p.buttons, p.lx, p.ly)) p = PadState{};
 }
 
 // The drawn layout's buttons (brighter while pressed) and the stick under the thumb; nothing while a controller is

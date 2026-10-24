@@ -2,6 +2,15 @@ cmake_minimum_required(VERSION 3.25)
 project(SwitchGamesRecomp C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
+if(ANDROID)
+    # Thin archives: the generated modules' libraries list their objects instead of copying them (main alone has
+    # ~3 GB of objects for Android; a copy doubled the build's disk use).
+    set(CMAKE_CXX_ARCHIVE_CREATE "<CMAKE_AR> qcT <TARGET> <LINK_FLAGS> <OBJECTS>")
+    set(CMAKE_CXX_ARCHIVE_APPEND "<CMAKE_AR> qT <TARGET> <LINK_FLAGS> <OBJECTS>")
+    # The NDK's toolchain adds -g: debug info made main's objects 3.9 GB and lib<game>.so 2.4 GB (224 MB stripped).
+    # The runtime symbolizes guest code itself (nx::describe), so none is needed.
+    add_compile_options(-g0)
+endif()
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # The game this build is for: games/<NX_GAME>/ holds what only that game needs (game.cpp: nx/game.h), the shared
@@ -232,11 +241,19 @@ if(ANDROID)
     add_library(${NX_GAME} SHARED ${NX_RUNTIME_SOURCES} runtime/src/platform_android.cpp
         runtime/src/platform_android_input.cpp runtime/src/platform_android_audio.cpp runtime/src/memguard_android.cpp
         "${GLUE}/android_native_app_glue.c")
-    target_include_directories(${NX_GAME} PRIVATE runtime/include runtime/src "${NX_GAME_DIR}" "${NX_VULKAN_SDK}/Include" "${GLUE}")
+    target_include_directories(${NX_GAME} PRIVATE runtime/include runtime/src "${NX_GAME_DIR}" "${NX_VULKAN_SDK}/include" "${GLUE}")
     # Our ANativeActivity_onCreate (platform_android.cpp) runs first, on the UI thread, then calls the glue's.
     set_source_files_properties("${GLUE}/android_native_app_glue.c" PROPERTIES
         COMPILE_DEFINITIONS "ANativeActivity_onCreate=glue_ANativeActivity_onCreate")
     target_link_libraries(${NX_GAME} PRIVATE ${NX_GAME_LIBS} android log aaudio)
+    # libadrenotools (BSD-2-Clause): loads Turnip (tools/build_turnip.sh) instead of the phone's Adreno driver. Its
+    # hook libraries (libhook_impl.so, libmain_hook.so, ...) go into the APK next to lib<game>.so.
+    include(FetchContent)
+    FetchContent_Declare(adrenotools GIT_REPOSITORY https://github.com/bylaws/libadrenotools.git
+                         GIT_TAG 8fae8ce254dfc1344527e05301e43f37dea2df80 GIT_SUBMODULES_RECURSE TRUE)
+    FetchContent_MakeAvailable(adrenotools)
+    target_link_libraries(${NX_GAME} PRIVATE adrenotools)
+    add_dependencies(${NX_GAME} hook_impl main_hook file_redirect_hook gsl_alloc_hook)
     target_compile_options(${NX_GAME} PRIVATE -fvisibility=hidden -fno-semantic-interposition -march=armv8.2-a+crypto)
     # The glue's ANativeActivity_onCreate must be exported. 16 KB page alignment: Android 15+ devices with 16 KB pages.
     target_link_options(${NX_GAME} PRIVATE -u ANativeActivity_onCreate -Wl,-z,max-page-size=16384)
@@ -278,12 +295,12 @@ endif()
 
 # The settings screen (runtime/src/ui): Dear ImGui (NX_IMGUI_DIR, above). Without it (or on Windows/Android until
 # their platform layers feed it) the screen is a stub; config.ini still works.
-if(EXISTS "${NX_IMGUI_DIR}/imgui.cpp" AND NOT ANDROID AND NOT WIN32)
+if(EXISTS "${NX_IMGUI_DIR}/imgui.cpp" AND NOT WIN32)
     target_sources(${NX_GAME} PRIVATE runtime/src/ui/ui.cpp runtime/src/ui/settings.cpp runtime/src/ui/i18n.cpp
         runtime/src/ui/theme.cpp ${NX_IMGUI_DIR}/imgui.cpp ${NX_IMGUI_DIR}/imgui_draw.cpp ${NX_IMGUI_DIR}/imgui_tables.cpp
         ${NX_IMGUI_DIR}/imgui_widgets.cpp ${NX_IMGUI_DIR}/backends/imgui_impl_vulkan.cpp)
     target_include_directories(${NX_GAME} PRIVATE ${NX_IMGUI_DIR})
-    target_compile_definitions(${NX_GAME} PRIVATE IMGUI_IMPL_VULKAN_NO_PROTOTYPES NX_HAVE_SDL3)
+    target_compile_definitions(${NX_GAME} PRIVATE IMGUI_IMPL_VULKAN_NO_PROTOTYPES $<$<NOT:$<BOOL:${ANDROID}>>:NX_HAVE_SDL3>)
 else()
     message(STATUS "Dear ImGui not found in ${NX_IMGUI_DIR}: no settings screen")
     target_sources(${NX_GAME} PRIVATE runtime/src/ui/ui_stub.cpp)

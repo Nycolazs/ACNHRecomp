@@ -20,6 +20,8 @@
 
 #include <nx/game.h>
 
+#include "config.h"
+
 namespace nx::plat {
 
 namespace {
@@ -32,6 +34,19 @@ const TouchButton kWonder[] = {
 };
 
 const char* const kNames[] = {"A", "B", "Y", "X", "ZR", "R", "L", "PLUS", "MINUS"};  // the order of kWonder
+
+// Animal Crossing: New Horizons, landscape: the face buttons in the Switch's diamond at the bottom right (A talk and
+// pick, B run and cancel, X pockets, Y pick up), L/R (tool ring, camera) and ZL/ZR (NookPhone, reactions) along the
+// top corners, + and - at the top centre with the settings gear between them, and a small d-pad (tools, camera
+// zoom) at the bottom left, under where the stick usually lands. The rest of the left half is the stick.
+const TouchButton kAcnh[] = {
+    {0.915f, 0.700f, 0.080f, kA},     {0.835f, 0.845f, 0.080f, kB},     {0.835f, 0.555f, 0.080f, kX},
+    {0.755f, 0.700f, 0.080f, kY},     {0.955f, 0.090f, 0.050f, kR},     {0.880f, 0.090f, 0.050f, kZR},
+    {0.045f, 0.090f, 0.050f, kL},     {0.120f, 0.090f, 0.050f, kZL},    {0.560f, 0.070f, 0.040f, kPlus},
+    {0.440f, 0.070f, 0.040f, kMinus}, {0.500f, 0.070f, 0.036f, kSettingsButton},
+    {0.075f, 0.700f, 0.040f, kUp},    {0.075f, 0.900f, 0.040f, kDown},  {0.030f, 0.800f, 0.040f, kLeft},
+    {0.120f, 0.800f, 0.040f, kRight},
+};
 
 int env_int(const char* name, int fallback) {
     const char* e = std::getenv(name);
@@ -68,13 +83,14 @@ const std::vector<TouchButton>& wonder_buttons() {
 
 }  // namespace
 
-// NX_TOUCH_SHOW=0 (launcher: On-screen buttons off): nothing is drawn and touches are ignored.
+// NX_TOUCH_SHOW=0 (launcher: On-screen buttons off), or Settings > Controls > On-screen controls off (read live):
+// nothing is drawn and touches are ignored, except by the settings screen.
 bool touch_enabled() {
-    static const bool on = [] {
+    static const bool env_on = [] {
         const char* e = std::getenv("NX_TOUCH_SHOW");
         return !(e && e[0] == '0');
     }();
-    return on;
+    return env_on && config_get_bool("input.touch_controls", true);
 }
 
 // NX_TOUCH_MIRROR=1 (left-handed): the stick takes the right half of the screen instead of the left.
@@ -88,12 +104,18 @@ bool touch_mirrored() {
 
 // NX_TOUCH_OPACITY (10..100, default 85): the drawn buttons' brightness relative to the original look.
 float touch_opacity_scale() {
-    static const float s = float(std::clamp(env_int("NX_TOUCH_OPACITY", 85), 10, 100)) / 85.0f;
-    return s;
+    static const int env = env_int("NX_TOUCH_OPACITY", 0);
+    int pct = env ? env : std::atoi(config_get("input.touch_opacity", "60").c_str());
+    return float(std::clamp(pct, 10, 100)) / 85.0f;
 }
 
 const TouchButton* touch_buttons(size_t& count) {
     static const bool wonder = std::strcmp(game::kInfo.id, "wonder") == 0;
+    static const bool acnh = std::strcmp(game::kInfo.id, "acnh") == 0;
+    if (acnh) {
+        count = sizeof kAcnh / sizeof kAcnh[0];
+        return kAcnh;
+    }
     count = wonder ? wonder_buttons().size() : 0;
     return wonder ? wonder_buttons().data() : nullptr;
 }

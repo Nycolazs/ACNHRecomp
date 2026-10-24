@@ -15,7 +15,7 @@ namespace nx::ui {
 
 // Presenter (nvn_vk.cpp), its thread.
 void ui_vulkan_ready(PFN_vkGetInstanceProcAddr gipa, VkInstance instance, VkPhysicalDevice physical, VkDevice device,
-                     uint32_t family, VkQueue queue);
+                     uint32_t family, VkQueue queue, bool dynamic_rendering);
 // After the frame reached the swapchain image (left in PRESENT_SRC_KHR), before the command buffer is submitted.
 void ui_record(VkCommandBuffer cb, VkImage image, VkFormat format, VkExtent2D extent);
 void ui_swapchain_changed();  // the swapchain's images were destroyed: drop their views
@@ -28,5 +28,8 @@ void ui_event(const SDL_Event& e);               // every SDL event (keys, mouse
 bool ui_pad(uint64_t buttons, int32_t lx, int32_t ly);
 bool ui_visible();
 void ui_toggle();
+// Touch screens (Android): one finger as the mouse, in pixels of the presented image. Returns true when the menu
+// took the touch (it is open): the game must not see it.
+bool ui_touch(float x, float y, bool down);
 
 }  // namespace nx::ui
