@@ -19,6 +19,7 @@ while IFS= read -r f; do
   # README screenshots (pictures of the running game, no game files) are the only binaries allowed.
   case "$lf" in
     docs/screenshots/*.png|docs/screenshots/*.jpg) continue ;;
+    android/res/mipmap-*/*.png|android/icon_512.png) continue ;;  # the launcher icon, drawn by tools/make_android_icon.py
   esac
   if [ "$(head -c 8000 "$f" | tr -d '\000' | wc -c)" -ne "$(head -c 8000 "$f" | wc -c)" ]; then
     echo "BLOCKED (binary content): $f"; bad=1; continue
