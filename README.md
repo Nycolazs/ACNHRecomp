@@ -12,7 +12,7 @@
   <img src="docs/screenshots/island-arrival.jpg" alt="Arriving on the island, running natively" width="100%">
 </p>
 
-ACNHRecomp turns the Nintendo Switch code of *Animal Crossing: New Horizons* **3.0.2** (title ID
+ACNHRecomp turns the Nintendo Switch code of *Animal Crossing: New Horizons* **3.0.2** or **3.0.3** (title ID
 `01006F8002326000`) into native code for your computer. It is not an emulator: the game's AArch64 machine code is
 translated ahead of time into C++ and compiled for the host, the system services the game calls are reimplemented
 natively, and the game's NVN graphics calls are translated to **Vulkan**. It is built on the framework of
@@ -20,7 +20,7 @@ natively, and the game's NVN graphics calls are translated to **Vulkan**. It is 
 
 > [!IMPORTANT]
 > **No game files are included.** This repository contains no code, assets, keys or firmware from the game, and
-> neither does anything the project shares. You need your own legally obtained copy of the game, its 3.0.2 update
+> neither does anything the project shares. You need your own legally obtained copy of the game, its 3.0.2 or 3.0.3 update
 > and your console's keys; the build is produced on your computer from your dump. Never distribute the resulting
 > executable: it contains game code recompiled from your dump.
 
@@ -117,7 +117,7 @@ GPU; see [docs/STATUS.md](docs/STATUS.md) for the full, regularly updated log.
 
 | Area | State |
 |---|---|
-| Import (base NSP + 3.0.2 update, BKTR patch applied) | Working: 103,400 RomFS files, 10.5 GB |
+| Import (base NSP + 3.0.2 or 3.0.3 update, BKTR patch applied) | Working: 103,400 RomFS files, 10.5 GB |
 | CPU recompilation (`main`, `sdk`, `subsdk0`) | Working: about 19 million instructions, 0 unhandled |
 | Shaders (Maxwell to SPIR-V) | Working: 6,200+ distinct blocks, 0 invalid |
 | Boot, system services, audio, clock, input | Working |
@@ -170,7 +170,7 @@ via Claude Code), directed and tested by a person. Its base, SuperMarioWonderRec
 | `prod.keys` dumped from your console | Yes |
 | `title.keys` | Recommended |
 | Base game NSP | Yes |
-| Update 3.0.2 NSP | Yes |
+| Update 3.0.2 or 3.0.3 NSP | Yes |
 | DLC NSPs (add-on content) | Optional |
 
 ### Computer
@@ -222,7 +222,7 @@ then run `build/launcher/acnhrecomp_launcher`.
 1. **Welcome.** Choose *Set up from my game files*, or *I already have a recompiled build* and pick its folder (an
    install folder made by the launcher, `private/acnh`, or this repository).
 2. **Game files.** The keys (`prod.keys`, found automatically in `~/.switch` and the emulators' folders), the base
-   game (NSP or XCI), update 3.0.2 (NSP), any DLC NSPs and, optionally, the pt-BR translation `.zip` (not
+   game (NSP or XCI), update 3.0.2 or 3.0.3 (NSP), any DLC NSPs and, optionally, the pt-BR translation `.zip` (not
    distributed here). Choose them or drop them on the window. Each file is checked at once without decrypting
    anything: container type, and the title and version from the NSP's metadata, so a wrong game, the update in
    the base game's place or another update version is flagged before anything runs.
@@ -522,7 +522,7 @@ computer cannot hold 60.
 The import has not been done yet; pass all three on the first run.
 
 **The importer fails or the file count is wrong.**
-Check that the update is exactly **3.0.2**, that your `prod.keys` come from a console with firmware recent enough
+Check that the update is exactly **3.0.2** or **3.0.3**, that your `prod.keys` come from a console with firmware recent enough
 for it, and pass `--title-keys` if you have them. The import log is in `private/acnh/logs/import.log`.
 
 **The build runs out of memory.**
@@ -587,13 +587,13 @@ Join our [Discord Community](https://discord.gg/VJW9Dtdu7a) with your hardware d
                                                                                  NVN -> Vulkan, SDL3
 ```
 
-1. **Import.** The importer reads your NSPs without hactool, decrypts the NCAs and applies the 3.0.2 update's BKTR
+1. **Import.** The importer reads your NSPs without hactool, decrypts the NCAs and applies the update's BKTR
    patch (including the newer format) to produce the ExeFS and a complete RomFS. DLC RomFS goes to
    `private/acnh/aoc/<index>/`.
 2. **CPU.** Each AArch64 function becomes a C++ function. Guest memory is host memory: the modules are mapped at
    fixed addresses (`0x40_0000_0000` on Linux), so a game pointer is a host pointer, with no translation or byte
    swapping. Branches inside a function become `goto`, jump tables become `switch`, and indirect calls go through a
-   lookup table. ACNH 3.0.2 uses SDK 20.5, so the recompiler gained new instructions (`sqshl`, `sqrshl`, `uqshl`,
+   lookup table. ACNH 3.0.2 and 3.0.3 use SDK 20.5, so the recompiler gained new instructions (`sqshl`, `sqrshl`, `uqshl`,
    `sli`, `sri`, `tbx`, byte `pmull`, and others), each validated against Unicorn, and RELR relocations support.
 3. **SDK and system.** Nintendo's `sdk` module (libc, libc++, `nn::os`, `nn::fs`, ...) is recompiled too, because
    `main` embeds its object layouts; `subsdk0` (`nn::movie`) is the third module. The runtime acts as the dynamic

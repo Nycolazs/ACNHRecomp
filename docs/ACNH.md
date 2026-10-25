@@ -1,7 +1,8 @@
 # Animal Crossing: New Horizons: what we know about the game
 
 Facts measured on our own dump: base 1.0.0 (`bd68bf29….nca`, SDK 9.3.1) plus the 3.0.2 update (`fd0780de….nca`,
-SDK 20.5.17, version `0x210000` = 2162688). Everything here can be reproduced with the tools named next to it.
+SDK 20.5.17, version `0x210000` = 2162688). The 3.0.3 update is supported too (see [Updates](#updates)).
+Everything here can be reproduced with the tools named next to it.
 Derived files stay in `private/acnh/` (gitignored).
 
 ## Title
@@ -9,9 +10,43 @@ Derived files stay in `private/acnh/` (gitignored).
 | | |
 |---|---|
 | Program id | `01006F8002326000` (update `01006F8002326800`) |
-| Version targeted | **3.0.2** (base + update). The update's ExeFS is complete; its RomFS is a BKTR patch over the base's |
+| Version targeted | **3.0.2** or **3.0.3** (base + update). The update's ExeFS is complete; its RomFS is a BKTR patch over the base's |
 | main.npdm | main thread priority 44, core 0, stack 1 MiB, **no system resource** (META +0x14 = 0) |
 | Engine | Nintendo EPD's in-house engine, called **Park** in file names (`Park_UBER_All`, `Park_Idr`) |
+
+## Updates
+
+Two updates are supported. Offsets everywhere else in the docs and the code are 3.0.2's unless marked.
+
+| | 3.0.2 | 3.0.3 |
+|---|---|---|
+| Title version | 2162688 (release 33) | 2228224 (release 34) |
+| main build id | `FCD2BB238ABE99E925B4E452DF1F41F1` | `FF1D1C05670DB6021C85B624A710B963` |
+| sdk | SDK 20.5 | SDK 20.5.4 |
+| Hooked instructions | `games/acnh/hooks.txt` | `games/acnh/hooks_303.txt` |
+
+**What moved.** 3.0.3 is a small fix: of the 6,417 code and data words tmouh's SpeedFix patches, 6,375 are the same in
+its 3.0.2 and 3.0.3 versions and the rest are PC-relative branches. Pairing the two patches site by site gives two
+shifts only: none up to main+25bfe88 and from main+4002e40, **+0x10** from main+280c154 to main+3c88108. The edges lie
+in the gaps between patch sites; the hooks past main+3c88108 (main+3dc3298, main+3e01f08) were checked by hand and
+moved too, so the range runs to at least main+3e01f18. Read-only data did not move (the projection vtables
+main+4a65608 / main+4a65688 list the moved doUpdateMatrix entries, main+37e5968 / main+37e5b6c; the memory budget
+table at main+404d658 holds the same values).
+
+**What the runtime uses that moved**, every one checked in the 3.0.3 disassembly (the instruction its comment
+describes, or a function entry right after a `ret`):
+
+| Use | 3.0.2 | 3.0.3 |
+|---|---|---|
+| Hooks (`hooks.txt` vs `hooks_303.txt`; `NX_HOOK` registers both, the unused one is never called) | main+38b2b34, 3a09404, 3e01f08, 3dc3298, 3a1d614, 37e5b5c, 37e5958, 31c3f98, 3c48c60, 3c4b1fc, 37e4624 | +0x10 each |
+| Same in both | main+27d4c0, 6d659c, 2216938, 226af00, 7c6430 | unchanged |
+| Clear on bind call sites (`NX_SKIP_CLEAR_AT`, `NX_CLEAR_ONCE_AT`, `games/acnh/game.cpp`) | main+37fb4fc, 37fb744 | main+37fb50c, 37fb754 |
+| Focus manager SetFocus (`games/acnh/pointer.cpp`) | main+3c48b68 | main+3c48b78 |
+
+With the 3.0.2 clear sites on 3.0.3 every frame is black (the clears they skip wipe the HDR target), which is how a
+missed offset shows. At run time `acnh::is_303()` (`games/acnh/version.h`) tells the two apart by the colour clear
+call site's four words at main+37fb500; `setup_acnh.sh` and `setup_60fps.sh` pick the hook list and the SpeedFix patch
+(`speedfix_main_302.pchtxt` or, for 3.0.3, `speedfix_main.pchtxt`) by main's build id.
 
 ## Modules (`tools/probe.py private/acnh/exefs`)
 

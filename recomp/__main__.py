@@ -189,7 +189,7 @@ def build_variant(m, an, words, name, hooks):
     m2 = dataclasses.replace(m, image=bytearray(m.image))
     for off, w in words:
         m2.image[off:off + 4] = w.to_bytes(4, "little")
-    an2 = analysis.analyze(m2)
+    an2 = analysis.analyze(m2, patched=frozenset(off for off, _ in words if m.in_text(off)))
     e2 = emit.Emitter(an2, prefix=name)
     e2.hooks = hooks
     text = sorted(off for off, _ in words if m.in_text(off))

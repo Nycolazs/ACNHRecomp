@@ -70,6 +70,7 @@ uint64_t rd64(const uint8_t* p) { return uint64_t(rd32(p)) | uint64_t(rd32(p + 4
 constexpr uint64_t kBaseTitle = 0x01006F8002326000ull;
 constexpr uint64_t kUpdateTitle = kBaseTitle + 0x800;
 constexpr uint32_t kVersion302 = 2162688;  // 3.0.2's title version (release 33 << 16)
+constexpr uint32_t kVersion303 = 2228224;  // 3.0.3 (release 34): also supported (docs/ACNH.md, "Updates")
 
 bool is_dlc_title(uint64_t id) { return (id & ~0xFFFull) == kBaseTitle + 0x1000 && (id & 0xFFF); }
 
@@ -343,7 +344,7 @@ FileCheck check_file(Kind kind, const std::string& path) {
             if (base) return ok(Status::Error, tr("launcher.err.is_base"));
             if (dlc) return ok(Status::Error, tr("launcher.err.is_dlc"));
             if (!m.has_version) return ok(Status::Warning, trf("launcher.warn.update_version", sz));
-            if (m.version != kVersion302)
+            if (m.version != kVersion302 && m.version != kVersion303)
                 return ok(Status::Error, trf("launcher.err.wrong_version", std::to_string(m.version >> 16)));
             return ok(Status::Ok, trf("launcher.ok.update", sz));
         default:

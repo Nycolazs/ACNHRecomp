@@ -110,6 +110,14 @@ struct HookRegistrar {
     HookRegistrar(uint64_t offset, HleFn fn);
 };
 #define NX_HOOK(offset, fn) static ::nx::HookRegistrar NX_HLE_CAT(hook_reg_, __LINE__)(offset, fn)
+// The same hook in two updates of a game whose code moved (ACNH 3.0.2 and 3.0.3): both offsets are registered, and
+// only the one the recompiler instrumented for the dump is ever called.
+struct HookRegistrar2 {
+    HookRegistrar first, second;
+    HookRegistrar2(uint64_t a, uint64_t b, HleFn fn) : first(a, fn), second(b, fn) {}
+};
+#define NX_HOOK_VERSIONS(offset, offset2, fn) \
+    static ::nx::HookRegistrar2 NX_HLE_CAT(hook_reg_, __LINE__)(offset, offset2, fn)
 
 uint64_t hle_address(const char* name);  // thunk address; unknown names get a logging stub
 uint64_t hle_address_or(const char* name, HleFn fallback);  // unknown names get `fallback`

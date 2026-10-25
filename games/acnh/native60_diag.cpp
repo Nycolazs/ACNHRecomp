@@ -114,6 +114,6 @@ void entry_regs(CPU& c) {
 NX_HOOK(0x2216938, entry_regs<0x2216938>);
 NX_HOOK(0x226af00, entry_regs<0x226af00>);
 NX_HOOK(0x7c6430, entry_regs<0x7c6430>);
-NX_HOOK(0x37e4624, lookat_update);
+NX_HOOK_VERSIONS(0x37e4624, 0x37e4634, lookat_update);  // 3.0.2, 3.0.3
 
 }  // namespace nx

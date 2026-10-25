@@ -1,6 +1,6 @@
 // The first-run launcher: the program a player opens before there is a game build (README, "Installation").
 //
-// It asks for the player's own files (keys, base game, update 3.0.2, DLC, the optional pt-BR translation), checks
+// It asks for the player's own files (keys, base game, update 3.0.2 or 3.0.3, DLC, the optional pt-BR translation), checks
 // what this computer has, runs tools/setup_acnh.sh as a child process and follows its stages, then starts the game
 // it built. Or it is pointed at a build folder made earlier. It holds no game code.
 //

@@ -70,10 +70,10 @@ constexpr char kCharAnim[] = "character anim step";
 
 }  // namespace
 
-NX_HOOK(0x3dc3298, half_step<kCharAnim>);
-NX_HOOK(0x3a1d614, half_step<kLayout>);
-NX_HOOK(0x38b2b34, half_step<kModelAnim>);
-NX_HOOK(0x3a09404, half_step<kVfx>);
-NX_HOOK(0x3e01f08, half_step<kPhysics>);
+NX_HOOK_VERSIONS(0x3dc3298, 0x3dc32a8, half_step<kCharAnim>);  // 3.0.2, 3.0.3
+NX_HOOK_VERSIONS(0x3a1d614, 0x3a1d624, half_step<kLayout>);  // 3.0.2, 3.0.3
+NX_HOOK_VERSIONS(0x38b2b34, 0x38b2b44, half_step<kModelAnim>);  // 3.0.2, 3.0.3
+NX_HOOK_VERSIONS(0x3a09404, 0x3a09414, half_step<kVfx>);  // 3.0.2, 3.0.3
+NX_HOOK_VERSIONS(0x3e01f08, 0x3e01f18, half_step<kPhysics>);  // 3.0.2, 3.0.3
 
 }  // namespace nx

@@ -132,7 +132,11 @@ class Analysis:
         return self.functions[i] if i >= 0 and addr < self.functions[i].end else None
 
 
-def analyze(m, log=print):
+def analyze(m, log=print, patched=frozenset()):
+    """patched: text offsets a --variant patch writes. When a patch makes a function's last instruction fall
+    through (it moves the closing branch into the padding after the function), the function is extended over the
+    patched words that follow, so the moved branch is part of it. Out-of-line routines a patch puts in padding after
+    a function that still ends in a branch stay separate entries."""
     cs = capstone.Cs(capstone.CS_ARCH_ARM64, capstone.CS_MODE_ARM)
     cs.skipdata = True
     t0, tn = m.text
@@ -187,6 +191,18 @@ def analyze(m, log=print):
                 entries.add(t) if _looks_like_code_pointer(an, a, t) else None
     entries.add(t0) if t0 in insns else None
     fde_bounds = {f.start: f.start + f.size for f in fdes}
+    if patched:
+        for f in fdes:
+            end = f.start + f.size
+            last = insns.get(end - 4, ("", ""))[0]
+            if end not in patched or last in ("b", "br", "ret", "udf", "brk") or end in entries:
+                continue
+            while end in patched and end < text_end:
+                end += 4
+            if end != f.start + f.size:
+                log(f"  patch runs past the FDE end of {f.start:#x}: {f.start + f.size:#x} -> {end:#x}")
+                fde_bounds[f.start] = end
+                f.size = end - f.start
     log(f"  seeds: {len(fdes)} FDE, {len(an.plt)} PLT stubs, {len(entries)} entries")
 
     # Fixpoint: build ranges, resolve jump tables, promote out-of-range branch targets to entries.

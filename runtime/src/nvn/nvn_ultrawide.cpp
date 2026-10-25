@@ -296,7 +296,7 @@ void uw_scan(uint64_t present) {
 // something else (shadow and cube-map views) is left alone; a field of view the game changes is followed.
 // (Before the hook, the objects were found by a heap scan every 2 s: 0.7-1.8 s of a core each time.)
 namespace {
-constexpr uint64_t kProjectionVtable = 0x4a65608;  // sead::PerspectiveProjection's vptr (main+, 3.0.2)
+constexpr uint64_t kProjectionVtable = 0x4a65608;  // sead::PerspectiveProjection's vptr (main+, 3.0.2 and 3.0.3)
 struct Camera {
     uint32_t aspect_set = 0, fov_set = 0;  // what was written last
     uint32_t fov_base = 0;                 // the game's own field of view
@@ -373,7 +373,7 @@ void projection_update(CPU& c) {
     rewrite(object, it->second, k, false);  // made right after this: no need to mark it
 }
 }  // namespace
-NX_HOOK(0x37e5958, projection_update);
+NX_HOOK_VERSIONS(0x37e5958, 0x37e5968, projection_update);  // 3.0.2, 3.0.3
 
 // ---- UI projection -------------------------------------------------------------------------------------------------
 // sead::OrthoProjection (vtable main+0x4a65688; near +0x98, far +0x9c, top +0xa0, bottom +0xa4, left +0xa8, right
@@ -385,7 +385,7 @@ NX_HOOK(0x37e5958, projection_update);
 // sets again are followed. Projections of other shapes (shadow maps, square targets) are left alone.
 // NX_UW_ORTHO=0: off (the UI is then squeezed by its draws, nvn_draw.cpp).
 namespace {
-constexpr uint64_t kOrthoVtable = 0x4a65688;  // sead::OrthoProjection's vptr (main+, 3.0.2)
+constexpr uint64_t kOrthoVtable = 0x4a65688;  // sead::OrthoProjection's vptr (main+, 3.0.2 and 3.0.3)
 struct Ortho {
     uint32_t set[4] = {};  // top, bottom, left, right written last
     float base[4] = {};    // the game's own
@@ -453,7 +453,7 @@ void ortho_update(CPU& c) {
     rewrite_ortho(object, it->second, k, false);  // made right after this
 }
 }  // namespace
-NX_HOOK(0x37e5b5c, ortho_update);
+NX_HOOK_VERSIONS(0x37e5b5c, 0x37e5b6c, ortho_update);  // 3.0.2, 3.0.3
 
 bool uw_ortho_on() { return !ortho_off(); }
 

@@ -14,6 +14,8 @@
 
 #include <nx/runtime.h>
 
+#include "version.h"
+
 namespace nx {
 
 namespace {
@@ -67,7 +69,7 @@ void gui_touch_update(CPU& c) {
 // centre, y up), +0x14b0 the players it is enabled for. Setting the focus as the game does (main+31017d0): the old
 // target is told it leaves, main+3c48b68 (manager, player, target, 0) moves it, the new target's vtable[0x18] runs and
 // the entry takes its position.
-constexpr uint64_t kSetFocus = 0x3c48b68;
+uint64_t set_focus_addr() { return acnh::ofs(0x3c48b68, 0x3c48b78); }  // main+3c48b68 above (3.0.3: +3c48b78)
 constexpr float kLayoutToScreen = 1280.0f / 1920.0f;
 // Screen pixels around an item that still count as on it: an item's rectangle is often its text alone (the
 // "Confirm." button: 13 high); a click near no item takes the nearest one this close.
@@ -119,7 +121,7 @@ void set_focus(CPU& c, uint64_t mgr, uint64_t entry, uint64_t target) {
         guest(c, ld<uint64_t>(ld<uint64_t>(d)), d, 1, ev);
         st<uint64_t>(entry + 0x10, 0);
     }
-    guest(c, kSetFocus, mgr, 0, target, 0);
+    guest(c, set_focus_addr(), mgr, 0, target, 0);
     guest(c, ld<uint64_t>(ld<uint64_t>(target) + 0x18), target);
     st<float>(entry + 4, ld<float>(target + 0x14a0));
     st<float>(entry + 8, ld<float>(target + 0x14a4));
@@ -269,8 +271,8 @@ void button_input(CPU& c) {
 
 }  // namespace
 
-NX_HOOK(0x31c3f98, gui_touch_update);
-NX_HOOK(0x3c48c60, focus_input);
-NX_HOOK(0x3c4b1fc, button_input);
+NX_HOOK_VERSIONS(0x31c3f98, 0x31c3fa8, gui_touch_update);  // 3.0.2, 3.0.3
+NX_HOOK_VERSIONS(0x3c48c60, 0x3c48c70, focus_input);  // 3.0.2, 3.0.3
+NX_HOOK_VERSIONS(0x3c4b1fc, 0x3c4b20c, button_input);  // 3.0.2, 3.0.3
 
 }  // namespace nx

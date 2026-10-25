@@ -1,0 +1,19 @@
+# The instructions of hooks.txt in main 3.0.3 (setup_acnh.sh picks this list when main is 3.0.3). Each one is
+# the 3.0.2 instruction moved by 3.0.3's shift (0x10 between about main+280c000 and main+3e02000, else none:
+# docs/ACNH.md, "Updates"), checked in the 3.0.3 disassembly. The comments give the 3.0.2 offsets.
+38b2b44  # gsys model animation update (main+38b2b00): step = slot speed * scene step (fmul s8, s1, s0)
+3a09414  # VfxMgr::calc (main+3a09200): nn::vfx::System::Calculate(system, 0, group, s0 frame rate, ...) per group
+3e01f18  # Havok world step (main+4127c0, 'TtPreStepSignal') from main+3e01a40, s0 = the step in seconds
+3dc32a8  # character animation graph update (main+3dc3210): s0 = the step for every root node (main+3dbf770)
+3a1d624  # layout animator list update (main+3a1d5e0): s0 = this->step() (vtable+0x128), then UpdateFrame(step) each
+27d4c0  # nn::ui2d::Pane::Calculate entry (x0 = pane): layout root and full-screen panes at other aspects (nvn_ultrawide.cpp)
+37e5b6c  # sead::OrthoProjection::doUpdateMatrix entry (x0 = this): the 2D UI's projection over the whole screen (nvn_ultrawide.cpp)
+37e5968  # sead::PerspectiveProjection::doUpdateMatrix entry (x0 = this): wider/taller screen (nvn_ultrawide.cpp)
+6d659c  # job worker's Havok thread registration (main+6d6514): skip it while the Phive singleton is half built
+31c3fa8  # guiTouchManager::update (main+31c3b50) before its hit tests: window buttons kept reachable (pointer.cpp)
+3c48c70  # focus manager input (main+3c48c60): a click on a list item focuses it and presses A (pointer.cpp)
+3c4b20c  # button handler input (main+3c4b1fc): a click while a message waits for its button presses A (pointer.cpp)
+37e4634  # DIAG sead::LookAtCamera::doUpdateMatrix entry (temporary)
+2216938  # DIAG entry (temporary)
+226af00  # DIAG entry (temporary)
+7c6430  # DIAG entry (temporary)

@@ -1,7 +1,7 @@
 // The launcher's pages (launcher.h), in the settings screen's style (ui/theme.h).
 //
 //   welcome   two ways in: set up from the game files, or pick a build folder made before
-//   files     step 1: a card each for the keys, base game, update 3.0.2, DLC and the pt-BR translation: Browse…,
+//   files     step 1: a card each for the keys, base game, update 3.0.2 or 3.0.3, DLC and the pt-BR translation: Browse…,
 //             Search (the usual folders, results to pick from) or a file dropped on it; each file checked when chosen
 //   install   step 2: where the build goes, and what this computer has (with the command to install the rest)
 //   build     step 3: tools/setup_acnh.sh running: stages, progress, log, stop; the error state

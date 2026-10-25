@@ -27,7 +27,8 @@ incompleto**: `video.frame_rate = 60native` no `config.ini` (liga `NX_NATIVE60=1
 não aparece nas telas de configuração ainda). Sem esse valor nada muda: os ganchos só agem com `NX_NATIVE60=1`, e o
 modo de 30 fps segue igual.
 
-Endereços do `main` 3.0.2. Contexto em [STATUS.md](STATUS.md) ("60 fps").
+Endereços do `main` 3.0.2; no 3.0.3 a maioria está 0x10 adiante (`games/acnh/hooks_303.txt`, [ACNH.md](ACNH.md),
+"Updates"). Contexto em [STATUS.md](STATUS.md) ("60 fps").
 
 ## Estado
 

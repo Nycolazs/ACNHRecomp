@@ -125,6 +125,21 @@ Medido no dump 3.0.2, Linux x86-64 (Ubuntu 26.04, clang 21, Intel Iris Xe / Mesa
     outra do mesmo alvo: o re-bind do passe da água caía logo depois da apresentação, apagava a profundidade e o mar
     (translúcido) cobria tudo. Agora a limpeza é gravada marcada (`kClearOnce`) e decidida no replay, onde o quadro é
     o número de apresentações na ordem da fila (`nvn_cmd.cpp`, `nvn_clears.cpp`). A cena da Nook Inc. continua certa.
+33. **Atualização 3.0.3** (24/10/2026): suportada junto com a 3.0.2. A maior parte do código entre main+280c000 e
+    main+3e02000 andou 0x10; os dados não andaram ([ACNH.md](ACNH.md), "Updates"). Ganchos em
+    `games/acnh/hooks_303.txt` (o `setup_acnh.sh` escolhe a lista pelo build id do `main`), locais do "clear on bind"
+    e o SetFocus do `pointer.cpp` escolhidos em tempo de execução (`acnh::is_303()`). Com os locais de limpeza da
+    3.0.2 o 3.0.3 apresentava só preto. Medido da Nook Inc. até a chegada na ilha: AMD Radeon 780M (RADV) e NVIDIA
+    RTX 3080 Ti a 30 e a 60 fps; Steam Deck (RADV VanGogh) a 60 fps, com uma versão anterior das mesmas mudanças.
+34. **SpeedFix: fim de função que passa a cair adiante** (`recomp/analysis.py`): em main+162d084 e main+2ead6cc o patch
+    leva o desvio final da função uma palavra para dentro do preenchimento depois do fim do FDE. O corpo da variante
+    parava antes dele e o jogo abortava com "call into the middle of a function" (main+162d2fc), na abertura a 60
+    fps. Na análise da variante, uma função cuja última instrução deixa de desviar é estendida sobre as palavras do
+    patch que vêm depois; rotinas do patch no preenchimento depois de uma função que ainda termina em desvio seguem
+    separadas. Os mesmos dois locais e palavras existem no patch da 3.0.2.
+35. **Fontes no Arch / SteamOS** (`runtime/src/hle_pl.cpp`): as fontes do sistema ficam em `/usr/share/fonts/TTF`,
+    `/noto` e `/liberation`, que não estavam na lista. Sem fonte nenhuma o jogo lia uma vazia e falhava (dado nulo em
+    main+252450, ao carregar as fontes compartilhadas) no Steam Deck.
 
 ## Teste de jogo roteirizado (23/10/2026)
 

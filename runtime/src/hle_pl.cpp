@@ -66,6 +66,12 @@ const Font& font(uint32_t type) {
     candidates.push_back("/usr/share/fonts/liberation-sans/LiberationSans-Regular.ttf");
     candidates.push_back("/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf");
     candidates.push_back("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf");
+    // Arch and SteamOS: the same fonts in their own folders. With no font at all the game reads an empty one and
+    // faults (null data at main+252450 while it loads the shared fonts).
+    candidates.push_back("/usr/share/fonts/liberation/LiberationSans-Regular.ttf");
+    candidates.push_back("/usr/share/fonts/TTF/LiberationSans-Regular.ttf");
+    candidates.push_back("/usr/share/fonts/noto/NotoSans-Regular.ttf");
+    candidates.push_back("/usr/share/fonts/TTF/DejaVuSans.ttf");
 #endif
     std::vector<uint8_t> ttf;
     for (const auto& path : candidates) {

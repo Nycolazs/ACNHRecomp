@@ -157,13 +157,21 @@ done
 
 # ---- recompile ------------------------------------------------------------------------------------------------
 say "recompile (main, sdk, subsdk0)"
+# The update the dump was made with (main's build id): 3.0.3 moved most of the code by 0x10 (docs/ACNH.md, "Updates"),
+# so its hooked instructions are listed apart.
+MAIN_ID=$("$PY" -I -c 'import sys; print(open(sys.argv[1], "rb").read(0x50)[0x40:0x50].hex().upper())' "$G/exefs/main")
+case "$MAIN_ID" in
+  FCD2BB238ABE99E925B4E452DF1F41F1) HOOKS=games/acnh/hooks.txt; echo "main 3.0.2" ;;
+  FF1D1C05670DB6021C85B624A710B963) HOOKS=games/acnh/hooks_303.txt; echo "main 3.0.3" ;;
+  *) echo "main is neither 3.0.2 nor 3.0.3 (build id $MAIN_ID): import the 3.0.2 or 3.0.3 update"; exit 1 ;;
+esac
 recomp() {  # module base
   local m=$1 b=$2 H=()
-  [ "$m" = main ] && H=(--hooks games/acnh/hooks.txt)  # instructions that call the runtime first (games/acnh/game.cpp)
+  [ "$m" = main ] && H=(--hooks "$HOOKS")  # instructions that call the runtime first (games/acnh/game.cpp)
   # The native 60 FPS variant, kept once tools/setup_60fps.sh installed it.
   [ "$m" = main ] && [ -f "$G/speedfix_main.pchtxt" ] && H+=(--variant "$G/speedfix_main.pchtxt")
   if [ ! -f "$G/gen/$m/table.cpp" ] || [ "recomp/emit.py" -nt "$G/gen/$m/table.cpp" ] || force recomp ||
-     { [ "$m" = main ] && [ games/acnh/hooks.txt -nt "$G/gen/$m/table.cpp" ]; }; then
+     { [ "$m" = main ] && [ "$HOOKS" -nt "$G/gen/$m/table.cpp" ]; }; then
     "$PY" -m recomp "$G/exefs/$m" "$G/gen/$m" --name "$m" --base "$b" --jobs "$JOBS" ${H[@]+"${H[@]}"} > "$G/logs/recomp_$m.log" 2>&1
   fi
   tail -1 "$G/logs/recomp_$m.log"
