@@ -79,8 +79,10 @@ class ExtOps:
         kind = "s" if signed else "u"
         wide = "int64_t" if signed else "uint64_t"
         d, a = self.regop(i, ops[0]), self.regop(i, ops[1])
+        # The 64-bit forms (.4h, .2s, .1d) clear the upper half of the destination, as every 64-bit vector op does.
+        hi = " r.u64[1] = 0;" if n * dbits == 64 else ""
         return (f"{{ nx::V128 S = c.v[{a.n}]; nx::V128 r = c.v[{d.n}]; for (int k = 0; k < {n}; k++) "
-                f"r.{kind}{dbits}[k] = {'int' if signed else 'uint'}{dbits}_t({wide}(r.{kind}{dbits}[k]) + {wide}(S.{kind}{sbits}[2 * k]) + S.{kind}{sbits}[2 * k + 1]); "
+                f"r.{kind}{dbits}[k] = {'int' if signed else 'uint'}{dbits}_t({wide}(r.{kind}{dbits}[k]) + {wide}(S.{kind}{sbits}[2 * k]) + S.{kind}{sbits}[2 * k + 1]);{hi} "
                 f"c.v[{d.n}] = r; }}")
 
     def i_sadalp(self, f, i, ops):
