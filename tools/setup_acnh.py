@@ -407,8 +407,21 @@ def main():
     env["DOTNET_CLI_TELEMETRY_OPTOUT"] = "1"
     harness = os.path.join(P, "build", "spirv_harness", "bin", "Release", "net10.0", "spirv_harness.dll")
     if not os.path.exists(harness) or force("harness"):
+        hlog = os.path.join(logs, "harness.log")
         run([dotnet, "build", "tools/maxwell/spirv_harness/SpirvHarness.csproj", "-c", "Release", "-m:4"],
-            log=os.path.join(logs, "harness.log"), env=env)
+            log=hlog, env=env)
+        if not os.path.exists(harness):
+            # Built somewhere else (an SDK or a Directory.Build.props above the repository choosing another output
+            # folder): the one the build just wrote, else the build's own words.
+            found = [os.path.join(d, "spirv_harness.dll") for d, _, fs in os.walk(os.path.join(P, "build", "spirv_harness"))
+                     if "spirv_harness.dll" in fs and os.sep + "obj" + os.sep not in d + os.sep]
+            if not found:
+                with open(hlog, encoding="utf-8", errors="replace") as f:
+                    print("".join(f.readlines()[-25:]))
+                fail(f"the shader translator was built but spirv_harness.dll is not in {os.path.dirname(harness)} "
+                     f"(log: {hlog})")
+            harness = max(found, key=os.path.getmtime)
+            print(f"shader translator: {harness}")
 
     # ---- game -------------------------------------------------------------------------------------------------
     say("game (the game folder: ExeFS + RomFS, add-on content)")

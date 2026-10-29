@@ -70,6 +70,18 @@ def main():
                                  stderr=subprocess.STDOUT)
         return name, rc
 
+    failed = 0
+
+    def report(name):
+        """FAIL <name>, with the end of its log for the first few: what went wrong shows where the setup stopped."""
+        nonlocal failed
+        failed += 1
+        print(f"FAIL {name}")
+        if failed <= 3:
+            with open(os.path.join(o, name + ".log"), errors="replace") as log:
+                for line in log.read().strip().splitlines()[-6:]:
+                    print(f"    {line}")
+
     with concurrent.futures.ThreadPoolExecutor(args.jobs) as pool:
         for name, rc in pool.map(extract, groups):
             if not rc:
@@ -78,7 +90,7 @@ def main():
             with open(os.path.join(o, name + ".log"), errors="replace") as log:
                 if "no shader container recognised" in log.read():
                     continue
-            print(f"FAIL {name}")
+            report(name)
 
     # Containers without shaders leave an empty folder (or none): drop them and their logs.
     for d in os.listdir(o):
@@ -94,13 +106,13 @@ def main():
         if subprocess.call([py, os.path.join(ROOT, "tools", "maxwell", "exefs_shaders.py"),
                             os.path.join(args.game, "analysis", "main.bin"), "--extract", os.path.join(o, "exefs")],
                            stdout=log, stderr=subprocess.STDOUT):
-            print("FAIL exefs")
+            report("exefs")
     # The variations only models carry (their own Park_UBER.bfsha): without them some materials draw depth only, black
     # (character faces, the Nook Stop). Last: it keeps only the blocks no other group has. ~15 min for 60k archives.
     with open(os.path.join(o, "model.log"), "w") as log:
         if subprocess.call([py, os.path.join(ROOT, "tools", "maxwell", "model_shaders.py"), os.path.join(r, "Model"), o,
                             "--jobs", str(args.jobs)], stdout=log, stderr=subprocess.STDOUT):
-            print("FAIL model")
+            report("model")
     ngroups = sum(1 for d in os.listdir(o) if os.path.isdir(os.path.join(o, d)))
     nblocks = sum(1 for _, _, fs in os.walk(o) for f in fs if f.endswith(".code.bin") or (f.startswith("code_") and f.endswith(".bin")))
     print(f"groups: {ngroups}  blocks: {nblocks}")
