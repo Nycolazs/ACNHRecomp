@@ -507,6 +507,13 @@ CC=clang CXX=clang++ cmake -S . -B private/acnh/build -G Ninja -DNX_GAME=acnh -D
 ninja -C private/acnh/build acnh
 ```
 
+**The player** (what plays a folder ACNHRecomp-Importer prepared, with no game code of its own): configure with
+`-DNX_GAME_FROM_FOLDER=ON` and put `acnh` (`acnh.exe`) beside the launcher. It loads the game's code from the folder
+(`game/linux-x64/libacnh_game.so`, `game/macos-arm64/libacnh_game.dylib`, `game/windows-x64/acnh_game.dll`;
+`runtime/src/game_folder.cpp`) and refuses a library built against other runtime headers (`NX_GAME_ABI`, a hash of
+`runtime/include/nx/{cpu,module,runtime}.h`, which the importer carries a copy of). The Android app loads
+`game/android-arm64/libacnh_game.so` the same way.
+
 Notes:
 
 - The recompiler is re-run when `recomp/emit.py` is newer than the generated code.
