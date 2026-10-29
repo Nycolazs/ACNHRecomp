@@ -574,9 +574,10 @@ void pace_present(int interval) {
     static const bool off = std::getenv("NX_NO_FRAME_LIMIT") != nullptr;
     static const uint64_t fast_until = std::getenv("NX_FAST_UNTIL") ? std::strtoull(std::getenv("NX_FAST_UNTIL"), nullptr, 10) : 0;
     static uint64_t next = 0;
-    if (off || interval <= 0 || present_vsync_paced()) return;
+    if (off || interval <= 0) return;
     if (g_frame < fast_until) interval = 1;
-    set_present_interval(interval);
+    set_present_interval(interval);  // also when paced by vsync: vblank_hold (hle_vi.cpp) holds each image this long
+    if (present_vsync_paced()) return;
     uint64_t now = plat::monotonic_ns();
     if (next > now) plat::sleep_ns(next - now), now = plat::monotonic_ns();
     static uint64_t presents = 0, at2 = 0;  // how often the game asks for 30 fps (interval 2), per 600 presents
