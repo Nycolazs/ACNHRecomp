@@ -30,7 +30,12 @@ import zipfile
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 P = os.path.join(ROOT, "private")
 T = os.path.join(P, "third_party")
-MOVIE_LIBS = os.path.join(T, "vcpkg", "installed", "x64-windows-static-md")  # libvpx, libvorbis (vcpkg)
+# libvpx, libvorbis (vcpkg), release only: the game links no debug libraries. A setup from before keeps its own.
+MOVIE_TRIPLET = "x64-windows-static-md-release"
+MOVIE_LIBS = os.path.join(T, "vcpkg", "installed", MOVIE_TRIPLET)
+if not os.path.exists(os.path.join(MOVIE_LIBS, "lib", "vpx.lib")) and \
+        os.path.exists(os.path.join(T, "vcpkg", "installed", "x64-windows-static-md", "lib", "vpx.lib")):
+    MOVIE_LIBS = os.path.join(T, "vcpkg", "installed", "x64-windows-static-md")
 WIN = os.name == "nt"
 MAC = sys.platform == "darwin"
 
@@ -303,8 +308,8 @@ def main():
                 run([os.path.join(vcpkg, "bootstrap-vcpkg.bat"), "-disableMetrics"], log=os.path.join(logs, "vcpkg.log"))
             if os.path.exists(os.path.join(vcpkg, "vcpkg.exe")):
                 print("building libvpx and libvorbis (the game's movies; a few minutes, once)", flush=True)
-                run([os.path.join(vcpkg, "vcpkg.exe"), "install", "libvpx:x64-windows-static-md",
-                     "libvorbis:x64-windows-static-md", "--disable-metrics"], log=os.path.join(logs, "vcpkg.log"),
+                run([os.path.join(vcpkg, "vcpkg.exe"), "install", f"libvpx:{MOVIE_TRIPLET}",
+                     f"libvorbis:{MOVIE_TRIPLET}", "--disable-metrics"], log=os.path.join(logs, "vcpkg.log"),
                     env=env, cwd=vcpkg)
             else:
                 print("git not found: no libvpx, the game's movies will be black", flush=True)
