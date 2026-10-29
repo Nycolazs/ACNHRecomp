@@ -155,16 +155,20 @@ std::vector<LinearLevel> deswizzle_texture(const uint8_t* tiled, uint64_t tiled_
                                           block_height_gobs0);
     if (!tiled || t.levels.empty() || t.tiled_size > tiled_size) return {};
     linear_out.resize(t.linear_size);
+    deswizzle_layout(tiled, t, bytes_per_block, linear_out.data());
+    return t.levels;
+}
+
+void deswizzle_layout(const uint8_t* tiled, const TextureLayout& t, uint32_t bytes_per_block, uint8_t* dst) {
     // Level-major output (all layers of level 0, then of level 1, ...) while the source is layer-major: each
     // (level, layer) is still one contiguous source range, so the order of the walk does not matter for reads.
     for (const LinearLevel& l : t.levels) {
         for (uint32_t layer = 0; layer < t.layers; layer++) {
             deswizzle_block_linear(tiled + layer * t.tiled_layer_stride + l.tiled_offset,
-                                   linear_out.data() + l.offset + layer * l.layer_size, l.width_blocks,
-                                   l.height_blocks, 1, bytes_per_block, l.block_height_gobs, 1);
+                                   dst + l.offset + layer * l.layer_size, l.width_blocks, l.height_blocks, 1,
+                                   bytes_per_block, l.block_height_gobs, 1);
         }
     }
-    return t.levels;
 }
 
 }  // namespace nx::nvn

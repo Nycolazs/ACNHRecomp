@@ -230,6 +230,7 @@ std::vector<std::pair<std::string, std::string>> config_preset(const std::string
 
 void config_apply() {
     if (!g_loaded) config_load();
+    mods_fetch();  // before the language and the frame rate look for them
     // Game language "auto": from the system, unless a language file or NX_LANGUAGE says otherwise. Only applied:
     // the entry keeps "auto", so the choice stays automatic.
     std::string game_lang = config_get("game.language", "auto");
@@ -245,6 +246,8 @@ void config_apply() {
     for (const Mapping& m : kMappings) {
         ConfigEntry* e = find(m.key);
         std::string value = std::string(m.key) == "game.language" ? game_lang : e ? e->value : std::string();
+        // No frame rate chosen: 60 when the SpeedFix is there (the loader keeps 30 if the game's code lacks it).
+        if (value.empty() && std::string(m.key) == "video.frame_rate" && speedfix_installed()) value = "60";
         if (value.empty()) continue;
         std::string v = m.map(value);
         if (std::string(m.env) == "NX_HANDHELD") {

@@ -450,7 +450,11 @@ void page_video() {
               w);
     });
     row("video.framerate", "video.framerate.desc", [&](float w) {
-        combo("video.frame_rate", "30", {{"30", console("video.framerate.30")}, {"60", tr("video.framerate.60")}}, w);
+        // No choice yet: 60 when the SpeedFix is in the game folder (config.cpp applies the same default).
+        std::error_code ec;
+        const bool sf = fs::is_directory(fs::u8path(plat::data_root() + "/mods/speedfix60/romfs"), ec);
+        combo("video.frame_rate", sf ? "60" : "30",
+              {{"30", console("video.framerate.30")}, {"60", tr("video.framerate.60")}}, w);
     });
     // Built-in (nvn_framegen.cpp) always; lsfg-vk when it is installed (or already chosen).
     bool lsfg = lsfg_available();

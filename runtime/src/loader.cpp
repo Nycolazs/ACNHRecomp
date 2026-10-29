@@ -472,8 +472,36 @@ NX_GAME_API VariantRegistrar::VariantRegistrar(const char* module, const uint32_
     variants()[module] = {words, count};
 }
 
+namespace {
+void put_env(const char* name, const std::string& value) {
+#if defined(_WIN32)
+    _putenv_s(name, value.c_str());
+#else
+    setenv(name, value.c_str(), 1);
+#endif
+}
+}  // namespace
+
 void load_modules(const ModuleInfo* const* mods, size_t count, const std::string& data_dir) {
     nx_variant_on = std::getenv("NX_SPEEDFIX") && std::getenv("NX_SPEEDFIX")[0] == '1';
+    // The SpeedFix's files without its code (a game folder whose main was compiled without the patch): 60 presents a
+    // second would run the game twice as fast, so it stays at 30 with its own parameters.
+    if (nx_variant_on && !variants().count("main")) {
+        log("loader: frame rate 60 asked, but this game's code has no SpeedFix: 30 fps");
+        nx_variant_on = false;
+        put_env("NX_SPEEDFIX", "0");
+        put_env("NX_PRESENT_INTERVAL", "2");
+        if (const char* m = std::getenv("NX_MODS")) {
+            std::string kept, list = m;
+            for (size_t at = 0; at <= list.size();) {
+                size_t end = std::min(list.find(',', at), list.size());
+                std::string one = list.substr(at, end - at);
+                if (!one.empty() && one != "speedfix60") kept += (kept.empty() ? "" : ",") + one;
+                at = end + 1;
+            }
+            put_env("NX_MODS", kept);
+        }
+    }
     if (const char* r = std::getenv("NX_VARIANT_RANGE")) {
         unsigned long long lo = 0, hi = 0;
         if (std::sscanf(r, "%llx-%llx", &lo, &hi) == 2) nx_variant_lo = lo, nx_variant_hi = hi;

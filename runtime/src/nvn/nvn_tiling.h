@@ -71,4 +71,8 @@ std::vector<LinearLevel> deswizzle_texture(const uint8_t* tiled, uint64_t tiled_
                                            uint32_t block_h, uint32_t bytes_per_block,
                                            std::vector<uint8_t>& linear_out, uint32_t block_height_gobs0 = 0);
 
+// Untiles every level of every layer of `t` (block_linear_layout) into `dst`, t.linear_size bytes; the caller has
+// checked that `tiled` holds t.tiled_size bytes. The gaps between levels are left as they were.
+void deswizzle_layout(const uint8_t* tiled, const TextureLayout& t, uint32_t bytes_per_block, uint8_t* dst);
+
 }  // namespace nx::nvn

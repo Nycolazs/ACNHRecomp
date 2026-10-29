@@ -241,6 +241,39 @@ void upload_texture(VkCommandBuffer cb, const Texture& t, GpuImage& img, uint64_
         return;
     }
     const uint64_t p0 = plat::monotonic_ns();
+    // Nothing to convert after untiling (the common case): untiled straight into the staging memory, without the
+    // linear buffer in between (its allocation, a page fault per 4 KB, and a second pass over the bytes: the first
+    // map or phone screen of a session uploads ~10 MB in one frame). NX_UNTILE_COPY=1: through the buffer, as before.
+    static const bool untile_copy = std::getenv("NX_UNTILE_COPY") != nullptr;
+    if (!untile_copy && !decode && !widen && !astc_decoded(t.format) && !(img.alpha_from_r && bytes == 1)) {
+        TextureLayout lay = block_linear_layout(img.width, img.height, layers, img.levels, bw, bh, bytes,
+                                                t.block_height_gobs);
+        if (!lay.levels.empty() && lay.tiled_size <= t.storage_size) {
+            Upload u = texture_stage(lay.linear_size);
+            deswizzle_layout(reinterpret_cast<const uint8_t*>(t.memory), lay, bytes, u.ptr);
+            if (const uint64_t p1 = plat::monotonic_ns(); p1 - p0 > 4'000'000) {
+                static int logged = 0;
+                if (logged++ < 60)
+                    log("upload slow: %ux%u fmt %#x levels %u layers %u, %.1f MB: untiled into staging %.1f ms",
+                        img.width, img.height, t.format, img.levels, layers, double(lay.linear_size) / 1e6,
+                        double(p1 - p0) / 1e6);
+            }
+            for (uint32_t k = 0; k < lay.levels.size(); k++) {
+                VkBufferImageCopy r{};
+                r.bufferOffset = u.offset + lay.levels[k].offset;
+                r.imageSubresource = {img.aspect, k, 0, img.view_type == VK_IMAGE_VIEW_TYPE_3D ? 1u : img.layers};
+                r.imageExtent = {lay.levels[k].width, lay.levels[k].height,
+                                 img.view_type == VK_IMAGE_VIEW_TYPE_3D ? layers : 1u};
+                copies.push_back(r);
+            }
+            if (!copies_fit(t, copies.data(), uint32_t(copies.size()), u.offset, lay.linear_size, bw, bh, host_bytes))
+                return clear_image(cb, img);
+            transition(cb, img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+            p_vkCmdCopyBufferToImage(cb, u.buffer, img.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                     uint32_t(copies.size()), copies.data());
+            return;
+        }
+    }
     auto levels = deswizzle_texture(reinterpret_cast<const uint8_t*>(t.memory), t.storage_size, img.width,
                                     img.height, layers, img.levels, bw, bh, bytes, linear, t.block_height_gobs);
     if (levels.empty()) {
