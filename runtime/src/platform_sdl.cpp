@@ -79,6 +79,8 @@ void update_refresh_hz();  // below, with display_refresh_hz
 
 bool sdl_start() {
     g_main_thread = std::this_thread::get_id();
+    // One app id with the launcher: Wayland and the taskbars find the icon in io.github.acnhrecomp.desktop.
+    SDL_SetAppMetadata("ACNHRecomp", NX_VERSION_STRING, "io.github.acnhrecomp");
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_AUDIO)) {
         std::fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
         return false;
@@ -131,6 +133,7 @@ void* create_window() {
             log_line(SDL_GetError());
             return;
         }
+        nx::plat::set_window_icon(g_window);
         if (!headless() && !g_held_back) {
             SDL_RaiseWindow(g_window);
             if (setting("fullscreen") == "1") SDL_SetWindowFullscreen(g_window, true);

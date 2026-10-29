@@ -8,15 +8,22 @@ DIR=${1:?usage: tools/release_readme.sh <folder> windows|macos|linux}
 OS=${2:?usage: tools/release_readme.sh <folder> windows|macos|linux}
 case $OS in
   windows) START='double-click "Start ACNHRecomp.bat" (or "ACNHRecomp Launcher.exe")'
+           KEEP='"Add to desktop" on the launcher'"'"'s home page puts a shortcut with the icon on the desktop and in
+   the Start menu.'
            NEEDS='Windows 10 or 11 (x64) and a GPU with a Vulkan 1.3 driver (NVIDIA, AMD or Intel; keep it up to date).'
            LIBS='SDL3 (zlib licence); the Microsoft Visual C++ runtime (vcruntime140, msvcp140: redistributable).'
            EOL=$'\r\n' ;;
-  macos)   START='double-click "Start ACNHRecomp.command". The first time macOS may refuse to open it: right-click it,
-   choose Open, then Open again.'
+  macos)   START='double-click "Start ACNHRecomp.command" the first time (it lets macOS open ACNHRecomp.app, which
+   is not signed by Apple, and opens it). If macOS still refuses: right-click ACNHRecomp.app, choose Open, then
+   Open again (or System Settings > Privacy & Security > Open Anyway).'
+           KEEP='"Install in Applications" on the launcher'"'"'s home page copies ACNHRecomp.app into Applications and
+   puts it on the desktop: from then on open it from Launchpad, Spotlight or the Dock.'
            NEEDS='a Mac with Apple Silicon (M1 or newer) and macOS 14 or newer.'
            LIBS='SDL3 (zlib licence), the Vulkan loader and MoltenVK (Apache 2.0), libvpx, libvorbis and libogg (BSD).'
            EOL=$'\n' ;;
   linux)   START='run "./Start ACNHRecomp.sh" (or open it from your file manager).'
+           KEEP='"Add to desktop" on the launcher'"'"'s home page adds ACNHRecomp, with its icon, to the applications
+   menu and to the desktop (keep this folder where it is: the shortcut points into it).'
            NEEDS='a 64-bit x86 PC (a CPU with AVX2: Intel Haswell / AMD Zen or newer), glibc 2.35 or newer (Ubuntu 22.04,
    Fedora 36, Debian 12 and newer) and a Vulkan 1.3 driver (Mesa, or NVIDIA'"'"'s): sudo apt install mesa-vulkan-drivers'
            LIBS='SDL3 (zlib licence), libvpx, libvorbis and libogg (BSD). The Vulkan loader and driver are the system'"'"'s.'
@@ -50,6 +57,17 @@ your saves (the "user" folder inside your game folder) before playing.
 3. Choose your game folder
    The launcher asks for one thing: the folder ACNHRecomp-Importer wrote. Choose it and the game starts. Next
    time, the launcher remembers it (its home page: Play, Settings).
+
+4. Keep it handy
+   $KEEP
+
+Brazilian Portuguese and 60 FPS: the first start downloads the pt-BR fan translation and the files of the 60 FPS
+SpeedFix into your game folder (a few seconds, checked before use). Portuguese is then in the game's languages,
+and the game runs at 60 FPS at its normal speed. Without internet it starts normally and tries again the next day.
+
+New versions: the launcher looks for one when it opens and says so on its home page, with a button to download
+it (Settings: "Look for new versions" turns it off). The version in use is in the launcher's Settings and in the
+game's settings (About).
 
 Needs: $NEEDS
 

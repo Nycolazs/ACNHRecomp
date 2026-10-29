@@ -203,22 +203,70 @@ has .NET 10), the Ryubing shader translator source and Dear ImGui.
 ### Downloads
 
 The [releases](https://github.com/Nycolazs/ACNHRecomp/releases) are ready to play: none of them has any part of the
-game, and none needs a compiler. Get your game folder from [ACNHRecomp-Importer](#your-game-folder) (on our
-[Discord](https://discord.gg/VJW9Dtdu7a)), then:
+game, and none needs a compiler. You need two things:
 
-| File | What it is |
+1. **Your game folder**, made by [ACNHRecomp-Importer](#your-game-folder) (on our
+   [Discord](https://discord.gg/VJW9Dtdu7a)) from your own copy of the game. Run it once and keep the folder it writes.
+2. **The package for your system** from the [latest release](https://github.com/Nycolazs/ACNHRecomp/releases/latest):
+
+| File | System |
 |---|---|
-| `ACNHRecomp-<version>-windows-x64.zip` | The launcher and the player for Windows 10/11 (x64): unzip, double-click `Start ACNHRecomp.bat` |
-| `ACNHRecomp-<version>-macOS-arm64.zip` | The launcher and the player for macOS 14+ on Apple Silicon: unzip, double-click `Start ACNHRecomp.command` (the first time: right-click > *Open*) |
-| `ACNHRecomp-<version>-linux-x64.tar.gz` | The launcher and the player for Linux x86-64 (glibc 2.35+: Ubuntu 22.04 and newer): extract, run `Start ACNHRecomp.sh` |
-| `ACNHRecomp-<version>-android.apk` | The Android app (Snapdragon / Adreno 6xx or newer, Android 10+); it plays the game folder ACNHRecomp-Importer prepared ([docs/ANDROID.md](docs/ANDROID.md)) |
+| `ACNHRecomp-<version>-windows-x64.zip` | Windows 10/11, x64 |
+| `ACNHRecomp-<version>-macOS-arm64.zip` | macOS 14 or newer, Apple Silicon (M1 or newer) |
+| `ACNHRecomp-<version>-linux-x64.tar.gz` | Linux x86-64, glibc 2.35+ (Ubuntu 22.04, Fedora 36, Debian 12 and newer) |
+| `ACNHRecomp-<version>-android.apk` | Android 10+, Snapdragon (Adreno 6xx or newer): see [docs/ANDROID.md](docs/ANDROID.md) |
 | `libvulkan_freedreno.so` | The Turnip Vulkan driver (Mesa, MIT), already inside the APK; for `tools/android_install.sh` |
+
+#### Windows
+
+1. Unzip `ACNHRecomp-<version>-windows-x64.zip` into a folder of your own (for example `Documents\ACNHRecomp`), not
+   inside the zip viewer.
+2. Double-click **`ACNHRecomp Launcher.exe`** (or `Start ACNHRecomp.bat`). If SmartScreen warns about an unknown
+   app: *More info* > *Run anyway*.
+3. Choose your game folder. The game starts.
+4. On the launcher's home page, **Add to desktop** puts a shortcut with the ACNHRecomp icon on the desktop and in the
+   Start menu (search for "ACNHRecomp"). Keep the unzipped folder where it is: the shortcut points into it.
+
+#### macOS
+
+1. Unzip `ACNHRecomp-<version>-macOS-arm64.zip`. It holds **`ACNHRecomp.app`** and `Start ACNHRecomp.command`.
+2. The first time, double-click **`Start ACNHRecomp.command`**: the app is not signed by Apple, and this lets macOS
+   open it (it removes the download quarantine) and then opens it. If macOS still refuses, right-click
+   `ACNHRecomp.app` > *Open* > *Open*, or *System Settings* > *Privacy & Security* > *Open Anyway*.
+3. Choose your game folder. The game starts.
+4. On the launcher's home page, **Install in Applications** copies `ACNHRecomp.app` into Applications (or
+   `~/Applications` without administrator rights) and puts it on the desktop. From then on open it from Launchpad,
+   Spotlight or the Dock like any app; the downloaded folder can be deleted.
+
+#### Linux
+
+1. Extract the package: `tar -xzf ACNHRecomp-<version>-linux-x64.tar.gz`.
+2. Run **`./Start ACNHRecomp.sh`** in the `ACNHRecomp` folder (or double-click it in your file manager). You need a
+   Vulkan driver: `sudo apt install mesa-vulkan-drivers` (or your distribution's, or NVIDIA's).
+3. Choose your game folder. The game starts.
+4. On the launcher's home page, **Add to desktop** adds ACNHRecomp, with its icon, to the applications menu and to
+   the desktop (`~/.local/share/applications/io.github.acnhrecomp.desktop`). Keep the extracted folder where it is.
+
+#### The first start, updates and versions
+
+- **Brazilian Portuguese and 60 FPS** come by themselves: the first start downloads the pt-BR fan translation and the
+  files of tmouh's 60 FPS SpeedFix into your game folder (a few seconds; each file is checked against its SHA-256).
+  Português (Brasil) is then in the game's languages (chosen by itself on a Portuguese system), and the game runs at
+  60 FPS at its normal speed unless you pick 30. A game folder whose code was prepared without the SpeedFix stays at
+  30. Without internet the game starts normally and tries again the next day; `game.mod_fetch = off` in
+  `config.ini` turns the download off.
+- **New versions:** the launcher looks for a newer release on GitHub each time it opens and says so on its home page,
+  with a button to its download page. *Settings* > *Look for new versions when the launcher opens* turns it off. To
+  update, download the new package and replace the old folder (or app): your game folder, saves and settings are
+  not in it, so nothing is lost.
+- **The version in use** is at the bottom of the launcher's *Settings*, and in the game's settings (F1) > *About*.
+- **The icon:** the launcher, the game's window, the taskbar / Dock and the shortcuts all show the ACNHRecomp icon.
 
 The launcher asks for one thing, the game folder ACNHRecomp-Importer wrote, and starts the game; the player beside
 it (`acnh`) loads the game's code from that folder (`game/<platform>/`, see [Building from source](#building-from-source)).
 Each package carries what it needs (SDL3, and on macOS the Vulkan loader and MoltenVK); a GPU with a Vulkan 1.3
 driver is the one requirement. The packages are made by the repository's **Build** workflow (`.github/workflows/build.yml`,
-`tools/package_release_*.sh`).
+`tools/package_release_*.sh`; the icons are in `assets/`).
 
 The sections below are for building from this repository instead (developers, other versions of the game).
 
@@ -472,9 +520,10 @@ The game language can be any of the 14 languages the game ships with: English (U
 America), French (France, Canada), German, Italian, Dutch, Russian, Japanese, Korean, and Simplified and
 Traditional Chinese. On "Automatic" it follows the system locale.
 
-**Brazilian Portuguese** is available through a community fan translation. It is **not distributed with this
-project**: it consists of modified game files, and its author asks that it not be redistributed. If you have the
-package, install it from your own copy:
+**Brazilian Portuguese** is available through a community fan translation. It is **not part of this repository or
+of the release packages** (it consists of modified game files): the released player downloads it into your game
+folder at its first start (see [The first start, updates and versions](#the-first-start-updates-and-versions)). In
+a build from this repository, install it from your own copy of the package:
 
 ```sh
 python3 tools/setup_acnh.py --mod ptbr=~/Downloads/<translation package>.zip
@@ -659,7 +708,8 @@ More detail: [docs/ACNH.md](docs/ACNH.md) (the game's modules, RomFS and shader 
   offline.
 - [Dear ImGui](https://github.com/ocornut/imgui) (MIT): the settings screen.
 - [ACNH 60 FPS + SpeedFix](https://github.com/tmouh/acnh-60fps) by tmouh (CC BY-NC 4.0): the 60 FPS game-speed
-  rescaling, downloaded by `tools/setup_60fps.sh` and applied on your machine (not redistributed here).
+  rescaling, downloaded by `tools/setup_60fps.sh` (or, with a release, at the first start) and applied on your
+  machine (not part of this repository).
 - [SDL3](https://github.com/libsdl-org/SDL), [Capstone](https://www.capstone-engine.org/),
   [Unicorn](https://www.unicorn-engine.org/), libvpx, libvorbis, AMD FidelityFX FSR 1.
 - Projects studied before starting (summary in [docs/REFERENCES.md](docs/REFERENCES.md)):

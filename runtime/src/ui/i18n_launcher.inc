@@ -3,6 +3,18 @@
 // also uses some of the settings screen's keys (common.*, game.language, video.*).
 
 const Entry kLauncherEn[] = {
+    {"launcher.home.desktop", "Add to desktop"},
+    {"launcher.home.desktop.desc", "A shortcut with the icon on the desktop and in the start menu"},
+    {"launcher.home.install_app", "Install in Applications"},
+    {"launcher.home.install_app.desc", "ACNHRecomp in Applications and on the desktop, with its icon"},
+    {"launcher.desktop.done", "Done: ACNHRecomp is in {}"},
+    {"launcher.desktop.failed", "The shortcut could not be made here"},
+    {"launcher.update.available", "A new version of ACNHRecomp is out: {}"},
+    {"launcher.update.get", "Download it"},
+    {"launcher.update.check", "Look for new versions when the launcher opens"},
+    {"launcher.update.newer", "{} is available"},
+    {"launcher.update.latest", "this is the latest version"},
+    {"launcher.version", "Version in use: {}"},
     {"launcher.subtitle", "Animal Crossing: New Horizons, recompiled for PC"},
     {"launcher.welcome.title", "Welcome!"},
     {"launcher.welcome.text", "ACNHRecomp turns your own copy of Animal Crossing: New Horizons into a native program for this computer. How would you like to start?"},
@@ -152,6 +164,18 @@ const Entry kLauncherEn[] = {
 };
 
 const Entry kLauncherPtBr[] = {
+    {"launcher.home.desktop", "Adicionar à área de trabalho"},
+    {"launcher.home.desktop.desc", "Um atalho com o ícone na área de trabalho e no menu iniciar"},
+    {"launcher.home.install_app", "Instalar em Aplicativos"},
+    {"launcher.home.install_app.desc", "O ACNHRecomp em Aplicativos e na mesa, com o ícone"},
+    {"launcher.desktop.done", "Pronto: o ACNHRecomp está em {}"},
+    {"launcher.desktop.failed", "Não foi possível criar o atalho aqui"},
+    {"launcher.update.available", "Saiu uma nova versão do ACNHRecomp: {}"},
+    {"launcher.update.get", "Baixar"},
+    {"launcher.update.check", "Procurar novas versões ao abrir o launcher"},
+    {"launcher.update.newer", "a {} está disponível"},
+    {"launcher.update.latest", "esta é a versão mais recente"},
+    {"launcher.version", "Versão em uso: {}"},
     {"launcher.subtitle", "Animal Crossing: New Horizons, recompilado para PC"},
     {"launcher.welcome.title", "Boas-vindas!"},
     {"launcher.welcome.text", "O ACNHRecomp transforma a sua própria cópia de Animal Crossing: New Horizons em um programa nativo para este computador. Como você quer começar?"},
@@ -300,6 +324,18 @@ const Entry kLauncherPtBr[] = {
 };
 
 const Entry kLauncherEs[] = {
+    {"launcher.home.desktop", "Añadir al escritorio"},
+    {"launcher.home.desktop.desc", "Un acceso directo con el icono en el escritorio y en el menú de inicio"},
+    {"launcher.home.install_app", "Instalar en Aplicaciones"},
+    {"launcher.home.install_app.desc", "ACNHRecomp en Aplicaciones y en el escritorio, con su icono"},
+    {"launcher.desktop.done", "Listo: ACNHRecomp está en {}"},
+    {"launcher.desktop.failed", "No se pudo crear el acceso directo aquí"},
+    {"launcher.update.available", "Hay una nueva versión de ACNHRecomp: {}"},
+    {"launcher.update.get", "Descargar"},
+    {"launcher.update.check", "Buscar nuevas versiones al abrir el launcher"},
+    {"launcher.update.newer", "la {} está disponible"},
+    {"launcher.update.latest", "es la versión más reciente"},
+    {"launcher.version", "Versión en uso: {}"},
     {"launcher.subtitle", "Animal Crossing: New Horizons, recompilado para PC"},
     {"launcher.welcome.title", "¡Te damos la bienvenida!"},
     {"launcher.welcome.text", "ACNHRecomp convierte tu propia copia de Animal Crossing: New Horizons en un programa nativo para este ordenador. ¿Cómo quieres empezar?"},

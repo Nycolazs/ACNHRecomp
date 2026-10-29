@@ -436,15 +436,26 @@ BuildContents build_contents(const std::string& data) {
 }
 
 // The player beside the launcher (a release: the game's code comes from the game folder), "" when there is none.
+// The folder the launcher's executable is in (SDL names Contents/Resources inside ACNHRecomp.app; the player and the
+// libraries are in Contents/MacOS with it).
+std::string own_dir() {
+    const char* base = SDL_GetBasePath();
+    if (!base) return "";
+    std::string dir = base;
+    if (const size_t r = dir.rfind("/Contents/Resources/"); r != std::string::npos && r + 20 == dir.size())
+        dir = dir.substr(0, r) + "/Contents/MacOS/";
+    return dir;
+}
+
 std::string player_beside() {
 #if defined(_WIN32)
     const char* exe = "acnh.exe";
 #else
     const char* exe = "acnh";
 #endif
-    const char* base = SDL_GetBasePath();
+    const std::string base = own_dir();
     std::error_code ec;
-    if (!base || !fs::is_regular_file(u8(base) / exe, ec)) return "";
+    if (base.empty() || !fs::is_regular_file(u8(base) / exe, ec)) return "";
     return str(u8(base) / exe);
 }
 

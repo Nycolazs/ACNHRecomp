@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.25)
 project(SwitchGamesRecomp C CXX)
+if(WIN32)
+    enable_language(RC)  # assets/acnhrecomp.rc: the executables' icon
+endif()
 
 set(CMAKE_CXX_STANDARD 20)
 if(ANDROID)
@@ -368,7 +371,8 @@ elseif(APPLE)
     # (brew install sdl3 vulkan-headers vulkan-loader molten-vk).
     find_package(SDL3 REQUIRED CONFIG)
     find_path(NX_VULKAN_INCLUDE vulkan/vulkan.h HINTS /opt/homebrew/include /usr/local/include)
-    add_executable(${NX_GAME} ${NX_RUNTIME_SOURCES} runtime/src/platform_mac.cpp runtime/src/memguard_mac.cpp runtime/src/cpu_profile.cpp)
+    add_executable(${NX_GAME} ${NX_RUNTIME_SOURCES} runtime/src/platform_mac.cpp runtime/src/memguard_mac.cpp runtime/src/cpu_profile.cpp
+                   runtime/src/app_icon.cpp)
     target_include_directories(${NX_GAME} PRIVATE runtime/include runtime/src "${NX_GAME_DIR}" "${NX_VULKAN_INCLUDE}")
     target_link_libraries(${NX_GAME} PRIVATE SDL3::SDL3)
     if(NX_GAME_FROM_FOLDER)
@@ -396,7 +400,8 @@ elseif(UNIX)
     find_package(SDL3 REQUIRED CONFIG)
     find_package(Threads REQUIRED)
     find_path(NX_VULKAN_INCLUDE vulkan/vulkan.h HINTS "${NX_VULKAN_SDK}/include" /usr/include /usr/local/include)
-    add_executable(${NX_GAME} ${NX_RUNTIME_SOURCES} runtime/src/platform_linux.cpp runtime/src/memguard_linux.cpp runtime/src/cpu_profile.cpp)
+    add_executable(${NX_GAME} ${NX_RUNTIME_SOURCES} runtime/src/platform_linux.cpp runtime/src/memguard_linux.cpp runtime/src/cpu_profile.cpp
+                   runtime/src/app_icon.cpp)
     target_include_directories(${NX_GAME} PRIVATE runtime/include runtime/src "${NX_GAME_DIR}" "${NX_VULKAN_INCLUDE}")
     target_link_libraries(${NX_GAME} PRIVATE SDL3::SDL3 Threads::Threads ${CMAKE_DL_LIBS})
     target_compile_options(${NX_GAME} PRIVATE -fvisibility=hidden -march=x86-64-v3 -ffp-contract=off)
@@ -426,6 +431,7 @@ else()
     find_package(SDL3 REQUIRED CONFIG)
     find_path(NX_VULKAN_INCLUDE vulkan/vulkan.h HINTS "${NX_VULKAN_SDK}/Include")
     add_executable(${NX_GAME} ${NX_RUNTIME_SOURCES} runtime/src/platform_win.cpp runtime/src/platform_sdl.cpp
+                   runtime/src/app_icon.cpp assets/acnhrecomp.rc
                    runtime/src/memguard_win.cpp)
     target_include_directories(${NX_GAME} PRIVATE runtime/include runtime/src "${NX_GAME_DIR}" "${NX_VULKAN_INCLUDE}")
     target_link_libraries(${NX_GAME} PRIVATE SDL3::SDL3 ole32 psapi winmm dxgi)
@@ -485,7 +491,7 @@ execute_process(COMMAND git describe --always --dirty WORKING_DIRECTORY ${CMAKE_
 if(NOT NX_GIT_DESCRIBE)
     set(NX_GIT_DESCRIBE "dev")
 endif()
-target_compile_definitions(${NX_GAME} PRIVATE NX_VERSION_STRING="0.4-${NX_GIT_DESCRIBE}")
+target_compile_definitions(${NX_GAME} PRIVATE NX_VERSION_STRING="${NX_GIT_DESCRIBE}")
 
 if("subsdk0" IN_LIST NX_MODULES AND NOT NX_GAME_FROM_FOLDER)
     target_compile_definitions(${NX_GAME} PRIVATE NX_HAS_SUBSDK0)

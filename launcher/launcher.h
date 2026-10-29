@@ -19,6 +19,10 @@
 struct ImFont;
 struct SDL_Window;
 
+namespace nx::plat {
+void set_window_icon(SDL_Window* window);  // runtime/src/app_icon.cpp
+}
+
 namespace launcher {
 
 // ---- pages (pages.cpp) ----------------------------------------------------------------------------------------
@@ -98,7 +102,23 @@ struct Build {
 // The build in `folder` (a launcher install, private/acnh, the repository itself, a build/ folder or a portable
 // folder with data/): "" and `out` filled, else the i18n key of the reason.
 const char* find_build(const std::string& folder, Build& out);
+// ---- the desktop and new releases (desktop.cpp) ---------------------------------------------------------------
+
+struct DesktopResult {
+    bool ok = false;
+    std::string where;  // the folder the shortcut (or, on macOS, the app) went to
+};
+DesktopResult add_to_desktop();  // a shortcut with the app's icon: desktop + Start menu / Applications / app menu
+struct UpdateInfo {
+    bool done = false, available = false;
+    std::string version, url;  // the latest release's tag and page
+};
+std::string current_version();  // "v0.6.1"
+void update_check_start();      // once per start, unless launcher.update_check = 0
+UpdateInfo update_info();
+
 // The player beside the launcher (a release, whose game code comes from the game folder): its path, else "".
+std::string own_dir();        // the launcher's own folder (Contents/MacOS inside ACNHRecomp.app)
 std::string player_beside();
 
 // What a build holds: its game version (version.ini, "" if unknown) and the add-on content imported with it (aoc/).

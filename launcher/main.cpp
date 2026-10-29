@@ -31,7 +31,7 @@ using namespace launcher;
 
 int main(int argc, char** argv) {
     (void)argc, (void)argv;
-    SDL_SetAppMetadata("ACNHRecomp", NX_VERSION_STRING, "io.github.acnhrecomp.launcher");
+    SDL_SetAppMetadata("ACNHRecomp", NX_VERSION_STRING, "io.github.acnhrecomp");
     if (!SDL_Init(SDL_INIT_VIDEO)) {
         std::fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
         return 1;
@@ -56,6 +56,7 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "SDL_CreateWindow: %s\n", SDL_GetError());
         return 1;
     }
+    nx::plat::set_window_icon(window);
     SDL_SetWindowMinimumSize(window, 360, 480);
     SDL_Renderer* renderer = SDL_CreateRenderer(window, nullptr);
     if (!renderer) {

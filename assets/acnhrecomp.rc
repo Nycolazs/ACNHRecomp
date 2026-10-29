@@ -1,0 +1,2 @@
+// The icon of acnh.exe and of the launcher (Explorer, the taskbar, shortcuts). CMakeLists.txt / launcher.cmake.
+1 ICON "acnhrecomp.ico"

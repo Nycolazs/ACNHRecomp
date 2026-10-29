@@ -21,7 +21,11 @@ struct ModuleInfo;
 void log_flush();  // loader.cpp: the lines queued for the log file, written now
 }  // namespace nx
 
+struct SDL_Window;
+
 namespace nx::plat {
+
+void set_window_icon(SDL_Window* window);  // app_icon.cpp (computers)
 
 #ifdef NX_GAME_DYNAMIC
 // ---- the game's code from the game folder (game_folder.cpp on desktop, platform_android.cpp on Android) ----

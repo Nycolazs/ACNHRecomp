@@ -269,6 +269,7 @@ void* create_window() {
             log_line(SDL_GetError());
             return;
         }
+        nx::plat::set_window_icon(g_window);
         if (!headless()) {
             SDL_RaiseWindow(g_window);  // without an app bundle it does not come to the front
             // The saved choice (video.fullscreen): the window opened in a window though the settings said full screen.
@@ -873,12 +874,19 @@ int main(int argc, char** argv) {
     // A release package: the Vulkan loader and MoltenVK beside the player (tools/package_release_mac.sh), before any
     // installed ones. A VK_DRIVER_FILES or SDL_VULKAN_LIBRARY in the environment wins.
     if (const char* base = SDL_GetBasePath()) {
-        const std::string dir = base, loader = dir + "libvulkan.1.dylib", icd = dir + "MoltenVK_icd.json";
+        // Inside ACNHRecomp.app the libraries are in Contents/MacOS with the player, the ICD file in
+        // Contents/Resources (SDL's base there); in a plain folder both are beside the player.
+        std::string dir = base;
+        if (const size_t r = dir.rfind("/Contents/Resources/"); r != std::string::npos && r + 20 == dir.size())
+            dir = dir.substr(0, r) + "/Contents/MacOS/";
+        const std::string loader = dir + "libvulkan.1.dylib", icd = std::string(base) + "MoltenVK_icd.json";
         if (access(loader.c_str(), R_OK) == 0 && access(icd.c_str(), R_OK) == 0) {
             setenv("SDL_VULKAN_LIBRARY", loader.c_str(), 0);
             setenv("VK_DRIVER_FILES", icd.c_str(), 0);
         }
     }
+    // One app id with the launcher: Wayland and the taskbars find the icon in io.github.acnhrecomp.desktop.
+    SDL_SetAppMetadata("ACNHRecomp", NX_VERSION_STRING, "io.github.acnhrecomp");
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_AUDIO)) {
         std::fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
         return 1;

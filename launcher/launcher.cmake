@@ -17,20 +17,24 @@ if(NOT EXISTS "${NX_LAUNCHER_IMGUI}/backends/imgui_impl_sdlrenderer3.cpp")
 endif()
 
 add_executable(acnhrecomp_launcher WIN32
-    launcher/main.cpp launcher/pages.cpp launcher/files.cpp launcher/pipeline.cpp
-    runtime/src/ui/theme.cpp runtime/src/ui/i18n.cpp
+    launcher/main.cpp launcher/pages.cpp launcher/files.cpp launcher/pipeline.cpp launcher/desktop.cpp
+    runtime/src/ui/theme.cpp runtime/src/ui/i18n.cpp runtime/src/app_icon.cpp
+    $<$<PLATFORM_ID:Windows>:${CMAKE_SOURCE_DIR}/assets/acnhrecomp.rc>
     ${NX_LAUNCHER_IMGUI}/imgui.cpp ${NX_LAUNCHER_IMGUI}/imgui_draw.cpp ${NX_LAUNCHER_IMGUI}/imgui_tables.cpp
     ${NX_LAUNCHER_IMGUI}/imgui_widgets.cpp ${NX_LAUNCHER_IMGUI}/backends/imgui_impl_sdl3.cpp
     ${NX_LAUNCHER_IMGUI}/backends/imgui_impl_sdlrenderer3.cpp)
 target_include_directories(acnhrecomp_launcher PRIVATE launcher runtime/src ${NX_LAUNCHER_IMGUI})
 target_link_libraries(acnhrecomp_launcher PRIVATE SDL3::SDL3 Threads::Threads)
+if(WIN32)
+    target_link_libraries(acnhrecomp_launcher PRIVATE ole32 shell32 uuid)  # desktop.cpp: the shortcuts
+endif()
 execute_process(COMMAND git describe --always --dirty WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
                 OUTPUT_VARIABLE NX_LAUNCHER_DESCRIBE OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
 if(NOT NX_LAUNCHER_DESCRIBE)
     set(NX_LAUNCHER_DESCRIBE "dev")
 endif()
 # NX_LAUNCHER_SOURCE_DIR: where tools/setup_acnh.py is when the launcher runs from its build folder.
-target_compile_definitions(acnhrecomp_launcher PRIVATE NX_HAVE_SDL3 NX_VERSION_STRING="0.2-${NX_LAUNCHER_DESCRIBE}"
+target_compile_definitions(acnhrecomp_launcher PRIVATE NX_HAVE_SDL3 NX_VERSION_STRING="${NX_LAUNCHER_DESCRIBE}"
                            NX_LAUNCHER_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 if(WIN32)
     # SDL3.dll next to the launcher, so it starts from a double click (as the game, CMakeLists.txt).

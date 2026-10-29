@@ -2,7 +2,7 @@
 # Refuses to let game data, keys or recompiled code into a commit. Run before every push
 # (or install as a hook: ln -s ../../tools/check_no_game_data.sh .git/hooks/pre-commit).
 # Checks the staged files: no private/ or refs/ paths, no dump/key/shader/binary extensions, no binary blobs (the
-# Android launcher icon, an original drawing, is the only one allowed), no pictures of the game, no generated
+# app's icon, an original drawing, and its desktop forms are the only ones allowed), no pictures of the game, no generated
 # recompiler output (function bodies named after guest addresses), no key material.
 cd "$(git rev-parse --show-toplevel)" || exit 1
 bad=0
@@ -18,6 +18,7 @@ while IFS= read -r f; do
   esac
   case "$lf" in
     android/res/mipmap-*/*.png|android/icon_512.png) continue ;;  # the launcher icon, drawn by tools/make_android_icon.py
+    assets/acnhrecomp.png|assets/acnhrecomp.ico|assets/acnhrecomp.icns) continue ;;  # the same, tools/make_icons.sh
   esac
   if [ "$(head -c 8000 "$f" | LC_ALL=C tr -d '\000' | wc -c)" -ne "$(head -c 8000 "$f" | wc -c)" ]; then
     echo "BLOCKED (binary content): $f"; bad=1; continue

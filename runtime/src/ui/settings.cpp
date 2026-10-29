@@ -757,6 +757,15 @@ void page_about() {
     ImGui::Dummy(ImVec2(0, 6 * g_scale));
     ImGui::TextWrapped("%s", tr("about.desc"));
     ImGui::Dummy(ImVec2(0, 6 * g_scale));
+    ImGui::TextWrapped("%s", tr("about.author"));
+#if !defined(__ANDROID__)
+    if (button("Instagram: @nycolazs")) SDL_OpenURL("https://www.instagram.com/nycolazs/");
+    ImGui::SameLine();
+    if (button("GitHub: nycolazs")) SDL_OpenURL("https://github.com/nycolazs");
+#else
+    ImGui::TextWrapped("Instagram: @nycolazs  ·  GitHub: github.com/nycolazs");
+#endif
+    ImGui::Dummy(ImVec2(0, 6 * g_scale));
     ImGui::TextWrapped("%s", tr("about.credits"));
     ImGui::TextWrapped("%s", tr("about.license"));
     report_section();

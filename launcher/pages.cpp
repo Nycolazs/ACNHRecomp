@@ -1422,6 +1422,20 @@ void addons_popup() {
     ImGui::PopStyleVar();
 }
 
+// A newer release on GitHub (desktop.cpp): what it is, and a button to its page.
+void update_notice() {
+    const UpdateInfo u = update_info();
+    if (!u.available) return;
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, col4(kPaper));
+    ImGui::BeginChild("##update", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::TextWrapped("%s", trf("launcher.update.available", u.version).c_str());
+    text_small(trf("launcher.version", current_version()).c_str());
+    if (button(tr("launcher.update.get"), kGreen)) SDL_OpenURL(u.url.c_str());
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
+    ImGui::Dummy(ImVec2(0, S(6)));
+}
+
 void page_home() {
     const bool valid = *g_build_problem == 0;
     if (!valid) {
@@ -1431,6 +1445,7 @@ void page_home() {
         heading("", "");
     }
     ImGui::Dummy(ImVec2(0, S(6)));
+    update_notice();
     if (valid) {
         hero(nx::ui::kIconHouse, kGreen, S(46));
         centered(tr("launcher.home.title"), g_title, 1.1f, kInk);
@@ -1463,6 +1478,13 @@ void page_home() {
     if (setup_supported() && !player)
         acts.push_back({"##rebuild", nx::ui::kIconLeaf, kOrange, tr("launcher.home.rebuild"),
                         tr(can_rebuild ? "launcher.home.rebuild.desc" : "launcher.home.rebuild.unavailable"), can_rebuild, 1});
+#if defined(__APPLE__)
+    acts.push_back({"##desktop", nx::ui::kIconPlus, kMint, tr("launcher.home.install_app"),
+                    tr("launcher.home.install_app.desc"), true, 3});
+#else
+    acts.push_back({"##desktop", nx::ui::kIconPlus, kMint, tr("launcher.home.desktop"), tr("launcher.home.desktop.desc"),
+                    true, 3});
+#endif
     acts.push_back({"##change", nx::ui::kIconFolder, kBlue, tr(player ? "launcher.home.change_game" : "launcher.home.change"),
                     tr(player ? "launcher.home.change_game.desc" : "launcher.home.change.desc"), true, 2});
     float avail = ImGui::GetContentRegionAvail().x, gap = S(14);
@@ -1477,6 +1499,10 @@ void page_home() {
             if (a.action == 0) load_game_ini(), g_page = Page::Settings;
             if (a.action == 1) start_setup(true);
             if (a.action == 2) pick(kPickBuild);
+            if (a.action == 3) {
+                DesktopResult r = add_to_desktop();
+                toast(r.ok ? trf("launcher.desktop.done", r.where) : std::string(tr("launcher.desktop.failed")));
+            }
         }
     }
 }
@@ -1543,8 +1569,24 @@ void page_settings() {
                 {{"docked", tr("video.render.docked")}, {"handheld", tr("video.render.handheld")}});
     setting_row("video.upscaler", nullptr, "video.upscaler", "linear",
                 {{"linear", tr("video.upscaler.linear")}, {"fsr", tr("video.upscaler.fsr")}});
-    setting_row("video.framerate", "video.framerate.desc", "video.frame_rate", "30",
+    // No choice yet: 60 when the SpeedFix is in the game folder, as the game itself (config.cpp).
+    setting_row("video.framerate", "video.framerate.desc", "video.frame_rate",
+                is_dir(g_build.data + "/mods/speedfix60/romfs") ? "60" : "30",
                 {{"30", tr("video.framerate.30")}, {"60", tr("video.framerate.60")}});
+    // The launcher's own: new releases looked for at each start (launcher.ini), and the version in use.
+    {
+        Ini& li = settings();
+        bool check = li.get("launcher.update_check", "1") != "0";
+        if (ImGui::Checkbox(tr("launcher.update.check"), &check)) {
+            li.set("launcher.update_check", check ? "1" : "0");
+            li.save();
+            if (check) update_check_start();
+        }
+        const UpdateInfo u = update_info();
+        std::string ver = trf("launcher.version", current_version());
+        if (u.done) ver += "  ·  " + (u.available ? trf("launcher.update.newer", u.version) : std::string(tr("launcher.update.latest")));
+        text_small(ver.c_str());
+    }
     ImGui::EndChild();
     ImGui::PopStyleColor();
 }
@@ -1668,9 +1710,12 @@ bool pages_draw(float scale, ImFont* title) {
         first = false;
         if (g_express) pick(kPickGame);
         if (g_autostart_at == -2) g_autostart_at = ImGui::GetTime() + 3;
+        update_check_start();
     }
     if (g_autostart_at >= 0) {
-        bool stop = g_page != Page::Home || ImGui::IsMouseClicked(0) || ImGui::IsMouseClicked(1);
+        // A new release found stops it too: the notice stays on the home page to be read.
+        bool stop = g_page != Page::Home || ImGui::IsMouseClicked(0) || ImGui::IsMouseClicked(1) ||
+                    update_info().available;
         for (int k = ImGuiKey_NamedKey_BEGIN; !stop && k < ImGuiKey_NamedKey_END; k++)
             if (ImGui::IsKeyPressed(ImGuiKey(k), false) && !(k >= ImGuiKey_ReservedForModCtrl && k <= ImGuiKey_ReservedForModSuper))
                 stop = true;

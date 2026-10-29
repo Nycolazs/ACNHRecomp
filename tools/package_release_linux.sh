@@ -37,6 +37,7 @@ R=$OUT/ACNHRecomp
 mkdir -p "$R"
 cp "$BUILD/acnhrecomp_launcher" "$R/ACNHRecomp Launcher"
 cp "$BUILD/acnh" "$R/acnh"
+cp assets/acnhrecomp.png "$R/acnhrecomp.png"  # the icon of the shortcut "Add to desktop" makes (launcher/desktop.cpp)
 strip "$R/ACNHRecomp Launcher" "$R/acnh"
 # The libraries a stock system may lack (or have another version of), beside the executables: their sonames, found
 # through $ORIGIN. The C and C++ runtimes, X11 / Wayland, the Vulkan loader and the GPU driver stay the system's.
