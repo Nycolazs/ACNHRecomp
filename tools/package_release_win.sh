@@ -44,7 +44,16 @@ cp "$BUILD/acnh.exe" "$R/acnh.exe"
 cp "$SDL/lib/x64/SDL3.dll" "$R/"
 # The Visual C++ runtime the executables import (app-local: no installer needed).
 CRT=$(ls -d "$(cygpath -u "$VCToolsRedistDir")"/x64/Microsoft.VC*.CRT | head -1)
-for dll in vcruntime140.dll vcruntime140_1.dll msvcp140.dll; do cp "$CRT/$dll" "$R/"; done
+cp "$CRT"/vcruntime140*.dll "$CRT"/msvcp140*.dll "$R/"  # msvcp140_1 too (the player's <memory_resource>)
+# Each DLL the executables import is a system one or beside them.
+for exe in "$R/acnh.exe" "$R/ACNHRecomp Launcher.exe"; do
+    for dll in $(MSYS_NO_PATHCONV=1 dumpbin /nologo /dependents "$(cygpath -w "$exe")" | tr -d '\r' |
+                 awk '/^ +[^ ]+\.(dll|DLL)$/ {print $1}'); do
+        case "${dll,,}" in api-ms-win-*|kernel32.dll|user32.dll|shell32.dll|imm32.dll|winmm.dll|dxgi.dll|ole32.dll|\
+                           psapi.dll|advapi32.dll|gdi32.dll|setupapi.dll|version.dll|oleaut32.dll|ws2_32.dll) continue ;; esac
+        ls "$R" | grep -qix "$dll" || { echo "$exe imports $dll, which is not in the package"; exit 1; }
+    done
+done
 printf '@echo off\r\nrem Double-click: opens the launcher, which asks for the game folder ACNHRecomp-Importer prepared.\r\ncd /d "%%~dp0"\r\nstart "" "ACNHRecomp Launcher.exe"\r\n' > "$R/Start ACNHRecomp.bat"
 tools/release_readme.sh "$R" windows
 if command -v zip >/dev/null; then (cd "$OUT" && zip -qr "../$(basename "$OUT").zip" ACNHRecomp)
