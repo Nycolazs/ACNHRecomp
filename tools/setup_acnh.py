@@ -406,22 +406,30 @@ def main():
         env["PATH"] = dn + os.pathsep + env["PATH"]
     env["DOTNET_CLI_TELEMETRY_OPTOUT"] = "1"
     harness = os.path.join(P, "build", "spirv_harness", "bin", "Release", "net10.0", "spirv_harness.dll")
-    if not os.path.exists(harness) or force("harness"):
-        hlog = os.path.join(logs, "harness.log")
-        run([dotnet, "build", "tools/maxwell/spirv_harness/SpirvHarness.csproj", "-c", "Release", "-m:4"],
-            log=hlog, env=env)
-        if not os.path.exists(harness):
-            # Built somewhere else (an SDK or a Directory.Build.props above the repository choosing another output
-            # folder): the one the build just wrote, else the build's own words.
-            found = [os.path.join(d, "spirv_harness.dll") for d, _, fs in os.walk(os.path.join(P, "build", "spirv_harness"))
-                     if "spirv_harness.dll" in fs and os.sep + "obj" + os.sep not in d + os.sep]
-            if not found:
-                with open(hlog, encoding="utf-8", errors="replace") as f:
-                    print("".join(f.readlines()[-25:]))
-                fail(f"the shader translator was built but spirv_harness.dll is not in {os.path.dirname(harness)} "
-                     f"(log: {hlog})")
-            harness = max(found, key=os.path.getmtime)
-            print(f"shader translator: {harness}")
+    hlog = os.path.join(logs, "harness.log")
+
+    def ensure_harness(rebuild):
+        """The shader translator's spirv_harness.dll: built when missing (or rebuild); when the normal build leaves it
+        elsewhere or not at all (reported on some Windows computers), built again into a folder of its own (-o)."""
+        nonlocal harness
+        if os.path.exists(harness) and not rebuild:
+            return
+        proj = "tools/maxwell/spirv_harness/SpirvHarness.csproj"
+        run([dotnet, "build", proj, "-c", "Release", "-m:4"], log=hlog, env=env)
+        if os.path.exists(harness):
+            return
+        alt = os.path.join(P, "build", "spirv_harness", "out")
+        print(f"spirv_harness.dll is not where the build said it would be: building it again into {alt}")
+        run([dotnet, "build", proj, "-c", "Release", "-m:1", "-o", alt], log=hlog, env=env)
+        if os.path.exists(os.path.join(alt, "spirv_harness.dll")):
+            harness = os.path.join(alt, "spirv_harness.dll")
+            return
+        with open(hlog, encoding="utf-8", errors="replace") as f:
+            print("".join(f.readlines()[-25:]))
+        fail(f"the shader translator was built but spirv_harness.dll is missing (log: {hlog}). An antivirus may have "
+             f"removed it: allow the ACNHRecomp folder in it and choose Try again.")
+
+    ensure_harness(force("harness"))
 
     # ---- game -------------------------------------------------------------------------------------------------
     say("game (the game folder: ExeFS + RomFS, add-on content)")
@@ -557,6 +565,7 @@ def main():
     if not os.path.exists(summary) or force("shaders"):
         run([py, "tools/extract_shaders.py", G, "--jobs", str(cores)])
         val = ["--spirv-val", shutil.which("spirv-val")] if shutil.which("spirv-val") else ["--no-val"]
+        ensure_harness(False)  # still there (it was, at the tools stage)
         run([dotnet, harness, "--batch", os.path.join(G, "shaders_extracted"), "--out", os.path.join(G, "spirv"),
              "--jobs", str(cores)] + val, log=os.path.join(logs, "spirv.log"), env=env)
     first = open(summary, encoding="utf-8", errors="replace").readline().strip()
