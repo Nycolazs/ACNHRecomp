@@ -31,6 +31,8 @@ namespace fs = std::filesystem;
 
 namespace nx {
 
+void discord_presence_file(const std::string& guest_path);  // discord_presence.cpp: room and island models
+
 namespace {
 
 // NX_TRACE_FS=1: every file the game opens (and the ones it looks for and does not find).
@@ -51,6 +53,7 @@ struct RecentOp {
 uint64_t g_recent_seq = 0;
 
 void note_open(const char* what, const std::string& guest_path, const char* result) {
+    if (result[0] == 'o' && result[1] == 'k' && !result[2]) discord_presence_file(guest_path);
     std::lock_guard lk(g_recent_lock);
     RecentOp& r = g_recent[g_recent_seq % kRecentOps];
     r.thread = plat::current_thread_id();
