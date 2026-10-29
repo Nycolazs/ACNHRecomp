@@ -81,11 +81,19 @@ Handle ipc_open(int n) {
     a.sun_family = AF_UNIX;
     std::snprintf(a.sun_path, sizeof a.sun_path, "%s/discord-ipc-%d", dir, n);
     int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+#if defined(SO_NOSIGPIPE)  // macOS: no MSG_NOSIGNAL (ipc_write); Discord quitting must not end the game with SIGPIPE
+    const int one = 1;
+    if (fd >= 0) setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof one);
+#endif
     if (fd >= 0 && connect(fd, reinterpret_cast<sockaddr*>(&a), sizeof a) == 0) return fd;
     if (fd >= 0) close(fd);
     return kNone;
 }
-bool ipc_write(Handle h, const void* p, uint32_t n) { return write(h, p, n) == ssize_t(n); }
+#if !defined(MSG_NOSIGNAL)
+#define MSG_NOSIGNAL 0
+#endif
+// send, not write: a write to the socket after Discord closed it raised SIGPIPE, which ends the process.
+bool ipc_write(Handle h, const void* p, uint32_t n) { return send(h, p, n, MSG_NOSIGNAL) == ssize_t(n); }
 bool ipc_read(Handle h, void* p, uint32_t n) {
     for (uint32_t got = 0; got < n;) {
         ssize_t r = read(h, static_cast<char*>(p) + got, n - got);
