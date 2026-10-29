@@ -1,0 +1,112 @@
+# The release packages (README "Downloads"): this repository's sources with the launcher already built, nothing of
+# the game, for Windows, macOS and Linux. Run from the Actions tab (Build > Run workflow); each package is an artifact
+# of the run. Windows is cross-built with mingw-w64, as tools/package_release_win.sh does on a computer.
+name: Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version in the package names (empty: the commit's short hash)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+env:
+  SDL3: "3.4.16"  # as tools/setup_acnh.py
+
+jobs:
+  version:
+    name: Version
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - id: v
+        env:
+          INPUT: ${{ inputs.version }}
+        run: |
+          v=${INPUT:-${GITHUB_SHA::7}}
+          [[ $v =~ ^[A-Za-z0-9._-]+$ ]] || { echo "version: letters, digits and . _ - only"; exit 1; }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+  windows:
+    name: Windows x64
+    needs: version
+    runs-on: ubuntu-24.04
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build zip \
+               gcc-mingw-w64-x86-64-posix g++-mingw-w64-x86-64-posix mingw-w64-x86-64-dev
+          # posix threads, as the release: std::thread through libwinpthread-1.dll
+          sudo update-alternatives --set x86_64-w64-mingw32-gcc /usr/bin/x86_64-w64-mingw32-gcc-posix
+          sudo update-alternatives --set x86_64-w64-mingw32-g++ /usr/bin/x86_64-w64-mingw32-g++-posix
+      - name: SDL3
+        run: |
+          curl -fsSL "https://github.com/libsdl-org/SDL/releases/download/release-$SDL3/SDL3-devel-$SDL3-mingw.tar.gz" |
+            tar -xz -C "$RUNNER_TEMP"
+      - name: Package
+        run: tools/package_release_win.sh "$VERSION" "$RUNNER_TEMP/SDL3-$SDL3/x86_64-w64-mingw32"
+      - uses: actions/upload-artifact@v7
+        with:
+          path: private/release/ACNHRecomp-${{ env.VERSION }}-windows-x64.zip
+          archive: false
+          if-no-files-found: error
+
+  macos:
+    name: macOS arm64
+    needs: version
+    runs-on: macos-15
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Tools
+        run: brew install ninja sdl3  # cmake comes with the runner
+      - name: Package
+        run: tools/package_release_mac.sh "$VERSION"
+      - uses: actions/upload-artifact@v7
+        with:
+          path: private/release/ACNHRecomp-${{ env.VERSION }}-macOS-arm64.zip
+          archive: false
+          if-no-files-found: error
+
+  linux:
+    name: Linux x64
+    needs: version
+    runs-on: ubuntu-24.04
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Tools
+        run: |
+          sudo apt-get update
+          # SDL3's build dependencies (SDL's docs/README-linux.md): it loads these libraries at run time when present.
+          sudo apt-get install -y --no-install-recommends ninja-build patchelf pkg-config \
+               libasound2-dev libpulse-dev libpipewire-0.3-dev libx11-dev libxext-dev libxrandr-dev libxcursor-dev \
+               libxfixes-dev libxi-dev libxss-dev libxtst-dev libxkbcommon-dev libdrm-dev libgbm-dev \
+               libgl1-mesa-dev libegl1-mesa-dev libdbus-1-dev libibus-1.0-dev libudev-dev libwayland-dev \
+               wayland-protocols libdecor-0-dev
+      - name: SDL3
+        run: |
+          curl -fsSL "https://github.com/libsdl-org/SDL/releases/download/release-$SDL3/SDL3-$SDL3.tar.gz" |
+            tar -xz -C "$RUNNER_TEMP"
+          cmake -S "$RUNNER_TEMP/SDL3-$SDL3" -B "$RUNNER_TEMP/sdl3-build" -G Ninja -DCMAKE_BUILD_TYPE=Release \
+                -DSDL_STATIC=OFF -DSDL_TESTS=OFF -DSDL_EXAMPLES=OFF -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/sdl3"
+          cmake --build "$RUNNER_TEMP/sdl3-build"
+          cmake --install "$RUNNER_TEMP/sdl3-build"
+      - name: Package
+        run: tools/package_release_linux.sh "$VERSION" "$RUNNER_TEMP/sdl3"
+      - uses: actions/upload-artifact@v7
+        with:
+          path: private/release/ACNHRecomp-${{ env.VERSION }}-linux-x64.tar.gz
+          archive: false
+          if-no-files-found: error

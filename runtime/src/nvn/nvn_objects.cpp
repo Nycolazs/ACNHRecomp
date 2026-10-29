@@ -56,7 +56,7 @@ MemoryPool* pool_at_gpu(uint64_t gpu, uint64_t* offset) {
     static Hits worker_hits[kReplaySlots] = {};  // the parallel replay's workers' (nvn_per_thread.h)
     const int slot = replay_slot();
     Hits& hits = slot ? worker_hits[slot]
-                 : g_replay_tls && pthread_equal(pthread_self(), g_replay_thread.load(std::memory_order_relaxed)) ? replay_hits
+                 : g_replay_tls && std::this_thread::get_id() == g_replay_thread.load(std::memory_order_relaxed) ? replay_hits
                                                                                                                  : t_hits;
     uint64_t generation = g_pools_generation.load(std::memory_order_acquire);
     for (const auto& h : hits.at)

@@ -1,6 +1,6 @@
 #!/bin/bash
-# The macOS release package: this repository's sources at HEAD (git archive: nothing of the game, nothing of private/)
-# with the launcher already built at its root, SDL3 (zlib licence) beside it so it opens without Homebrew's, and a
+# The macOS release package: the sources the setup needs at its root (tools/release_sources.sh: nothing of the game)
+# with the launcher already built beside them, SDL3 (zlib licence) beside it so it opens without Homebrew's, and a
 # "Start ACNHRecomp.command" to double-click. The launcher then checks the computer and sets the game up from the
 # player's own files (README, "Installation").
 # usage: tools/package_release_mac.sh <version>      -> private/release/ACNHRecomp-<version>-macOS-arm64.zip
@@ -20,9 +20,9 @@ echo "== launcher"
         -DCMAKE_PREFIX_PATH="$(brew --prefix)" >/dev/null
 cmake --build "$BUILD" --target acnhrecomp_launcher
 
-echo "== sources (git archive HEAD)"
-git archive --format=tar --prefix=ACNHRecomp/ HEAD | tar -x -C "$OUT"
-R=$OUT/ACNHRecomp
+echo "== sources (tools/release_sources.sh)"
+R=$OUT
+tools/release_sources.sh "$R" macos
 cp "$BUILD/acnhrecomp_launcher" "$R/ACNHRecomp Launcher"
 SDL=$(otool -L "$R/ACNHRecomp Launcher" | awk '/libSDL3/ {print $1}')
 cp "$SDL" "$R/$(basename "$SDL")"
@@ -39,6 +39,6 @@ xattr -dr com.apple.quarantine . 2>/dev/null
 exec "./ACNHRecomp Launcher"
 EOF
 chmod +x "$R/Start ACNHRecomp.command"
-(cd "$OUT" && ditto -c -k --sequesterRsrc --keepParent ACNHRecomp "../$(basename "$OUT").zip")
+ditto -c -k --sequesterRsrc "$OUT" "$OUT.zip"
 rm -rf "${OUT:?}"
 ls -la "$OUT.zip"

@@ -736,8 +736,7 @@ void gpu_submit(const std::vector<std::shared_ptr<CmdList>>& lists, std::shared_
     size_t split_after = gpu_profile_on() || zero_draws_on() ? SIZE_MAX : frame_plan_split(lists);
     if (parallel_plan_on()) parallel_plan_frame(lists);  // docs/PARALLEL_REPLAY.md, P0: logged only
     uint64_t t0 = plat::monotonic_ns();
-    timespec cpu0{};
-    clock_gettime(CLOCK_THREAD_CPUTIME_ID, &cpu0);
+    const uint64_t cpu0 = thread_cpu_ns();
     const FrameTimes f0 = frame_times();
     Targets st;
     if (parallel_replay_on()) {  // docs/PARALLEL_REPLAY.md
@@ -754,11 +753,8 @@ void gpu_submit(const std::vector<std::shared_ptr<CmdList>>& lists, std::shared_
     const FrameTimes f1 = frame_times();  // the first part's submit and ring waits are not replay time
     g_timing.submits++;
     g_timing.replay_ns += plat::monotonic_ns() - t0 - (f1.encode_ns - f0.encode_ns) - (f1.fence_ns - f0.fence_ns);
-    {  // the replay thread's own CPU time over the same span: the rest of the replay time it was off the CPU
-        timespec cpu1{};
-        clock_gettime(CLOCK_THREAD_CPUTIME_ID, &cpu1);
-        g_timing.replay_cpu_ns += uint64_t(cpu1.tv_sec - cpu0.tv_sec) * 1000000000ull + uint64_t(cpu1.tv_nsec) - uint64_t(cpu0.tv_nsec);
-    }
+    // the replay thread's own CPU time over the same span: the rest of the replay time it was off the CPU
+    g_timing.replay_cpu_ns += thread_cpu_ns() - cpu0;
     g_timing.upload_bytes += async ? frame_upload_used() : g_upload_used;
     gpu_profile_mark(g_cb, "end");
     if (async)  // the profile, zero-draw queries and snapshots read this submit's results right below: waited for

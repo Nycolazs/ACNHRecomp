@@ -31,7 +31,12 @@ import zipfile
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 P = os.path.join(ROOT, "private")
 T = os.path.join(P, "third_party")
-MOVIE_LIBS = os.path.join(T, "vcpkg", "installed", "x64-windows-static-md")  # libvpx, libvorbis (vcpkg)
+# libvpx, libvorbis (vcpkg), release only: the game links no debug libraries. A setup from before keeps its own.
+MOVIE_TRIPLET = "x64-windows-static-md-release"
+MOVIE_LIBS = os.path.join(T, "vcpkg", "installed", MOVIE_TRIPLET)
+if not os.path.exists(os.path.join(MOVIE_LIBS, "lib", "vpx.lib")) and \
+        os.path.exists(os.path.join(T, "vcpkg", "installed", "x64-windows-static-md", "lib", "vpx.lib")):
+    MOVIE_LIBS = os.path.join(T, "vcpkg", "installed", "x64-windows-static-md")
 WIN = os.name == "nt"
 MAC = sys.platform == "darwin"
 
@@ -73,13 +78,37 @@ def run(cmd, log=None, env=None, cwd=ROOT, check=True):
     return rc
 
 
-def fetch(url, dest_dir, strip=True):
-    """Downloads a .tar.gz / .tar.xz / .zip and extracts it into dest_dir (its single top folder removed if strip)."""
+def fetch(url, dest_dir, strip=True, py=None):
+    """Downloads a .tar.gz / .tar.xz / .tar.zst / .zip and extracts it into dest_dir (its single top folder removed if
+    strip). A .tar.zst is decompressed by the zstandard of py (the tools stage's venv)."""
     os.makedirs(dest_dir, exist_ok=True)
     tmp = dest_dir + ".download"
     with urllib.request.urlopen(url) as r, open(tmp, "wb") as f:
         shutil.copyfileobj(r, f, 1 << 20)
-    if url.endswith(".zip"):
+
+    def stripped(m):
+        parts = m.name.split("/", 1) if strip else [None, m.name]
+        if len(parts) < 2 or not parts[1]:
+            return None
+        m.name = parts[1]
+        if m.islnk() and strip:  # hard links name their target with the top folder too
+            m.linkname = m.linkname.split("/", 1)[-1]
+        return m
+
+    if url.endswith(".tar.zst"):
+        # LLVM's has a 1 GB window (its many copies of one executable then cost almost nothing), more than decoders
+        # allow by default: Windows' tar.exe refuses it, and Python's tarfile reads no .zst before 3.14.
+        with open(tmp, "rb") as f:
+            dec = subprocess.Popen([py, "-c", "import sys, zstandard; zstandard.ZstdDecompressor(max_window_size=1 << 31)"
+                                    ".copy_stream(sys.stdin.buffer, sys.stdout.buffer)"], stdin=f, stdout=subprocess.PIPE)
+            with tarfile.open(fileobj=dec.stdout, mode="r|") as t:
+                for m in t:
+                    if stripped(m):
+                        t.extract(m, dest_dir, filter="data")
+            dec.stdout.read()  # the end of the archive, past its last member: the decoder finishes writing it
+            if dec.wait():
+                fail(f"failed: decompressing {url}")
+    elif url.endswith(".zip"):
         with zipfile.ZipFile(tmp) as z:
             names = z.namelist()
             top = names[0].split("/")[0] + "/"
@@ -96,15 +125,7 @@ def fetch(url, dest_dir, strip=True):
                     shutil.copyfileobj(a, b)
     else:
         with tarfile.open(tmp) as t:
-            members = []
-            for m in t.getmembers():
-                parts = m.name.split("/", 1) if strip else [None, m.name]
-                if len(parts) < 2 or not parts[1]:
-                    continue
-                m.name = parts[1]
-                if m.islnk() and strip:  # hard links name their target with the top folder too
-                    m.linkname = m.linkname.split("/", 1)[-1]
-                members.append(m)
+            members = [m for m in t.getmembers() if stripped(m)]
             t.extractall(dest_dir, members=members, filter="data")
     os.remove(tmp)
 
@@ -176,6 +197,10 @@ def msvc_env():
              "\"--quiet --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended\"")
     out = subprocess.run(f'cmd /s /c ""{bat}" >nul 2>&1 && set"', capture_output=True, text=True, errors="replace").stdout
     env = dict(l.split("=", 1) for l in out.splitlines() if "=" in l and not l.startswith("="))
+    # vcvars sets Platform=x64, which MSBuild (dotnet build) takes as a property: the shader harness would land in
+    # bin/x64/Release/ instead of bin/Release/.
+    for k in [k for k in env if k.upper() == "PLATFORM"]:
+        env.pop(k)
     # Windows spells it "Path" (from Explorer and the launcher), shells often "PATH": one key, whatever the case.
     paths = [env.pop(k) for k in [k for k in env if k.upper() == "PATH"]]
     path = paths[0] if paths else ""
@@ -334,9 +359,9 @@ def main():
     if WIN:
         llvm = os.path.join(T, f"llvm-{LLVM}")
         if not os.path.exists(os.path.join(llvm, "bin", "clang-cl.exe")):
-            print(f"downloading LLVM {LLVM} (about 860 MB)", flush=True)
+            print(f"downloading LLVM {LLVM} (about 265 MB)", flush=True)
             fetch(f"https://github.com/llvm/llvm-project/releases/download/llvmorg-{LLVM}/"
-                  f"clang+llvm-{LLVM}-x86_64-pc-windows-msvc.tar.xz", llvm)
+                  f"clang+llvm-{LLVM}-x86_64-pc-windows-msvc.tar.zst", llvm, py=py)
         sdl = os.path.join(T, f"SDL3-{SDL3}")
         if not os.path.isdir(os.path.join(sdl, "cmake")):
             fetch(f"https://github.com/libsdl-org/SDL/releases/download/release-{SDL3}/SDL3-devel-{SDL3}-VC.zip", sdl)
@@ -352,8 +377,8 @@ def main():
                 run([os.path.join(vcpkg, "bootstrap-vcpkg.bat"), "-disableMetrics"], log=os.path.join(logs, "vcpkg.log"))
             if os.path.exists(os.path.join(vcpkg, "vcpkg.exe")):
                 print("building libvpx and libvorbis (the game's movies; a few minutes, once)", flush=True)
-                run([os.path.join(vcpkg, "vcpkg.exe"), "install", "libvpx:x64-windows-static-md",
-                     "libvorbis:x64-windows-static-md", "--disable-metrics"], log=os.path.join(logs, "vcpkg.log"),
+                run([os.path.join(vcpkg, "vcpkg.exe"), "install", f"libvpx:{MOVIE_TRIPLET}",
+                     f"libvorbis:{MOVIE_TRIPLET}", "--disable-metrics"], log=os.path.join(logs, "vcpkg.log"),
                     env=env, cwd=vcpkg)
             else:
                 print("git not found: no libvpx, the game's movies will be black", flush=True)
@@ -564,6 +589,16 @@ def main():
                 else "") or "/opt/homebrew"
         extra.append(f"-DCMAKE_PREFIX_PATH={brew}")
     build = os.path.join(G, "build")
+    # A build configured from another copy of the repository (an earlier release package with the same --out): its
+    # cache names that copy's sources and compiler, which CMake refuses. Configured again from this one.
+    cache = os.path.join(build, "CMakeCache.txt")
+    if os.path.exists(cache):
+        with open(cache, encoding="utf-8", errors="replace") as f:
+            home = next((l.split("=", 1)[1].strip() for l in f if l.startswith("CMAKE_HOME_DIRECTORY:")), None)
+        if home and os.path.normcase(os.path.normpath(home)) != os.path.normcase(os.path.normpath(ROOT)):
+            print(f"the build was configured from {home}: configured again from {ROOT}", flush=True)
+            os.remove(cache)
+            shutil.rmtree(os.path.join(build, "CMakeFiles"), ignore_errors=True)
     run([cmake, "-S", ".", "-B", build, "-G", "Ninja", f"-DCMAKE_MAKE_PROGRAM={ninja}", "-DNX_GAME=acnh",
          "-DCMAKE_BUILD_TYPE=Release", f"-DNX_VULKAN_INCLUDE={os.path.join(vkh, 'include')}"] + cc + extra,
         log=os.path.join(logs, "cmake.log"), env=env)

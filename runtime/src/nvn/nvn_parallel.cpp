@@ -11,8 +11,10 @@
 #include <cstring>
 #include <ctime>
 #include <cerrno>
+#if !defined(_WIN32)
 #include <sys/resource.h>
 #include <unistd.h>
+#endif
 #include <mutex>
 #include <thread>
 #include <unordered_set>
@@ -215,12 +217,6 @@ bool ordered(const Cmd& c) {
         case Cmd::UpdateUniformBuffer: return true;
         default: return false;
     }
-}
-
-uint64_t thread_cpu_ns() {
-    timespec ts{};
-    clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts);
-    return uint64_t(ts.tv_sec) * 1000000000ull + uint64_t(ts.tv_nsec);
 }
 
 void run_job(Job& j, int w) {

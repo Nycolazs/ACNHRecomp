@@ -103,9 +103,11 @@ if(APPLE)
     target_include_directories(nx_mtl PUBLIC runtime/src)
     target_link_libraries(nx_mtl PUBLIC spirv-cross-msl)
     enable_language(OBJCXX)
-    add_executable(metal_shader_check EXCLUDE_FROM_ALL tests/metal_shader_check.mm)
-    target_link_libraries(metal_shader_check PRIVATE nx_mtl "-framework Metal" "-framework Foundation")
-    set_target_properties(metal_shader_check PROPERTIES OBJCXX_STANDARD 20)
+    if(EXISTS "${CMAKE_SOURCE_DIR}/tests/metal_shader_check.mm")  # not in the release packages
+        add_executable(metal_shader_check EXCLUDE_FROM_ALL tests/metal_shader_check.mm)
+        target_link_libraries(metal_shader_check PRIVATE nx_mtl "-framework Metal" "-framework Foundation")
+        set_target_properties(metal_shader_check PROPERTIES OBJCXX_STANDARD 20)
+    endif()
 endif()
 
 # Dear ImGui: the settings screen and the launcher. tools/setup_acnh.py downloads it into private/third_party/imgui.
