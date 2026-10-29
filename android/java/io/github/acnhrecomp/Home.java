@@ -177,7 +177,9 @@ public class Home extends Activity {
     // ---- folders ----------------------------------------------------------------------------------------------
 
     private static boolean hasPackage(File f) {
-        return new File(f, GAME_LIB).isFile() && new File(f, "analysis/main.bin").isFile();
+        // the game folder ACNHRecomp-Importer prepares (game/android-arm64/), or one tools/android_install.sh filled
+        return (new File(f, "game/android-arm64/" + GAME_LIB).isFile() || new File(f, GAME_LIB).isFile())
+                && new File(f, "analysis/main.bin").isFile();
     }
 
     // The app's own folders (phone and memory card) where tools/android_install.sh puts the game: readable without

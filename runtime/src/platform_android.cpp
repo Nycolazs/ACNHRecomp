@@ -356,7 +356,10 @@ std::string load_game(const std::string& folder, const std::string& own_dir) {
     std::lock_guard lk(g_game_mx);
     if (g_game_lib) return g_game_from == folder ? "" : "restart";  // one game library per process
     std::string err, lib = own_dir + "/game/" + game_lib_name();
-    if (!copy_if_changed(folder + "/" + game_lib_name(), lib, err)) return err;
+    // the game folder ACNHRecomp-Importer prepares: game/android-arm64/; one tools/android_install.sh filled: its top
+    std::string src = folder + "/game/android-arm64/" + game_lib_name();
+    if (access(src.c_str(), R_OK) != 0) src = folder + "/" + game_lib_name();
+    if (!copy_if_changed(src, lib, err)) return err;
     void* h = dlopen(lib.c_str(), RTLD_NOW | RTLD_LOCAL);
     if (!h) return std::string("dlopen: ") + dlerror();
     auto abi = reinterpret_cast<const char* (*)()>(dlsym(h, "nx_game_abi"));

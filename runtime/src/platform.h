@@ -17,10 +17,21 @@
 #endif
 
 namespace nx {
+struct ModuleInfo;
 void log_flush();  // loader.cpp: the lines queued for the log file, written now
 }  // namespace nx
 
 namespace nx::plat {
+
+#ifdef NX_GAME_DYNAMIC
+// ---- the game's code from the game folder (game_folder.cpp on desktop, platform_android.cpp on Android) ----
+const nx::ModuleInfo* game_module(const char* name);
+[[noreturn]] void game_longjmp(uint64_t buf, uint64_t val);
+#ifndef __ANDROID__
+std::string load_game(const std::string& folder);  // "" when loaded, else why not
+bool load_game_or_explain();  // the data root's; false after showing why it is not playable
+#endif
+#endif
 
 // ---- memory: fixed-address reservations (guest pointers are host pointers) ----
 bool reserve(uint64_t addr, uint64_t size);  // exactly at addr, no access

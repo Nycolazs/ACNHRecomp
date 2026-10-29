@@ -847,7 +847,9 @@ void game_thread() {
 
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    // acnh <game folder>: the folder ACNHRecomp-Importer prepared (else NX_DATA_ROOT, else the setup's data folder)
+    if (argc > 1) setenv("NX_DATA_ROOT", argv[1], 1);
     nx::config_apply();  // config.ini -> NX_* defaults, before anything reads them (config.h)
     if (nx::report_mode()) return 0;
     struct sigaction sa{};
@@ -874,6 +876,9 @@ int main() {
     }
 
     nx::plat::start_memory_guard();  // before anything can grow: a leak must never freeze the machine
+#ifdef NX_GAME_DYNAMIC
+    if (!nx::plat::load_game_or_explain()) return 1;  // game_folder.cpp
+#endif
     thread_cpu_watch();              // NX_THREAD_CPU
 
     // The game on its own thread, with a big stack (recompiled calls nest deeply); the main thread keeps Cocoa's

@@ -159,6 +159,10 @@ foreach(mod ${NX_MODULES})
                                     PROPERTIES COMPILE_OPTIONS -fvisibility=default)
     elseif(APPLE)
         target_compile_options(game_${mod} PRIVATE -O2 -fvisibility=hidden)
+        if(NX_GAME_FROM_FOLDER)  # the module's table is what the player looks up in lib<game>_game.dylib
+            set_source_files_properties("${NX_GEN_DIR}/${mod}/table.cpp" TARGET_DIRECTORY game_${mod}
+                                        PROPERTIES COMPILE_OPTIONS -fvisibility=default)
+        endif()
     elseif(UNIX)
         # Linux x86-64: AVX2/FMA/BMI as the Windows build (/arch:AVX2); no FMA contraction, so a guest fmul + fadd
         # rounds twice, as on the Switch.
@@ -175,6 +179,7 @@ foreach(mod ${NX_MODULES})
 endforeach()
 
 set(NX_RUNTIME_SOURCES
+    runtime/src/game_folder.cpp
     runtime/src/main.cpp
     runtime/src/sampler.cpp
     runtime/src/loader.cpp
@@ -360,7 +365,23 @@ elseif(APPLE)
     find_path(NX_VULKAN_INCLUDE vulkan/vulkan.h HINTS /opt/homebrew/include /usr/local/include)
     add_executable(${NX_GAME} ${NX_RUNTIME_SOURCES} runtime/src/platform_mac.cpp runtime/src/memguard_mac.cpp runtime/src/cpu_profile.cpp)
     target_include_directories(${NX_GAME} PRIVATE runtime/include runtime/src "${NX_GAME_DIR}" "${NX_VULKAN_INCLUDE}")
-    target_link_libraries(${NX_GAME} PRIVATE ${NX_GAME_LIBS} SDL3::SDL3)
+    target_link_libraries(${NX_GAME} PRIVATE SDL3::SDL3)
+    if(NX_GAME_FROM_FOLDER)
+        # The runtime's calls (NX_GAME_API) exported to game/macos-arm64/lib<game>_game.dylib, which resolves them at
+        # load time (-undefined dynamic_lookup).
+        target_compile_definitions(${NX_GAME} PRIVATE NX_GAME_DYNAMIC NX_GAME_ABI="${NX_GAME_ABI}")
+        set_target_properties(${NX_GAME} PROPERTIES ENABLE_EXPORTS ON)
+        if(NX_GAME_LIBS)
+            add_library(${NX_GAME}_game SHARED runtime/src/game_abi.cpp)
+            target_include_directories(${NX_GAME}_game PRIVATE runtime/include)
+            target_compile_options(${NX_GAME}_game PRIVATE -fvisibility=hidden)
+            target_compile_definitions(${NX_GAME}_game PRIVATE NX_GAME_ABI="${NX_GAME_ABI}")
+            target_link_libraries(${NX_GAME}_game PRIVATE "$<LINK_LIBRARY:WHOLE_ARCHIVE,${NX_GAME_LIBS}>")
+            target_link_options(${NX_GAME}_game PRIVATE -undefined dynamic_lookup)
+        endif()
+    else()
+        target_link_libraries(${NX_GAME} PRIVATE ${NX_GAME_LIBS})
+    endif()
     target_compile_options(${NX_GAME} PRIVATE -fvisibility=hidden)
     # The executable loads near 0x1_0000_0000, below the guest ranges (0x40_0000_0000 and up). The game runs on its
     # own thread with a 64 MiB stack (platform_mac.cpp), so the main thread's stack size does not matter.
@@ -402,7 +423,14 @@ else()
     add_executable(${NX_GAME} ${NX_RUNTIME_SOURCES} runtime/src/platform_win.cpp runtime/src/platform_sdl.cpp
                    runtime/src/memguard_win.cpp)
     target_include_directories(${NX_GAME} PRIVATE runtime/include runtime/src "${NX_GAME_DIR}" "${NX_VULKAN_INCLUDE}")
-    target_link_libraries(${NX_GAME} PRIVATE ${NX_GAME_LIBS} SDL3::SDL3 ole32 psapi winmm dxgi)
+    target_link_libraries(${NX_GAME} PRIVATE SDL3::SDL3 ole32 psapi winmm dxgi)
+    if(NX_GAME_FROM_FOLDER)
+        # The game's code from game/windows-x64/<game>_game.dll, which the player hands its runtime calls to
+        # (game_abi.cpp: nx_game_bind).
+        target_compile_definitions(${NX_GAME} PRIVATE NX_GAME_DYNAMIC NX_GAME_ABI="${NX_GAME_ABI}")
+    else()
+        target_link_libraries(${NX_GAME} PRIVATE ${NX_GAME_LIBS})
+    endif()
     # SDL3.dll next to the game, so it starts from a double click.
     add_custom_command(TARGET ${NX_GAME} POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
                        $<TARGET_FILE:SDL3::SDL3> $<TARGET_FILE_DIR:${NX_GAME}>)

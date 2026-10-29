@@ -6,6 +6,9 @@ usage: extract_shaders.py [game dir] [--jobs N] [--full]     (default: private/a
   --full  also extract every Model/ container whole (61k files; the blocks only models have are extracted anyway,
           by model_shaders.py)
 Output: <game dir>/shaders_extracted/<group>/..., one group per container.
+
+tools/maxwell/spirv_harness (`--extract <romfs> <main.bin> --out <dir>`, or `--prepare` to also translate) is a C# port
+of this script, containers.py, exefs_shaders.py and model_shaders.py that writes the same tree; keep them in step.
 """
 import argparse
 import concurrent.futures

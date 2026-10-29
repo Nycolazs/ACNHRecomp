@@ -343,6 +343,9 @@ int main() {
     if (!nx::plat::sdl_start()) return 1;
 
     nx::plat::start_memory_guard();  // before anything can grow: a leak must never freeze the machine (memguard_win.cpp)
+#ifdef NX_GAME_DYNAMIC
+    if (!nx::plat::load_game_or_explain()) return 1;  // game_folder.cpp
+#endif
 
     // The game on its own thread, with a big stack (recompiled calls nest deeply); the main thread keeps the event
     // loop.

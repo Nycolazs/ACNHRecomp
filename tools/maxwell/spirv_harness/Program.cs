@@ -6,6 +6,10 @@
 //   spirv_harness --batch <extracted dir> --out <dir> [--jobs 2] [--limit N] [--no-val] [--no-retry] [--debug-mode] [--target-env vulkan1.2]
 //       every distinct code block named in any manifest.tsv under <extracted dir>; writes <hash>.spv, results.tsv
 //       (one line per block) and summary.txt (counts, exceptions and translator messages grouped by text)
+//   spirv_harness --extract <romfs dir> <main.bin> --out <shaders_extracted dir> [--jobs N] [--full]
+//       tools/extract_shaders.py ported (extract/): the same tree, so no Python is needed to prepare the shaders
+//   spirv_harness --prepare <romfs dir> <main.bin> --out <shaders_extracted dir> --spirv <dir> [--jobs N] [--full] [--batch options]
+//       --extract, then --batch on what it extracted
 //
 // Everything this program learns about the block comes from the control section (see docs/nvn/SHADERS.md):
 // +0x708 program start (0x30 graphics, 0x100 compute), +0x6fc/+0x700 constant data size/offset. The stage comes
@@ -53,6 +57,7 @@ namespace SpirvHarness
             try
             {
                 if (args.Length >= 2 && args[0] == "--batch") return Batch(args);
+                if (args.Length >= 3 && (args[0] == "--extract" || args[0] == "--prepare")) return ExtractAndPrepare(args);
                 if (args.Length >= 2 && !args[0].StartsWith("-")) return Single(args);
             }
             catch (ArgumentException e)
@@ -60,8 +65,30 @@ namespace SpirvHarness
                 Console.Error.WriteLine(e.Message);
             }
             Console.Error.WriteLine("usage: spirv_harness <code.bin> <ctrl.bin> [-o out.spv]\n" +
-                                    "       spirv_harness --batch <extracted dir> --out <dir> [--jobs N] [--limit N] [--no-val] [--no-retry] [--debug-mode] [--target-env E]");
+                                    "       spirv_harness --batch <extracted dir> --out <dir> [--jobs N] [--limit N] [--no-val] [--no-retry] [--debug-mode] [--target-env E]\n" +
+                                    "       spirv_harness --extract <romfs dir> <main.bin> --out <shaders_extracted dir> [--jobs N] [--full]\n" +
+                                    "       spirv_harness --prepare <romfs dir> <main.bin> --out <shaders_extracted dir> --spirv <dir> [--jobs N] [--full] [--batch options]");
             return 2;
+        }
+
+        // --extract: tools/extract_shaders.py (see extract/Extractor.cs). --prepare: --extract, then --batch on its output.
+        static int ExtractAndPrepare(string[] args)
+        {
+            string outDir = Opt(args, "--out", null) ?? throw new ArgumentException("--out is required");
+            int jobsN = int.Parse(Opt(args, "--jobs", Math.Max(1, Environment.ProcessorCount / 2).ToString()));
+            string spirv = args[0] == "--prepare" ? Opt(args, "--spirv", null) ?? throw new ArgumentException("--spirv is required") : null;
+            Stopwatch sw = Stopwatch.StartNew();
+            int rc = Extract.Extractor.Run(args[1], args[2], outDir, jobsN, args.Contains("--full"));
+            Console.Error.WriteLine($"extraction: {sw.Elapsed.TotalSeconds:F1} s");
+            if (rc != 0 || args[0] == "--extract") return rc;
+            List<string> batch = new() { "--batch", outDir, "--out", spirv, "--jobs", jobsN.ToString() };
+            string[] valued = { "--limit", "--target-env", "--spirv-val" };
+            for (int i = 3; i < args.Length; i++)
+            {
+                if (valued.Contains(args[i]) && i + 1 < args.Length) batch.AddRange(new[] { args[i], args[++i] });
+                else if (args[i] is "--no-val" or "--no-retry" or "--debug-mode") batch.Add(args[i]);
+            }
+            return Batch(batch.ToArray());
         }
 
         static string Opt(string[] args, string name, string def)
