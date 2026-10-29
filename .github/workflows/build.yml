@@ -1,6 +1,6 @@
-# The release packages (README "Downloads"): this repository's sources with the launcher already built, nothing of
-# the game, for Windows, macOS and Linux. Run from the Actions tab (Build > Run workflow); each package is an artifact
-# of the run. Windows is cross-built with mingw-w64, as tools/package_release_win.sh does on a computer.
+# The release packages (README "Downloads"): the launcher and the player, which plays the game folder
+# ACNHRecomp-Importer prepared, with the libraries they need; nothing of the game. One per system, each built on the
+# oldest one it should run on. Run from the Actions tab (Build > Run workflow); each package is an artifact of the run.
 name: Build
 
 on:
@@ -15,7 +15,8 @@ permissions:
   contents: read
 
 env:
-  SDL3: "3.4.16"  # as tools/setup_acnh.py
+  SDL3: "3.4.16"          # as tools/setup_acnh.py
+  VK_HEADERS: "1.4.357"   # as tools/setup_acnh.py
 
 jobs:
   version:
@@ -35,25 +36,36 @@ jobs:
   windows:
     name: Windows x64
     needs: version
-    runs-on: ubuntu-24.04
+    runs-on: windows-2022
     env:
       VERSION: ${{ needs.version.outputs.version }}
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v7
-      - name: Tools
+        with:
+          fetch-depth: 0  # the launcher's version (git describe)
+      - uses: ilammy/msvc-dev-cmd@v1  # vcvars64: clang-cl links against the Windows SDK and the C runtime
+        with:
+          arch: x64
+      - name: SDL3, Vulkan headers
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ninja-build zip \
-               gcc-mingw-w64-x86-64-posix g++-mingw-w64-x86-64-posix mingw-w64-x86-64-dev
-          # posix threads, as the release: std::thread through libwinpthread-1.dll
-          sudo update-alternatives --set x86_64-w64-mingw32-gcc /usr/bin/x86_64-w64-mingw32-gcc-posix
-          sudo update-alternatives --set x86_64-w64-mingw32-g++ /usr/bin/x86_64-w64-mingw32-g++-posix
-      - name: SDL3
+          T=$(cygpath -u "$RUNNER_TEMP")
+          curl -fsSL -o "$T/sdl.zip" "https://github.com/libsdl-org/SDL/releases/download/release-$SDL3/SDL3-devel-$SDL3-VC.zip"
+          7z x -bso0 -o"$RUNNER_TEMP" "$RUNNER_TEMP/sdl.zip"
+          curl -fsSL "https://github.com/KhronosGroup/Vulkan-Headers/archive/refs/tags/v$VK_HEADERS.tar.gz" | tar -xz -C "$T"
+      - name: libvpx, libvorbis (vcpkg)
         run: |
-          curl -fsSL "https://github.com/libsdl-org/SDL/releases/download/release-$SDL3/SDL3-devel-$SDL3-mingw.tar.gz" |
-            tar -xz -C "$RUNNER_TEMP"
+          "$(cygpath -u "$VCPKG_INSTALLATION_ROOT")/vcpkg.exe" install libvpx:x64-windows-static-md-release \
+              libvorbis:x64-windows-static-md-release --disable-metrics
       - name: Package
-        run: tools/package_release_win.sh "$VERSION" "$RUNNER_TEMP/SDL3-$SDL3/x86_64-w64-mingw32"
+        run: |
+          export PATH="/c/Program Files/LLVM/bin:$PATH"
+          T=$(cygpath -m "$RUNNER_TEMP")
+          tools/package_release_win.sh "$VERSION" "$T/SDL3-$SDL3" \
+              "$(cygpath -m "$VCPKG_INSTALLATION_ROOT")/installed/x64-windows-static-md-release" \
+              "$T/Vulkan-Headers-$VK_HEADERS/include"
       - uses: actions/upload-artifact@v7
         with:
           path: private/release/ACNHRecomp-${{ env.VERSION }}-windows-x64.zip
@@ -63,13 +75,16 @@ jobs:
   macos:
     name: macOS arm64
     needs: version
-    runs-on: macos-15
+    runs-on: macos-14  # Homebrew's libraries there run on macOS 14 and newer
     env:
       VERSION: ${{ needs.version.outputs.version }}
+      MACOSX_DEPLOYMENT_TARGET: "14.0"
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - name: Tools
-        run: brew install ninja sdl3  # cmake comes with the runner
+        run: brew install ninja sdl3 molten-vk vulkan-loader vulkan-headers libvpx libvorbis
       - name: Package
         run: tools/package_release_mac.sh "$VERSION"
       - uses: actions/upload-artifact@v7
@@ -81,22 +96,30 @@ jobs:
   linux:
     name: Linux x64
     needs: version
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04  # glibc 2.35: what the package runs on, and newer
     env:
       VERSION: ${{ needs.version.outputs.version }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - name: Tools
         run: |
           sudo apt-get update
-          # SDL3's build dependencies (SDL's docs/README-linux.md): it loads these libraries at run time when present.
+          # clang 18 (apt.llvm.org); SDL3's build dependencies (SDL's docs/README-linux.md): it loads these libraries
+          # at run time when present; the game's: Vulkan, libvpx, libvorbis.
+          curl -fsSL https://apt.llvm.org/llvm.sh | sudo bash -s 18
           sudo apt-get install -y --no-install-recommends ninja-build patchelf pkg-config \
+               libvulkan-dev libvpx-dev libvorbis-dev \
                libasound2-dev libpulse-dev libpipewire-0.3-dev libx11-dev libxext-dev libxrandr-dev libxcursor-dev \
                libxfixes-dev libxi-dev libxss-dev libxtst-dev libxkbcommon-dev libdrm-dev libgbm-dev \
                libgl1-mesa-dev libegl1-mesa-dev libdbus-1-dev libibus-1.0-dev libudev-dev libwayland-dev \
                wayland-protocols libdecor-0-dev
-      - name: SDL3
+      - name: SDL3, Vulkan headers
         run: |
+          # Ubuntu 22.04's Vulkan headers (1.3.204) are older than the runtime's
+          curl -fsSL "https://github.com/KhronosGroup/Vulkan-Headers/archive/refs/tags/v$VK_HEADERS.tar.gz" |
+            tar -xz -C "$RUNNER_TEMP"
           curl -fsSL "https://github.com/libsdl-org/SDL/releases/download/release-$SDL3/SDL3-$SDL3.tar.gz" |
             tar -xz -C "$RUNNER_TEMP"
           cmake -S "$RUNNER_TEMP/SDL3-$SDL3" -B "$RUNNER_TEMP/sdl3-build" -G Ninja -DCMAKE_BUILD_TYPE=Release \
@@ -104,7 +127,10 @@ jobs:
           cmake --build "$RUNNER_TEMP/sdl3-build"
           cmake --install "$RUNNER_TEMP/sdl3-build"
       - name: Package
-        run: tools/package_release_linux.sh "$VERSION" "$RUNNER_TEMP/sdl3"
+        env:
+          CC: clang-18
+          CXX: clang++-18
+        run: tools/package_release_linux.sh "$VERSION" "$RUNNER_TEMP/sdl3" "$RUNNER_TEMP/Vulkan-Headers-$VK_HEADERS/include"
       - uses: actions/upload-artifact@v7
         with:
           path: private/release/ACNHRecomp-${{ env.VERSION }}-linux-x64.tar.gz

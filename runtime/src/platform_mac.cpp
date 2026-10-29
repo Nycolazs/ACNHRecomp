@@ -870,6 +870,15 @@ int main(int argc, char** argv) {
     // frame: walking about the island's north at 60 fps on an M1 Air, replay 12.5 -> 10.1 ms and 56-59 -> 60 fps,
     // the picture the same (island, inventory, phone, map). Off; an MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS set wins.
     setenv("MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS", "0", 0);
+    // A release package: the Vulkan loader and MoltenVK beside the player (tools/package_release_mac.sh), before any
+    // installed ones. A VK_DRIVER_FILES or SDL_VULKAN_LIBRARY in the environment wins.
+    if (const char* base = SDL_GetBasePath()) {
+        const std::string dir = base, loader = dir + "libvulkan.1.dylib", icd = dir + "MoltenVK_icd.json";
+        if (access(loader.c_str(), R_OK) == 0 && access(icd.c_str(), R_OK) == 0) {
+            setenv("SDL_VULKAN_LIBRARY", loader.c_str(), 0);
+            setenv("VK_DRIVER_FILES", icd.c_str(), 0);
+        }
+    }
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_AUDIO)) {
         std::fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
         return 1;

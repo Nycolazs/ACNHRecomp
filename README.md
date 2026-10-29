@@ -202,20 +202,27 @@ has .NET 10), the Ryubing shader translator source and Dear ImGui.
 
 ### Downloads
 
-The [releases](https://github.com/Nycolazs/ACNHRecomp/releases) have, for each version, none of them with any part
-of the game:
+The [releases](https://github.com/Nycolazs/ACNHRecomp/releases) are ready to play: none of them has any part of the
+game, and none needs a compiler. Get your game folder from [ACNHRecomp-Importer](#your-game-folder) (on our
+[Discord](https://discord.gg/VJW9Dtdu7a)), then:
 
 | File | What it is |
 |---|---|
-| `ACNHRecomp-<version>-windows-x64.zip` | The sources with the launcher already built: unzip, double-click `Start ACNHRecomp.bat` |
-| `ACNHRecomp-<version>-macOS-arm64.zip` | The sources with the launcher already built: unzip, double-click `Start ACNHRecomp.command` |
-| `ACNHRecomp-<version>-android.apk` | The Android app; it plays the game folder your computer prepares ([docs/ANDROID.md](docs/ANDROID.md)) |
-| `libvulkan_freedreno.so` | The Turnip Vulkan driver (Mesa, MIT) the Android setup installs |
+| `ACNHRecomp-<version>-windows-x64.zip` | The launcher and the player for Windows 10/11 (x64): unzip, double-click `Start ACNHRecomp.bat` |
+| `ACNHRecomp-<version>-macOS-arm64.zip` | The launcher and the player for macOS 14+ on Apple Silicon: unzip, double-click `Start ACNHRecomp.command` (the first time: right-click > *Open*) |
+| `ACNHRecomp-<version>-linux-x64.tar.gz` | The launcher and the player for Linux x86-64 (glibc 2.35+: Ubuntu 22.04 and newer): extract, run `Start ACNHRecomp.sh` |
+| `ACNHRecomp-<version>-android.apk` | The Android app (Snapdragon / Adreno 6xx or newer, Android 10+); it plays the game folder ACNHRecomp-Importer prepared ([docs/ANDROID.md](docs/ANDROID.md)) |
+| `libvulkan_freedreno.so` | The Turnip Vulkan driver (Mesa, MIT), already inside the APK; for `tools/android_install.sh` |
 
-The launcher then asks for your game folder (made with ACNHRecomp-Importer, see
-[Your game folder](#your-game-folder)), checks the computer and recompiles the game from your own files.
+The launcher asks for one thing, the game folder ACNHRecomp-Importer wrote, and starts the game; the player beside
+it (`acnh`) loads the game's code from that folder (`game/<platform>/`, see [Building from source](#building-from-source)).
+Each package carries what it needs (SDL3, and on macOS the Vulkan loader and MoltenVK); a GPU with a Vulkan 1.3
+driver is the one requirement. The packages are made by the repository's **Build** workflow (`.github/workflows/build.yml`,
+`tools/package_release_*.sh`).
 
-### With the launcher (recommended)
+The sections below are for building from this repository instead (developers, other versions of the game).
+
+### From the repository, with the launcher
 
 The launcher is a small program, built from this repository alone, that does the whole setup with you: it asks
 for your game folder, checks this computer, recompiles the game and then starts it. It uses the same look as the in-game

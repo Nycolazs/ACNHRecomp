@@ -1,57 +1,53 @@
 #!/bin/bash
-# The Windows release package, made on macOS or Linux with mingw-w64: the sources the setup needs at its root
-# (tools/release_sources.sh: nothing of the game) with the launcher already built beside them (cross-compiled), SDL3.dll and
-# libwinpthread-1.dll beside it, and "Start ACNHRecomp.bat" to double-click. The launcher then checks the computer and
-# sets the game up from the player's own files with tools/setup_acnh.py (Python and Visual Studio's C++ build tools,
-# README "Requirements"), as on the other systems.
-# usage: tools/package_release_win.sh <version> <SDL3 mingw prefix>
-#   <SDL3 mingw prefix>: the x86_64-w64-mingw32 folder of SDL's SDL3-devel-<x.y.z>-mingw.tar.gz release
-#   (https://github.com/libsdl-org/SDL/releases)        -> private/release/ACNHRecomp-<version>-windows-x64.zip
-# needs: x86_64-w64-mingw32-g++ (brew install mingw-w64, or apt install g++-mingw-w64-x86-64), cmake, ninja
+# The Windows release package, made on Windows (Git Bash) in a Visual Studio x64 environment with clang-cl, as the
+# game's library is (the player and game/windows-x64/acnh_game.dll share C++ exceptions: one compiler family): the
+# launcher and the player (acnh.exe, built with NX_GAME_FROM_FOLDER: no game code), SDL3.dll (zlib) and the Visual C++
+# runtime (redistributable) beside them, and "Start ACNHRecomp.bat". The player plays the game folder
+# ACNHRecomp-Importer prepared: the launcher only asks for that folder (README, "Installation"). libvpx and libvorbis
+# are linked in (vcpkg's static libraries); the Vulkan loader comes with the GPU driver.
+# usage: tools/package_release_win.sh <version> <SDL3 VC prefix> <movie libraries prefix> <Vulkan-Headers include>
+#   <SDL3 VC prefix>: SDL's SDL3-devel-<x.y.z>-VC.zip, extracted (https://github.com/libsdl-org/SDL/releases)
+#   <movie libraries prefix>: vcpkg's installed/x64-windows-static-md-release (libvpx, libvorbis)
+#                                                    -> private/release/ACNHRecomp-<version>-windows-x64.zip
+# needs: clang-cl, cmake, ninja, zip (or 7z), and the environment of vcvars64.bat
 cd "$(dirname "$0")/.." || exit 1
 set -e
-VER=${1:?usage: tools/package_release_win.sh <version> <SDL3 mingw prefix>}
-SDL=${2:?usage: tools/package_release_win.sh <version> <SDL3 mingw prefix>}
-[ -f "$SDL/bin/SDL3.dll" ] || { echo "$SDL/bin/SDL3.dll not found"; exit 1; }
+USAGE="usage: tools/package_release_win.sh <version> <SDL3 VC prefix> <movie libraries prefix> <Vulkan-Headers include>"
+VER=${1:?$USAGE}
+SDL=${2:?$USAGE}
+MOVIE=${3:?$USAGE}
+VKH=${4:?$USAGE}
+[ -f "$SDL/lib/x64/SDL3.dll" ] || { echo "$SDL/lib/x64/SDL3.dll not found"; exit 1; }
+[ -n "$VCToolsRedistDir" ] || { echo "run it in a Visual Studio x64 environment (vcvars64.bat)"; exit 1; }
 git diff --quiet HEAD -- || { echo "uncommitted changes: commit first (the package is made from HEAD)"; exit 1; }
-BUILD=private/release/launcher-win
+BUILD=private/release/build-win
 OUT=private/release/ACNHRecomp-$VER-windows-x64
 rm -rf "${OUT:?}" "$OUT.zip"
 mkdir -p "$OUT"
 
-echo "== launcher (mingw-w64)"
-TC=$PWD/$BUILD/mingw.cmake
-mkdir -p "$BUILD"
-cat > "$TC" <<EOF
-set(CMAKE_SYSTEM_NAME Windows)
-set(CMAKE_SYSTEM_PROCESSOR x86_64)
-set(CMAKE_C_COMPILER x86_64-w64-mingw32-gcc)
-set(CMAKE_CXX_COMPILER x86_64-w64-mingw32-g++)
-set(CMAKE_RC_COMPILER x86_64-w64-mingw32-windres)
-set(CMAKE_FIND_ROOT_PATH $SDL)
-set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
-set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
-set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
-set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
-set(CMAKE_EXE_LINKER_FLAGS "-static-libgcc -static-libstdc++")
-EOF
-[ -f "$BUILD/CMakeCache.txt" ] ||
-  cmake -S . -B "$BUILD" -G Ninja -DCMAKE_TOOLCHAIN_FILE="$TC" -DCMAKE_BUILD_TYPE=Release -DNX_GAME=acnh \
-        -DNX_GEN_DIR="$PWD/$BUILD/no-gen" -DCMAKE_PREFIX_PATH="$SDL" >/dev/null
-cmake --build "$BUILD" --target acnhrecomp_launcher
+# Dear ImGui (the launcher, and the player's settings screen: without it a stub), as tools/setup_acnh.py fetches it.
+IMGUI=private/third_party/imgui
+[ -f "$IMGUI/imgui.cpp" ] || { mkdir -p "$IMGUI" && curl -fsSL https://github.com/ocornut/imgui/archive/refs/tags/v1.91.9.tar.gz |
+                               tar -xz --strip-components=1 -C "$IMGUI"; }
 
-echo "== sources (tools/release_sources.sh)"
-R=$OUT
-tools/release_sources.sh "$R" windows
+echo "== launcher and player (clang-cl)"
+[ -f "$BUILD/CMakeCache.txt" ] ||
+  cmake -S . -B "$BUILD" -G Ninja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DNX_GAME=acnh \
+        -DNX_GEN_DIR="$PWD/$BUILD/no-gen" -DCMAKE_BUILD_TYPE=Release -DNX_GAME_FROM_FOLDER=ON \
+        "-DCMAKE_PREFIX_PATH=$SDL;$MOVIE" "-DNX_VULKAN_INCLUDE=$VKH" >/dev/null
+cmake --build "$BUILD" --target acnhrecomp_launcher acnh
+
+R=$OUT/ACNHRecomp
+mkdir -p "$R"
 cp "$BUILD/acnhrecomp_launcher.exe" "$R/ACNHRecomp Launcher.exe"
-x86_64-w64-mingw32-strip "$R/ACNHRecomp Launcher.exe"
-cp "$SDL/bin/SDL3.dll" "$R/"
-# The one runtime DLL mingw's libstdc++ threads still import (zlib-style licence, mingw-w64).
-WINPTHREAD=$(x86_64-w64-mingw32-g++ -print-file-name=libwinpthread-1.dll)
-[ -f "$WINPTHREAD" ] || WINPTHREAD=$(dirname "$(command -v x86_64-w64-mingw32-g++)")/../x86_64-w64-mingw32/bin/libwinpthread-1.dll
-[ -f "$WINPTHREAD" ] || WINPTHREAD=$(find -L "$(brew --prefix mingw-w64 2>/dev/null || echo /usr)/" -name libwinpthread-1.dll -path "*x86_64*" 2>/dev/null | head -1)
-cp "$WINPTHREAD" "$R/"
-printf '@echo off\r\nrem Double-click: opens the launcher, which sets the game up from your own files (README, "Installation").\r\ncd /d "%%~dp0"\r\nstart "" "ACNHRecomp Launcher.exe"\r\n' > "$R/Start ACNHRecomp.bat"
-(cd "$OUT" && zip -qr "../$(basename "$OUT").zip" .)
+cp "$BUILD/acnh.exe" "$R/acnh.exe"
+cp "$SDL/lib/x64/SDL3.dll" "$R/"
+# The Visual C++ runtime the executables import (app-local: no installer needed).
+CRT=$(ls -d "$(cygpath -u "$VCToolsRedistDir")"/x64/Microsoft.VC*.CRT | head -1)
+for dll in vcruntime140.dll vcruntime140_1.dll msvcp140.dll; do cp "$CRT/$dll" "$R/"; done
+printf '@echo off\r\nrem Double-click: opens the launcher, which asks for the game folder ACNHRecomp-Importer prepared.\r\ncd /d "%%~dp0"\r\nstart "" "ACNHRecomp Launcher.exe"\r\n' > "$R/Start ACNHRecomp.bat"
+tools/release_readme.sh "$R" windows
+if command -v zip >/dev/null; then (cd "$OUT" && zip -qr "../$(basename "$OUT").zip" ACNHRecomp)
+else (cd "$OUT" && 7z a -tzip -bso0 "../$(basename "$OUT").zip" ACNHRecomp); fi
 rm -rf "${OUT:?}"
 ls -la "$OUT.zip"

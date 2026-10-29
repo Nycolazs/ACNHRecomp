@@ -12,6 +12,18 @@ recompiles it (as for the desktop versions) and prepares a *game folder* for the
 opens it asks for that folder, checks it and starts the game; next time it starts right away. That folder (and the
 `libacnh_game.so` in it) must not be shared.
 
+## With ACNHRecomp-Importer (the release)
+
+1. Prepare your game folder with **ACNHRecomp-Importer** (on our Discord:
+   [discord.gg/VJW9Dtdu7a](https://discord.gg/VJW9Dtdu7a)), for Android: its folder then has the game's code for the
+   phone in `game/android-arm64/`.
+2. Copy that folder to the phone (e.g. to `ACNH` on the memory card).
+3. Install `ACNHRecomp-<version>-android.apk` from the
+   [releases](https://github.com/Nycolazs/ACNHRecomp/releases), open **ACNH Recomp**, choose *Choose the game folder*
+   and pick it (the app asks once for access to all files). The game starts; next time it starts right away.
+
+The rest of this page builds the app and the game folder from this repository instead.
+
 ## What you need
 
 - A computer with the game already set up by `tools/setup_acnh.py` (README, "Installation"): macOS (Apple

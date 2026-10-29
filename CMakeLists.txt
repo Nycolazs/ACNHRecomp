@@ -120,11 +120,16 @@ if(NX_LAUNCHER AND NOT ANDROID)
     include(launcher/launcher.cmake)
 endif()
 
+# Desktop: the game's code from the game folder (game/<platform>/lib<game>_game, which ACNHRecomp-Importer builds)
+# instead of linked into the executable: the player then only needs the folder.
+option(NX_GAME_FROM_FOLDER "Desktop: load the game's code from the game folder" OFF)
+
 # Without the generated code (a checkout with no game data) only the tests and the launcher above are built.
 # Android builds the runtime without it too: the app (lib<game>.so) holds no game code and loads lib<game>_game.so,
-# made from the player's own copy on their computer, from the game folder picked on the phone (docs/ANDROID.md).
+# made from the player's own copy on their computer, from the game folder picked on the phone (docs/ANDROID.md). So
+# does the desktop player (NX_GAME_FROM_FOLDER): the release's, which loads the game folder's library.
 file(GLOB NX_GEN_PROBE "${NX_GEN_DIR}/main/*.cpp")
-if(NOT NX_GEN_PROBE AND NOT ANDROID)
+if(NOT NX_GEN_PROBE AND NOT ANDROID AND NOT NX_GAME_FROM_FOLDER)
     message(WARNING "No generated code in ${NX_GEN_DIR}/main: building the unit tests only")
     return()
 endif()
@@ -300,10 +305,6 @@ foreach(h cpu.h module.h runtime.h)
 endforeach()
 string(SHA1 NX_GAME_ABI "${NX_ABI_TEXT}")
 string(SUBSTRING "${NX_GAME_ABI}" 0 12 NX_GAME_ABI)
-
-# Desktop: the game's code from the game folder (game/<platform>/lib<game>_game, which ACNHRecomp-Importer builds)
-# instead of linked into the executable: the player then only needs the folder.
-option(NX_GAME_FROM_FOLDER "Desktop: load the game's code from the game folder" OFF)
 
 if(ANDROID)
     # NativeActivity app: lib<game>.so, entry android_main (android_native_app_glue).
