@@ -8,8 +8,6 @@
 // built from the builder through the driver's getters.
 #pragma once
 
-#include <pthread.h>
-
 #include "nvn_per_thread.h"
 #include <type_traits>
 #include <cstdint>
@@ -21,6 +19,7 @@
 #include <shared_mutex>
 #include <unordered_map>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <nx/runtime.h>
@@ -89,12 +88,12 @@ inline thread_local ReplayTls t_replay;
 // The replaying thread's ReplayTls, reached without its thread_local: in a shared library (Android's lib<game>.so) each
 // thread_local access goes through the dynamic TLS resolver (~2% of the replay thread on a Snapdragon 865). ReplayScope
 // sets both; other threads still use their own t_replay.
-inline std::atomic<pthread_t> g_replay_thread{};
+inline std::atomic<std::thread::id> g_replay_thread{};  // not pthread_t: Windows has none
 inline ReplayTls* g_replay_tls = nullptr;
 inline ReplayTls g_worker_replay_tls[kReplaySlots];  // the parallel replay's workers' (nvn_per_thread.h): no TLS
 inline ReplayTls& replay_tls() {
     if (const int s = replay_slot()) return g_worker_replay_tls[s];
-    if (g_replay_tls && pthread_equal(pthread_self(), g_replay_thread.load(std::memory_order_relaxed))) return *g_replay_tls;
+    if (g_replay_tls && std::this_thread::get_id() == g_replay_thread.load(std::memory_order_relaxed)) return *g_replay_tls;
     return t_replay;
 }
 bool resolve_cache_on();  // NX_RESOLVE_CACHE (nvn_incarnation.cpp)

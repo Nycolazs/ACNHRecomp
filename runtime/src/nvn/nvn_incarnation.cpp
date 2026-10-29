@@ -159,7 +159,7 @@ ReplayScope::ReplayScope(uint64_t lists_epoch) {
     static std::atomic<uint64_t> serial{0};
     t_replay.serial = ++serial;
     g_replay_tls = &t_replay;  // replay_tls(): this thread's, without the TLS lookup
-    g_replay_thread.store(pthread_self(), std::memory_order_relaxed);
+    g_replay_thread.store(std::this_thread::get_id(), std::memory_order_relaxed);
 }
 
 ReplayScope::~ReplayScope() { t_replay.mark = 0, t_replay.serial = 0; }
