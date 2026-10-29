@@ -524,6 +524,16 @@ def main():
                 else "") or "/opt/homebrew"
         extra.append(f"-DCMAKE_PREFIX_PATH={brew}")
     build = os.path.join(G, "build")
+    # A build configured from another copy of the repository (an earlier release package with the same --out): its
+    # cache names that copy's sources and compiler, which CMake refuses. Configured again from this one.
+    cache = os.path.join(build, "CMakeCache.txt")
+    if os.path.exists(cache):
+        with open(cache, encoding="utf-8", errors="replace") as f:
+            home = next((l.split("=", 1)[1].strip() for l in f if l.startswith("CMAKE_HOME_DIRECTORY:")), None)
+        if home and os.path.normcase(os.path.normpath(home)) != os.path.normcase(os.path.normpath(ROOT)):
+            print(f"the build was configured from {home}: configured again from {ROOT}", flush=True)
+            os.remove(cache)
+            shutil.rmtree(os.path.join(build, "CMakeFiles"), ignore_errors=True)
     run([cmake, "-S", ".", "-B", build, "-G", "Ninja", f"-DCMAKE_MAKE_PROGRAM={ninja}", "-DNX_GAME=acnh",
          "-DCMAKE_BUILD_TYPE=Release", f"-DNX_VULKAN_INCLUDE={os.path.join(vkh, 'include')}"] + cc + extra,
         log=os.path.join(logs, "cmake.log"), env=env)
