@@ -142,6 +142,10 @@ def msvc_env():
              "\"--quiet --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended\"")
     out = subprocess.run(f'cmd /s /c ""{bat}" >nul 2>&1 && set"', capture_output=True, text=True, errors="replace").stdout
     env = dict(l.split("=", 1) for l in out.splitlines() if "=" in l and not l.startswith("="))
+    # vcvars sets Platform=x64, which MSBuild (dotnet build) takes as a property: the shader harness would land in
+    # bin/x64/Release/ instead of bin/Release/.
+    for k in [k for k in env if k.upper() == "PLATFORM"]:
+        env.pop(k)
     # Windows spells it "Path" (from Explorer and the launcher), shells often "PATH": one key, whatever the case.
     paths = [env.pop(k) for k in [k for k in env if k.upper() == "PATH"]]
     path = paths[0] if paths else ""
