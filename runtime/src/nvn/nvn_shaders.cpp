@@ -222,7 +222,8 @@ bool read_whole(const std::string& path, std::string& out) {
 // spirv.pak (tools/pack_spirv.py): the spirv folder's .spv files in one file, opened once. On Android the data folder
 // is on shared storage (FUSE), where opening each of ~9,000 small files took milliseconds: shaders met for the first
 // time while playing stalled the replay. Header "SPK1", the count, then per file 16 bytes of hash, its offset and
-// size (u64 each), then the data. A .spv missing from it is read from the folder.
+// size (u64 each), then the data. A .spv missing from it is read from the folder. The folder's results.tsv is in it
+// too, as "results.tsv" (packs made since): read when the folder has none.
 struct SpirvPak {
     FILE* f = nullptr;
     std::unordered_map<std::string, std::pair<uint64_t, uint64_t>> at;
@@ -312,6 +313,8 @@ const ShaderInfo* shader_for(uint64_t code_host, uint64_t control) {
         std::string text;
         if (read_whole(dir + "results.tsv", text))
             log("nvn: %zu shader records from %sresults.tsv", parse_results_tsv(text, k.resources), dir.c_str());
+        else if (read_spirv("results.tsv", text))
+            log("nvn: %zu shader records from spirv.pak", parse_results_tsv(text, k.resources));
         else
             log("nvn: no %sresults.tsv: storage buffers of translated shaders cannot be bound", dir.c_str());
     }
