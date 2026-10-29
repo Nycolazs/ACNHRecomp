@@ -33,6 +33,8 @@ extern const nx::ModuleInfo nx_module_subsdk0;
 
 namespace nx {
 
+void discord_presence_start();  // discord_presence.cpp
+
 NX_GAME_API uint64_t mrs(CPU& c, uint32_t sysreg) {
     switch (sysreg) {
         case 0xDF02:  // CNTVCT_EL0
@@ -148,6 +150,7 @@ static void nn_main(CPU& c) {
     init_module(c, nx_module_main);
     game::after_init();
     log("entering nnMain");
+    discord_presence_start();  // discord.client_id in config.ini; nothing without it
     cpu_profile_register("main");  // NX_CPU_PROFILE (cpu_profile.cpp)
     uint64_t real = 0;
     for (size_t k = 0; k < nx_module_main.symbol_count; k++)
