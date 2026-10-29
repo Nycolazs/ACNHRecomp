@@ -78,11 +78,12 @@ Upload dedup_upload(const uint8_t* p, uint64_t size, uint64_t padded, uint64_t a
     return u;
 }
 
-// The map goes before its arena: MSVC's STL allocates a map's head node from its allocator (libc++ and libstdc++ keep
-// it in the map), so releasing the arena under a live map freed the head (a crash at the first submit on Windows).
 void dedup_reset() {
-    Copies& cp = *g_cp;
-    std::destroy_at(&cp.map), cp.arena.release(), std::construct_at(&cp.map, &cp.arena);
+    // The map is made again after the arena's release: MSVC's std::map allocates its head node from that arena.
+    Copies& c = *g_cp;
+    std::destroy_at(&c.map);
+    c.arena.release();
+    std::construct_at(&c.map, &c.arena);
     (*g_generation)++, (*g_upload_epoch)++;
 }
 
