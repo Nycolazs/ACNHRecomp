@@ -210,6 +210,17 @@ const std::vector<fs::path>& mod_roots() {
     return roots;
 }
 
+// The RomFS with the update applied, loose: <data root>/romfs (the game folder ACNHRecomp-Importer prepares) or
+// <data root>/extract/romfs (a setup's data folder).
+fs::path romfs_root() {
+    static const fs::path p = [] {
+        std::error_code ec;
+        fs::path r = data_root() / "romfs";
+        return fs::is_directory(r, ec) ? r : data_root() / "extract" / "romfs";
+    }();
+    return p;
+}
+
 // "mount:/a/b" -> host path; empty when the mount is unknown.
 fs::path resolve(const std::string& guest) {
     auto colon = guest.find(':');
@@ -218,7 +229,7 @@ fs::path resolve(const std::string& guest) {
     if (it == g_mounts.end()) return {};
     std::string rest = guest.substr(colon + 1);
     while (!rest.empty() && (rest[0] == '/' || rest[0] == '\\')) rest.erase(0, 1);
-    static const fs::path romfs = data_root() / "extract" / "romfs";
+    static const fs::path romfs = romfs_root();
     // The button icons of the chosen controller style (glyphs.cpp: a redrawn copy of the game's icon font).
     if (it->second == romfs && !rest.empty())
         if (std::string g = glyph_override(rest); !g.empty()) return fs::u8path(g);
@@ -237,7 +248,7 @@ fs::path resolve(const std::string& guest) {
 const Pak* in_pak(const fs::path& p, std::string& rel) {
     const Pak* k = pak();
     if (!k) return nullptr;
-    static const std::string romfs = utf8(data_root() / "extract" / "romfs");
+    static const std::string romfs = utf8(romfs_root());
     std::string s = utf8(p);
     if (s.compare(0, romfs.size(), romfs) != 0 || (s.size() > romfs.size() && s[romfs.size()] != '/')) return nullptr;
     rel = s.size() > romfs.size() ? s.substr(romfs.size() + 1) : "";
@@ -260,7 +271,7 @@ void QueryMountRomCacheSize(CPU& c) {
 
 void MountRom(CPU& c) {
     std::lock_guard lk(g_fs);
-    mount(cstr(c.x[0]), data_root() / "extract" / "romfs");
+    mount(cstr(c.x[0]), romfs_root());
     c.x[0] = kOk;
 }
 
@@ -871,7 +882,7 @@ void add_virtual_file(const std::string& path, std::string data) {
 }
 
 std::string read_game_file(const std::string& relative_to_romfs) {
-    FILE* f = plat::fopen_utf8(utf8(data_root() / "extract" / "romfs" / fs::u8path(relative_to_romfs)), "rb");
+    FILE* f = plat::fopen_utf8(utf8(romfs_root() / fs::u8path(relative_to_romfs)), "rb");
     if (!f) return {};
     std::string s;
     char buf[65536];

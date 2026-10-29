@@ -163,6 +163,10 @@ foreach(mod ${NX_MODULES})
         # Linux x86-64: AVX2/FMA/BMI as the Windows build (/arch:AVX2); no FMA contraction, so a guest fmul + fadd
         # rounds twice, as on the Switch.
         target_compile_options(game_${mod} PRIVATE -O2 -fvisibility=hidden -march=x86-64-v3 -ffp-contract=off)
+        if(NX_GAME_FROM_FOLDER)  # the module's table is what the player looks up in lib<game>_game.so
+            set_source_files_properties("${NX_GEN_DIR}/${mod}/table.cpp" TARGET_DIRECTORY game_${mod}
+                                        PROPERTIES COMPILE_OPTIONS -fvisibility=default)
+        endif()
     elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
         # Windows, clang-cl: /arch:AVX2 comes from above; no FMA contraction either (clang fuses within a statement
         # by default).
@@ -279,16 +283,21 @@ else()
     set(NX_VULKAN_SDK "C:/VulkanSDK/1.4.357.0" CACHE PATH "Vulkan SDK")
 endif()
 
+# What the player and lib<game>_game must agree on (the CPU context, the module tables, the runtime's calls): a game
+# library built from other headers is refused at start, asking for the game folder to be prepared again.
+set(NX_ABI_TEXT "")
+foreach(h cpu.h module.h runtime.h)
+    file(READ "${CMAKE_SOURCE_DIR}/runtime/include/nx/${h}" t)
+    string(APPEND NX_ABI_TEXT "${t}")
+endforeach()
+string(SHA1 NX_GAME_ABI "${NX_ABI_TEXT}")
+string(SUBSTRING "${NX_GAME_ABI}" 0 12 NX_GAME_ABI)
+
+# Desktop: the game's code from the game folder (game/<platform>/lib<game>_game, which ACNHRecomp-Importer builds)
+# instead of linked into the executable: the player then only needs the folder.
+option(NX_GAME_FROM_FOLDER "Desktop: load the game's code from the game folder" OFF)
+
 if(ANDROID)
-    # What the app and lib<game>_game.so must agree on (the CPU context, the module tables, the runtime's calls): a
-    # game library built from other headers is refused at start, asking for it to be built again.
-    set(NX_ABI_TEXT "")
-    foreach(h cpu.h module.h runtime.h)
-        file(READ "${CMAKE_SOURCE_DIR}/runtime/include/nx/${h}" t)
-        string(APPEND NX_ABI_TEXT "${t}")
-    endforeach()
-    string(SHA1 NX_GAME_ABI "${NX_ABI_TEXT}")
-    string(SUBSTRING "${NX_GAME_ABI}" 0 12 NX_GAME_ABI)
     # NativeActivity app: lib<game>.so, entry android_main (android_native_app_glue).
     set(GLUE "${ANDROID_NDK}/sources/android/native_app_glue")
     add_library(${NX_GAME} SHARED ${NX_RUNTIME_SOURCES} runtime/src/platform_android.cpp
@@ -363,8 +372,25 @@ elseif(UNIX)
     find_path(NX_VULKAN_INCLUDE vulkan/vulkan.h HINTS "${NX_VULKAN_SDK}/include" /usr/include /usr/local/include)
     add_executable(${NX_GAME} ${NX_RUNTIME_SOURCES} runtime/src/platform_linux.cpp runtime/src/memguard_linux.cpp runtime/src/cpu_profile.cpp)
     target_include_directories(${NX_GAME} PRIVATE runtime/include runtime/src "${NX_GAME_DIR}" "${NX_VULKAN_INCLUDE}")
-    target_link_libraries(${NX_GAME} PRIVATE ${NX_GAME_LIBS} SDL3::SDL3 Threads::Threads ${CMAKE_DL_LIBS})
+    target_link_libraries(${NX_GAME} PRIVATE SDL3::SDL3 Threads::Threads ${CMAKE_DL_LIBS})
     target_compile_options(${NX_GAME} PRIVATE -fvisibility=hidden -march=x86-64-v3 -ffp-contract=off)
+    if(NX_GAME_FROM_FOLDER)
+        # The runtime's calls (NX_GAME_API) exported to the game's library, which the player loads from the folder.
+        target_compile_definitions(${NX_GAME} PRIVATE NX_GAME_DYNAMIC NX_GAME_ABI="${NX_GAME_ABI}")
+        set_target_properties(${NX_GAME} PROPERTIES ENABLE_EXPORTS ON)
+        if(NX_GAME_LIBS)  # with generated code at hand: the game folder's library too (lib<game>_game.so)
+            foreach(lib ${NX_GAME_LIBS})
+                set_target_properties(${lib} PROPERTIES POSITION_INDEPENDENT_CODE ON)
+            endforeach()
+            add_library(${NX_GAME}_game SHARED runtime/src/game_abi.cpp)
+            target_include_directories(${NX_GAME}_game PRIVATE runtime/include)
+            target_compile_options(${NX_GAME}_game PRIVATE -fvisibility=hidden)
+            target_compile_definitions(${NX_GAME}_game PRIVATE NX_GAME_ABI="${NX_GAME_ABI}")
+            target_link_libraries(${NX_GAME}_game PRIVATE "$<LINK_LIBRARY:WHOLE_ARCHIVE,${NX_GAME_LIBS}>")
+        endif()
+    else()
+        target_link_libraries(${NX_GAME} PRIVATE ${NX_GAME_LIBS})
+    endif()
     # The executable (PIE) loads near 0x55_5555_0000_0000, far above the guest ranges (0x40_0000_0000 and up). The
     # game runs on its own thread with a 64 MiB stack (platform_linux.cpp).
 else()
@@ -428,7 +454,7 @@ if(NOT NX_GIT_DESCRIBE)
 endif()
 target_compile_definitions(${NX_GAME} PRIVATE NX_VERSION_STRING="0.4-${NX_GIT_DESCRIBE}")
 
-if("subsdk0" IN_LIST NX_MODULES)
+if("subsdk0" IN_LIST NX_MODULES AND NOT NX_GAME_FROM_FOLDER)
     target_compile_definitions(${NX_GAME} PRIVATE NX_HAS_SUBSDK0)
 endif()
 

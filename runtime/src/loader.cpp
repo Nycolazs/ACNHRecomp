@@ -412,7 +412,7 @@ NX_GAME_API void call(CPU& c, uint64_t t) {
     call_slow(c, t);
 }
 
-void trace_sp(CPU& c, uint64_t pc) {
+NX_GAME_API void trace_sp(CPU& c, uint64_t pc) {
     log("sp %llx x19 %llx at %s", (unsigned long long)c.x[31], (unsigned long long)c.x[19], describe(pc).c_str());
 }
 

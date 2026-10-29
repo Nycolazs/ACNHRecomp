@@ -144,6 +144,11 @@ const Entry kLauncherEn[] = {
     {"launcher.err.game_exefs", "exefs/{} is missing or is not one of the game's executables"},
     {"launcher.err.game_romfs", "This romfs/ is not Animal Crossing: New Horizons' (no Shader/ folder)"},
     {"launcher.stage.game", "Linking the game folder"},
+    {"launcher.welcome.play", "Choose your game folder"},
+    {"launcher.welcome.play.desc", "The folder ACNHRecomp-Importer prepared from your own game. It is only read; the game starts from it, nothing to install."},
+    {"launcher.reason.no_game_lib", "this folder has no game code for this computer: prepare it again with ACNHRecomp-Importer, choosing this computer"},
+    {"launcher.home.change_game", "Change game folder"},
+    {"launcher.home.change_game.desc", "Play another folder ACNHRecomp-Importer prepared"},
 };
 
 const Entry kLauncherPtBr[] = {
@@ -287,6 +292,11 @@ const Entry kLauncherPtBr[] = {
     {"launcher.err.game_exefs", "exefs/{} está faltando ou não é um dos executáveis do jogo"},
     {"launcher.err.game_romfs", "Este romfs/ não é do Animal Crossing: New Horizons (não tem a pasta Shader/)"},
     {"launcher.stage.game", "Ligando a pasta do jogo"},
+    {"launcher.welcome.play", "Escolher a pasta do jogo"},
+    {"launcher.welcome.play.desc", "A pasta que o ACNHRecomp-Importer preparou a partir do seu próprio jogo. Ela só é lida; o jogo abre a partir dela, sem instalar nada."},
+    {"launcher.reason.no_game_lib", "esta pasta não tem o código do jogo para este computador: prepare-a de novo com o ACNHRecomp-Importer, escolhendo este computador"},
+    {"launcher.home.change_game", "Trocar pasta do jogo"},
+    {"launcher.home.change_game.desc", "Jogar outra pasta preparada pelo ACNHRecomp-Importer"},
 };
 
 const Entry kLauncherEs[] = {
@@ -429,6 +439,11 @@ const Entry kLauncherEs[] = {
     {"launcher.err.game_exefs", "exefs/{} falta o no es uno de los ejecutables del juego"},
     {"launcher.err.game_romfs", "Este romfs/ no es de Animal Crossing: New Horizons (no tiene la carpeta Shader/)"},
     {"launcher.stage.game", "Enlazando la carpeta del juego"},
+    {"launcher.welcome.play", "Elegir la carpeta del juego"},
+    {"launcher.welcome.play.desc", "La carpeta que ACNHRecomp-Importer preparó a partir de tu propio juego. Solo se lee; el juego arranca desde ella, sin instalar nada."},
+    {"launcher.reason.no_game_lib", "esta carpeta no tiene el código del juego para este ordenador: vuelve a prepararla con ACNHRecomp-Importer eligiendo este ordenador"},
+    {"launcher.home.change_game", "Cambiar carpeta del juego"},
+    {"launcher.home.change_game.desc", "Jugar otra carpeta preparada por ACNHRecomp-Importer"},
 };
 
 const Entry kLauncherFr[] = {
@@ -571,6 +586,11 @@ const Entry kLauncherFr[] = {
     {"launcher.err.game_exefs", "exefs/{} est absent ou n'est pas l'un des exécutables du jeu"},
     {"launcher.err.game_romfs", "Ce romfs/ n'est pas celui d'Animal Crossing: New Horizons (pas de dossier Shader/)"},
     {"launcher.stage.game", "Liaison du dossier du jeu"},
+    {"launcher.welcome.play", "Choisir le dossier du jeu"},
+    {"launcher.welcome.play.desc", "Le dossier qu'ACNHRecomp-Importer a préparé à partir de votre propre jeu. Il est seulement lu ; le jeu démarre depuis lui, rien à installer."},
+    {"launcher.reason.no_game_lib", "ce dossier n'a pas le code du jeu pour cet ordinateur : préparez-le à nouveau avec ACNHRecomp-Importer en choisissant cet ordinateur"},
+    {"launcher.home.change_game", "Changer de dossier de jeu"},
+    {"launcher.home.change_game.desc", "Jouer un autre dossier préparé par ACNHRecomp-Importer"},
 };
 
 const Entry kLauncherDe[] = {
@@ -713,6 +733,11 @@ const Entry kLauncherDe[] = {
     {"launcher.err.game_exefs", "exefs/{} fehlt oder ist keine der ausführbaren Dateien des Spiels"},
     {"launcher.err.game_romfs", "Dieses romfs/ gehört nicht zu Animal Crossing: New Horizons (kein Shader/-Ordner)"},
     {"launcher.stage.game", "Spielordner wird verknüpft"},
+    {"launcher.welcome.play", "Spielordner wählen"},
+    {"launcher.welcome.play.desc", "Der Ordner, den ACNHRecomp-Importer aus deinem eigenen Spiel vorbereitet hat. Er wird nur gelesen; das Spiel startet daraus, ohne Installation."},
+    {"launcher.reason.no_game_lib", "dieser Ordner hat keinen Spielcode für diesen Computer: Bereite ihn mit ACNHRecomp-Importer erneut vor und wähle dabei diesen Computer"},
+    {"launcher.home.change_game", "Spielordner wechseln"},
+    {"launcher.home.change_game.desc", "Einen anderen von ACNHRecomp-Importer vorbereiteten Ordner spielen"},
 };
 
 const Entry kLauncherIt[] = {
@@ -855,6 +880,11 @@ const Entry kLauncherIt[] = {
     {"launcher.err.game_exefs", "exefs/{} manca o non è uno degli eseguibili del gioco"},
     {"launcher.err.game_romfs", "Questo romfs/ non è di Animal Crossing: New Horizons (manca la cartella Shader/)"},
     {"launcher.stage.game", "Collegamento della cartella del gioco"},
+    {"launcher.welcome.play", "Scegli la cartella del gioco"},
+    {"launcher.welcome.play.desc", "La cartella che ACNHRecomp-Importer ha preparato dal tuo gioco. Viene solo letta; il gioco parte da lì, senza installare nulla."},
+    {"launcher.reason.no_game_lib", "questa cartella non ha il codice del gioco per questo computer: preparala di nuovo con ACNHRecomp-Importer scegliendo questo computer"},
+    {"launcher.home.change_game", "Cambia cartella del gioco"},
+    {"launcher.home.change_game.desc", "Gioca un'altra cartella preparata da ACNHRecomp-Importer"},
 };
 
 const Entry kLauncherNl[] = {
@@ -985,6 +1015,11 @@ const Entry kLauncherNl[] = {
     {"launcher.err.game_importer", "Deze map is niet voorbereid door ACNHRecomp-Importer: bereid je spel er eerst mee voor (download het op onze Discord, hieronder)"},
     {"launcher.files.importer", "ACNHRecomp accepteert alleen spelmappen die ACNHRecomp-Importer heeft voorbereid; die maakt van je NSP of XCI, de update en de sleutels die map. Download het op onze Discord:"},
     {"launcher.files.discord", "ACNHRecomp-Importer downloaden op Discord"},
+    {"launcher.welcome.play", "Kies je spelmap"},
+    {"launcher.welcome.play.desc", "De map die ACNHRecomp-Importer van je eigen spel heeft voorbereid. Hij wordt alleen gelezen; het spel start eruit, niets te installeren."},
+    {"launcher.reason.no_game_lib", "deze map heeft geen spelcode voor deze computer: bereid hem opnieuw voor met ACNHRecomp-Importer en kies deze computer"},
+    {"launcher.home.change_game", "Andere spelmap"},
+    {"launcher.home.change_game.desc", "Een andere door ACNHRecomp-Importer voorbereide map spelen"},
 };
 
 const Entry kLauncherRu[] = {
@@ -1114,6 +1149,11 @@ const Entry kLauncherRu[] = {
     {"launcher.err.game_importer", "Эта папка не подготовлена ACNHRecomp-Importer: сначала подготовьте игру с его помощью (скачайте его в нашем Discord, ниже)"},
     {"launcher.files.importer", "ACNHRecomp принимает только папки игры, подготовленные ACNHRecomp-Importer: он превращает ваш NSP или XCI, обновление и ключи в такую папку. Скачайте его в нашем Discord:"},
     {"launcher.files.discord", "Скачать ACNHRecomp-Importer в Discord"},
+    {"launcher.welcome.play", "Выбрать папку игры"},
+    {"launcher.welcome.play.desc", "Папка, которую ACNHRecomp-Importer подготовил из вашей игры. Она только читается; игра запускается из неё, ничего устанавливать не нужно."},
+    {"launcher.reason.no_game_lib", "в этой папке нет кода игры для этого компьютера: подготовьте её заново в ACNHRecomp-Importer, выбрав этот компьютер"},
+    {"launcher.home.change_game", "Сменить папку игры"},
+    {"launcher.home.change_game.desc", "Играть из другой папки, подготовленной ACNHRecomp-Importer"},
 };
 
 const Entry kLauncherJa[] = {
@@ -1243,6 +1283,11 @@ const Entry kLauncherJa[] = {
     {"launcher.err.game_importer", "このフォルダーは ACNHRecomp-Importer で用意されていません。まずそれでゲームを準備してください (下の Discord から入手できます)"},
     {"launcher.files.importer", "ACNHRecomp は ACNHRecomp-Importer が用意したゲームフォルダーだけを受け付けます。Importer はあなたの NSP または XCI、アップデート、キーからそのフォルダーを作ります。Discord で入手してください:"},
     {"launcher.files.discord", "Discord で ACNHRecomp-Importer を入手"},
+    {"launcher.welcome.play", "ゲームフォルダーを選ぶ"},
+    {"launcher.welcome.play.desc", "ACNHRecomp-Importer があなたのゲームから用意したフォルダー。読み取るだけで、そこからゲームが始まります。インストールは不要です。"},
+    {"launcher.reason.no_game_lib", "このフォルダーにはこのコンピューター用のゲームコードがありません。ACNHRecomp-Importer でこのコンピューターを選んで用意し直してください"},
+    {"launcher.home.change_game", "ゲームフォルダーを変更"},
+    {"launcher.home.change_game.desc", "ACNHRecomp-Importer が用意した別のフォルダーで遊ぶ"},
 };
 
 const Entry kLauncherKo[] = {
@@ -1372,6 +1417,11 @@ const Entry kLauncherKo[] = {
     {"launcher.err.game_importer", "이 폴더는 ACNHRecomp-Importer로 준비되지 않았습니다. 먼저 그것으로 게임을 준비하세요(아래 Discord에서 받을 수 있습니다)"},
     {"launcher.files.importer", "ACNHRecomp는 ACNHRecomp-Importer가 준비한 게임 폴더만 받습니다. Importer는 NSP 또는 XCI, 업데이트, 키로 그 폴더를 만듭니다. Discord에서 받으세요:"},
     {"launcher.files.discord", "Discord에서 ACNHRecomp-Importer 받기"},
+    {"launcher.welcome.play", "게임 폴더 선택"},
+    {"launcher.welcome.play.desc", "ACNHRecomp-Importer가 본인의 게임으로 준비한 폴더입니다. 읽기만 하며, 게임이 여기서 바로 시작됩니다. 설치할 것이 없습니다."},
+    {"launcher.reason.no_game_lib", "이 폴더에는 이 컴퓨터용 게임 코드가 없습니다. ACNHRecomp-Importer에서 이 컴퓨터를 선택해 다시 준비하세요"},
+    {"launcher.home.change_game", "게임 폴더 변경"},
+    {"launcher.home.change_game.desc", "ACNHRecomp-Importer가 준비한 다른 폴더로 플레이"},
 };
 
 const Entry kLauncherZhCn[] = {
@@ -1501,6 +1551,11 @@ const Entry kLauncherZhCn[] = {
     {"launcher.err.game_importer", "此文件夹不是由 ACNHRecomp-Importer 准备的：请先用它准备你的游戏（在下方的 Discord 下载）"},
     {"launcher.files.importer", "ACNHRecomp 只接受由 ACNHRecomp-Importer 准备的游戏文件夹，它会把你的 NSP 或 XCI、更新和密钥变成这个文件夹。请在我们的 Discord 下载："},
     {"launcher.files.discord", "在 Discord 下载 ACNHRecomp-Importer"},
+    {"launcher.welcome.play", "选择游戏文件夹"},
+    {"launcher.welcome.play.desc", "ACNHRecomp-Importer 用你自己的游戏准备好的文件夹。只读取它，游戏直接从这里启动，无需安装。"},
+    {"launcher.reason.no_game_lib", "此文件夹没有适用于这台电脑的游戏代码：请用 ACNHRecomp-Importer 重新准备，并选择这台电脑"},
+    {"launcher.home.change_game", "更换游戏文件夹"},
+    {"launcher.home.change_game.desc", "游玩 ACNHRecomp-Importer 准备的另一个文件夹"},
 };
 
 const Entry kLauncherZhTw[] = {
@@ -1630,4 +1685,9 @@ const Entry kLauncherZhTw[] = {
     {"launcher.err.game_importer", "此資料夾不是由 ACNHRecomp-Importer 準備的：請先用它準備你的遊戲（在下方的 Discord 下載）"},
     {"launcher.files.importer", "ACNHRecomp 只接受由 ACNHRecomp-Importer 準備的遊戲資料夾，它會把你的 NSP 或 XCI、更新和金鑰變成這個資料夾。請在我們的 Discord 下載："},
     {"launcher.files.discord", "在 Discord 下載 ACNHRecomp-Importer"},
+    {"launcher.welcome.play", "選擇遊戲資料夾"},
+    {"launcher.welcome.play.desc", "ACNHRecomp-Importer 用你自己的遊戲準備好的資料夾。只讀取它，遊戲直接從這裡啟動，無需安裝。"},
+    {"launcher.reason.no_game_lib", "此資料夾沒有適用於這台電腦的遊戲程式碼：請用 ACNHRecomp-Importer 重新準備，並選擇這台電腦"},
+    {"launcher.home.change_game", "更換遊戲資料夾"},
+    {"launcher.home.change_game.desc", "遊玩 ACNHRecomp-Importer 準備的另一個資料夾"},
 };

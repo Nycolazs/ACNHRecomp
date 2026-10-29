@@ -242,7 +242,8 @@ void use_build_folder(const std::string& folder) {
     Build b;
     const char* why = find_build(folder, b);
     if (*why) {
-        g_banner = trf("launcher.build_invalid", tr(why));
+        // a release (the player beside) takes game folders: the reason alone says what is wrong with this one
+        g_banner = player_beside().empty() ? trf("launcher.build_invalid", tr(why)) : std::string(tr(why));
         return;
     }
     g_banner.clear();
@@ -523,7 +524,24 @@ void go_files() {
     g_page = Page::Files;
 }
 
+// A release: the player is beside the launcher and the game comes ready in the folder ACNHRecomp-Importer prepared,
+// so the one thing to do is to choose that folder.
+void page_welcome_play() {
+    heading(tr("launcher.welcome.title"), tr("launcher.welcome.text"));
+    Card play{nx::ui::kIconLeaf, kGreen, tr("launcher.welcome.play"), tr("launcher.welcome.play.desc"), nullptr, true};
+    float avail = ImGui::GetContentRegionAvail().x;
+    if (card("##play", play, ImVec2(avail, card_height(play, avail)))) pick(kPickBuild);
+    ImGui::Dummy(ImVec2(0, S(6)));
+    text_small(tr("launcher.files.importer"));
+    if (button(tr("launcher.files.discord"), kBlue)) SDL_OpenURL(kDiscordUrl);
+    if (g_portrait) {  // in landscape the footer says it
+        ImGui::Dummy(ImVec2(0, S(4)));
+        text_small(tr("launcher.welcome.legal"));
+    }
+}
+
 void page_welcome() {
+    if (!player_beside().empty()) return page_welcome_play();
     heading(tr("launcher.welcome.title"), tr("launcher.welcome.text"));
     Card setup{nx::ui::kIconLeaf, kGreen, tr("launcher.welcome.setup"), tr("launcher.welcome.setup.desc"),
                setup_supported() ? nullptr : tr("launcher.welcome.windows"), setup_supported()};
@@ -1441,11 +1459,12 @@ void page_home() {
     std::vector<A> acts;
     if (valid) acts.push_back({"##settings", nx::ui::kIconGear, kPurple, tr("launcher.home.settings"),
                                tr("launcher.home.settings.desc"), true, 0});
-    if (setup_supported())
+    const bool player = !player_beside().empty();  // a release: the folder is played as it is, nothing to rebuild
+    if (setup_supported() && !player)
         acts.push_back({"##rebuild", nx::ui::kIconLeaf, kOrange, tr("launcher.home.rebuild"),
                         tr(can_rebuild ? "launcher.home.rebuild.desc" : "launcher.home.rebuild.unavailable"), can_rebuild, 1});
-    acts.push_back({"##change", nx::ui::kIconFolder, kBlue, tr("launcher.home.change"), tr("launcher.home.change.desc"),
-                    true, 2});
+    acts.push_back({"##change", nx::ui::kIconFolder, kBlue, tr(player ? "launcher.home.change_game" : "launcher.home.change"),
+                    tr(player ? "launcher.home.change_game.desc" : "launcher.home.change.desc"), true, 2});
     float avail = ImGui::GetContentRegionAvail().x, gap = S(14);
     bool stack = g_portrait || avail < S(700);
     float w = stack ? avail : (avail - gap * float(acts.size() - 1)) / float(acts.size());
@@ -1463,6 +1482,7 @@ void page_home() {
 }
 
 void footer_home() {
+    if (!player_beside().empty()) return;  // a release has no setup to start over
     if (button(tr("launcher.home.start_over"), kWhite)) g_banner.clear(), g_page = Page::Welcome;
 }
 
@@ -1584,7 +1604,7 @@ void pages_init(SDL_Window* window) {
         g_page = Page::Home;
     }
     if (!std::getenv("NX_LAUNCHER_PAGE") && !std::getenv("NX_LAUNCHER_SEARCH")) {
-        if (build.empty() && setup_supported())
+        if (build.empty() && setup_supported() && player_beside().empty())
             g_express = true;
         else if (!build.empty() && *g_build_problem == 0 && s.get("launcher.autostart", "1") != "0")
             g_autostart_at = -2;

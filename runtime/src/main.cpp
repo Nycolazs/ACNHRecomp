@@ -52,7 +52,7 @@ NX_GAME_API uint64_t mrs(CPU& c, uint32_t sysreg) {
     }
 }
 
-void msr(CPU& c, uint32_t sysreg, uint64_t value) {
+NX_GAME_API void msr(CPU& c, uint32_t sysreg, uint64_t value) {
     log("msr %#x = %llx at lr %s", sysreg, (unsigned long long)value, describe(c.x[30]).c_str());
 }
 

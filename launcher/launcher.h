@@ -98,6 +98,8 @@ struct Build {
 // The build in `folder` (a launcher install, private/acnh, the repository itself, a build/ folder or a portable
 // folder with data/): "" and `out` filled, else the i18n key of the reason.
 const char* find_build(const std::string& folder, Build& out);
+// The player beside the launcher (a release, whose game code comes from the game folder): its path, else "".
+std::string player_beside();
 
 // What a build holds: its game version (version.ini, "" if unknown) and the add-on content imported with it (aoc/).
 struct AddOn {

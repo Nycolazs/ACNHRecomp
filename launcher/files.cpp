@@ -408,6 +408,17 @@ BuildContents build_contents(const std::string& data) {
         size_t eq = l.find('=');
         if (eq != std::string::npos && trim(l.substr(0, eq)) == "version") c.version = trim(l.substr(eq + 1));
     }
+    // A game folder ACNHRecomp-Importer prepared: its game.ini has main's build id, the version from kBuilds
+    if (c.version.empty()) {
+        std::ifstream gi(u8(data + "/game.ini"));
+        for (std::string l; std::getline(gi, l);) {
+            size_t eq = l.find('=');
+            if (eq == std::string::npos || trim(l.substr(0, eq)) != "build_id") continue;
+            std::string id = trim(l.substr(eq + 1));
+            for (const KnownBuild& k : kBuilds)
+                if (id == k.id) c.version = k.version;
+        }
+    }
     // The add-on content: aoc/<index>/, linked from the game folder (runtime/src/hle_fs.cpp mounts the same folders).
     std::error_code ec;
     for (auto& e : fs::directory_iterator(u8(data + "/aoc"), ec)) {
@@ -424,6 +435,30 @@ BuildContents build_contents(const std::string& data) {
     return c;
 }
 
+// The player beside the launcher (a release: the game's code comes from the game folder), "" when there is none.
+std::string player_beside() {
+#if defined(_WIN32)
+    const char* exe = "acnh.exe";
+#else
+    const char* exe = "acnh";
+#endif
+    const char* base = SDL_GetBasePath();
+    std::error_code ec;
+    if (!base || !fs::is_regular_file(u8(base) / exe, ec)) return "";
+    return str(u8(base) / exe);
+}
+
+// The game's library for this computer in a game folder ACNHRecomp-Importer prepared (game/<platform>/...).
+fs::path game_library(const fs::path& f) {
+#if defined(_WIN32)
+    return f / "game" / "windows-x64" / "acnh_game.dll";
+#elif defined(__APPLE__)
+    return f / "game" / "macos-arm64" / "libacnh_game.dylib";
+#else
+    return f / "game" / "linux-x64" / "libacnh_game.so";
+#endif
+}
+
 const char* find_build(const std::string& folder, Build& out) {
 #if defined(_WIN32)
     const char* exe = "acnh.exe";
@@ -431,6 +466,14 @@ const char* find_build(const std::string& folder, Build& out) {
     const char* exe = "acnh";
 #endif
     const fs::path f = u8(folder);
+    // A game folder ACNHRecomp-Importer prepared, played by the player beside the launcher: nothing to build.
+    if (std::string player = player_beside(); !player.empty() && is_dir(folder)) {
+        std::error_code ec;
+        if (!from_importer(folder)) return "launcher.err.game_importer";
+        if (!fs::is_regular_file(game_library(f), ec)) return "launcher.reason.no_game_lib";
+        out = {player, str(fs::absolute(f, ec))};
+        return "";
+    }
     // {executable, data root} in the layouts a build can have.
     const std::pair<fs::path, fs::path> layouts[] = {
         {f / "build" / exe, f},                                     // the launcher's install folder, private/acnh

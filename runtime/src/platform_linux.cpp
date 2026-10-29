@@ -214,6 +214,47 @@ std::string data_root() {
     return r ? r : nx::game::kInfo.pc_data_root;
 }
 
+#ifdef NX_GAME_DYNAMIC
+// ---- the game's code: game/linux-x64/lib<game>_game.so in the game folder ACNHRecomp-Importer prepared ----------
+// The executable holds no game code (as the Android app): it exports the runtime's calls (NX_GAME_API) and loads the
+// game's library from the folder, refusing one built against other runtime headers (NX_GAME_ABI).
+namespace {
+void* g_game_lib = nullptr;
+using LongJmpFn = void (*)(uint64_t, uint64_t);
+LongJmpFn g_game_longjmp = nullptr;
+}  // namespace
+
+std::string load_game(const std::string& folder) {
+    std::string lib = folder + "/game/linux-x64/lib" + nx::game::kInfo.id + "_game.so";
+    if (access(lib.c_str(), R_OK) != 0) return "missing " + lib;
+    void* h = dlopen(lib.c_str(), RTLD_NOW | RTLD_LOCAL);
+    if (!h) return std::string("dlopen: ") + dlerror();
+    auto abi = reinterpret_cast<const char* (*)()>(dlsym(h, "nx_game_abi"));
+    auto jmp = reinterpret_cast<LongJmpFn>(dlsym(h, "nx_game_longjmp"));
+    if (!abi || !jmp || !dlsym(h, "nx_module_main") || !dlsym(h, "nx_module_sdk")) {
+        dlclose(h);
+        return "not a game library: " + lib;
+    }
+    if (std::strcmp(abi(), NX_GAME_ABI) != 0) {
+        std::string got = abi();
+        dlclose(h);
+        return "abi " + got + " (this ACNHRecomp: " + NX_GAME_ABI + ")";
+    }
+    g_game_lib = h, g_game_longjmp = jmp;
+    return "";
+}
+
+const nx::ModuleInfo* game_module(const char* name) {
+    std::string sym = std::string("nx_module_") + name;
+    return g_game_lib ? static_cast<const nx::ModuleInfo*>(dlsym(g_game_lib, sym.c_str())) : nullptr;
+}
+
+[[noreturn]] void game_longjmp(uint64_t buf, uint64_t val) {
+    g_game_longjmp(buf, val);
+    __builtin_unreachable();
+}
+#endif
+
 std::string setting(const std::string& key) {
     std::string env = "NX_";
     for (char ch : key) env += char(std::toupper(static_cast<unsigned char>(ch)));
@@ -782,8 +823,10 @@ void game_thread() {
 
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
     nx::plat::g_main_thread = pthread_self();
+    // acnh <game folder>: the folder ACNHRecomp-Importer prepared (else NX_DATA_ROOT, else the setup's data folder)
+    if (argc > 1) setenv("NX_DATA_ROOT", argv[1], 1);
     nx::config_apply();  // config.ini -> NX_* defaults, before anything reads them (config.h)
     if (nx::report_mode()) return 0;
 
@@ -811,6 +854,25 @@ int main() {
     }
 
     nx::plat::start_memory_guard();  // before anything can grow: a leak must never freeze the machine
+
+#ifdef NX_GAME_DYNAMIC
+    if (std::string why = nx::plat::load_game(nx::plat::data_root()); !why.empty()) {
+        // Not a folder prepared for this ACNHRecomp: say what to do, with the importer's place.
+        std::string msg = why.rfind("abi", 0) == 0
+            ? "This game folder was prepared for another version of ACNHRecomp. Prepare it again with the "
+              "ACNHRecomp-Importer that matches this version (on our Discord: discord.gg/VJW9Dtdu7a).\n\n" + why
+            : "This is not a game folder prepared by ACNHRecomp-Importer for this computer. Prepare your game with "
+              "ACNHRecomp-Importer (on our Discord: discord.gg/VJW9Dtdu7a) and choose the folder it writes.\n\n" + why;
+        nx::log("platform: %s", why.c_str());
+        const SDL_MessageBoxButtonData buttons[] = {{SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, 1, "Discord"},
+                                                    {SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, 0, "Close"}};
+        const SDL_MessageBoxData box = {SDL_MESSAGEBOX_ERROR, nullptr, nx::game::kInfo.title, msg.c_str(), 2, buttons,
+                                        nullptr};
+        int pressed = 0;
+        if (SDL_ShowMessageBox(&box, &pressed) && pressed == 1) SDL_OpenURL("https://discord.gg/VJW9Dtdu7a");
+        return 1;
+    }
+#endif
 
     // The game on its own thread, with a big stack (recompiled calls nest deeply); the main thread keeps the event
     // loop.
