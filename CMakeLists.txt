@@ -13,6 +13,21 @@ if(ANDROID)
 endif()
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Build speed, same output: ccache when installed (a rebuild in a new build folder, or after an update that leaves
+# most generated files unchanged, reuses the objects; the precompiled headers need its sloppiness settings), and
+# lld on Linux when installed (the system's ld.bfd takes minutes and GBs of RAM on the game's objects).
+find_program(NX_CCACHE ccache)
+if(NX_CCACHE AND NOT CMAKE_CXX_COMPILER_LAUNCHER AND NOT MSVC)
+    set(CMAKE_CXX_COMPILER_LAUNCHER "${CMAKE_COMMAND};-E;env;CCACHE_SLOPPINESS=pch_defines,time_macros,include_file_mtime,include_file_ctime;${NX_CCACHE}")
+    set(CMAKE_C_COMPILER_LAUNCHER "${NX_CCACHE}")
+endif()
+if(UNIX AND NOT APPLE AND NOT ANDROID)
+    find_program(NX_LLD NAMES ld.lld lld)
+    if(NX_LLD)
+        add_link_options(-fuse-ld=lld)
+    endif()
+endif()
+
 # The game this build is for: games/<NX_GAME>/ holds what only that game needs (game.cpp: nx/game.h), the shared
 # runtime is the rest. One build directory per game.
 set(NX_GAME "hades" CACHE STRING "Game to build (a folder under games/)")
@@ -126,6 +141,14 @@ foreach(mod ${NX_MODULES})
     file(GLOB src CONFIGURE_DEPENDS "${NX_GEN_DIR}/${mod}/*.cpp")
     add_library(game_${mod} STATIC ${src})
     target_include_directories(game_${mod} PRIVATE runtime/include "${NX_GEN_DIR}/${mod}")
+    # Every generated file starts with #include "funcs.h" (the declarations of the whole module + nx/cpu.h): parsed
+    # once into a precompiled header instead of once per file (~1000 files). The code it compiles is the same.
+    if(EXISTS "${NX_GEN_DIR}/${mod}/funcs.h")
+        target_precompile_headers(game_${mod} PRIVATE "${NX_GEN_DIR}/${mod}/funcs.h")
+        # table.cpp is built with other visibility options on Android (below): a header of its own
+        set_source_files_properties("${NX_GEN_DIR}/${mod}/table.cpp" TARGET_DIRECTORY game_${mod}
+                                    PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+    endif()
     if(ANDROID)
         # Hidden visibility: calls between recompiled functions are direct, not through the PLT.
         # armv8.2-a+crypto: cpu.h's AES/SHA paths need __ARM_FEATURE_AES/SHA2 (the NDK default armv8-a has neither).

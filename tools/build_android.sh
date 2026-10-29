@@ -25,7 +25,21 @@ if [ -z "${JAVA_HOME:-}" ] && [ -d /opt/homebrew/opt/openjdk@17 ]; then export J
 BUILD=private/$GAME/build-android
 OUT=private/$GAME/apk
 INSTALL=0
-JOBS=4
+# Compile jobs: the cores, as many as the free memory holds (~700 MB each, as tools/setup_acnh.py counts them);
+# --jobs or JOBS= to choose.
+if [ -n "${JOBS:-}" ]; then :
+elif [ -r /proc/meminfo ]; then
+  FREE_MB=$(awk '/^MemAvailable:/ { print int($2 / 1024) }' /proc/meminfo)
+  CORES=$(nproc)
+else  # macOS: half of the memory, as setup_acnh.py
+  FREE_MB=$(( $(sysctl -n hw.memsize) / 2097152 ))
+  CORES=$(sysctl -n hw.ncpu)
+fi
+if [ -z "${JOBS:-}" ]; then
+  JOBS=$(( (FREE_MB - 1000) / 700 ))
+  [ "$JOBS" -gt "$CORES" ] && JOBS=$CORES
+  [ "$JOBS" -lt 1 ] && JOBS=1
+fi
 GAMELIB=1
 while [ $# -gt 0 ]; do
   case $1 in
@@ -58,7 +72,7 @@ cmake -S . -B "$BUILD" -G Ninja -DCMAKE_BUILD_TYPE=Release \
 TARGETS=$GAME
 # (NX_ANDROID_GAME_IN_APP=ON in the build's cache, for comparisons: no separate game library)
 [ $GAMELIB = 1 ] && ninja -C "$BUILD" -t targets all | grep -q "^lib${GAME}_game.so:" && TARGETS="$GAME ${GAME}_game"
-echo "== build $TARGETS (the first time compiles the whole game: ~30 min)"
+echo "== build $TARGETS with $JOBS jobs (the first time compiles the whole game: ~$(( 300 / JOBS + 5 )) min)"
 until mkdir private/build.lock 2>/dev/null; do echo "waiting for another build"; sleep 10; done
 trap 'rmdir private/build.lock 2>/dev/null' EXIT
 ninja -C "$BUILD" -j "$JOBS" $TARGETS

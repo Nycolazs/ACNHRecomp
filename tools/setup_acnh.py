@@ -17,6 +17,7 @@ Stages: tools -> game -> version -> recompile -> shaders -> fonts -> build. Ever
 private/third_party and uses the Visual Studio C++ build tools found by vswhere (the Windows SDK and C runtime).
 """
 import argparse
+import hashlib
 import os
 import platform
 import re
@@ -106,6 +107,39 @@ def fetch(url, dest_dir, strip=True):
                 members.append(m)
             t.extractall(dest_dir, members=members, filter="data")
     os.remove(tmp)
+
+
+def recomp_hash():
+    """sha256 over "name\0content\0" of recomp/*.py in name order: the recompiler's version, as ACNHRecomp-Importer
+    records it next to the code it generated (its C++ port gives the same text for the same recompiler)."""
+    h = hashlib.sha256()
+    for f in sorted(os.listdir(os.path.join(ROOT, "recomp"))):
+        if f.endswith(".py"):
+            with open(os.path.join(ROOT, "recomp", f), "rb") as fh:
+                h.update(f.encode() + b"\0" + fh.read() + b"\0")
+    return h.hexdigest()
+
+
+def prepared_gen(G, mod, profile):
+    """<game folder>/gen/<mod> when ACNHRecomp-Importer recompiled it with this recompiler and this hooks profile."""
+    src_file = os.path.join(G, "game_source.txt")
+    if not os.path.exists(src_file):
+        return None
+    pre = os.path.join(open(src_file, encoding="utf-8").read().strip(), "gen")
+    try:
+        same = open(os.path.join(pre, "recomp_source.txt")).read().strip() == recomp_hash()
+        prof = open(os.path.join(pre, mod, "profile.txt")).read().strip()
+    except OSError:
+        return None
+    ok = same and prof == profile and os.path.exists(os.path.join(pre, mod, "table.cpp"))
+    return os.path.join(pre, mod) if ok else None
+
+
+def link_or_copy(src, dst):
+    try:
+        os.link(src, dst)
+    except OSError:
+        shutil.copy2(src, dst)
 
 
 def free_mb():
@@ -251,6 +285,8 @@ def main():
     ap.add_argument("--game", default="", help="the game folder: exefs/ and romfs/ (and aoc/) of your own dump")
     ap.add_argument("--mod", action="append", default=[])
     ap.add_argument("--out", default="")
+    ap.add_argument("--no-build", action="store_true",
+                    help="stop before compiling the desktop game (for tools/android_install.sh: Android compiles its own)")
     a = ap.parse_args()
     G = os.path.abspath(a.out) if a.out else os.path.join(P, "acnh")
     os.makedirs(os.path.join(G, "logs"), exist_ok=True)
@@ -445,11 +481,20 @@ def main():
                  or open(prof_file).read().strip() != profile
                  or (hooks != "-" and mod == "main" and os.path.getmtime(os.path.join(ROOT, hooks)) > os.path.getmtime(table)))
         log = os.path.join(logs, f"recomp_{mod}.log")
-        if stale:
+        pre = prepared_gen(G, mod, profile) if stale else None
+        if pre:
+            # Recompiled by ACNHRecomp-Importer with this same recompiler: linked (copied across drives), not redone.
+            shutil.rmtree(gen, ignore_errors=True)
+            shutil.copytree(pre, gen, copy_function=link_or_copy)
+            os.utime(table)
+            open(prof_file, "w").write(profile + "\n")
+            print(f"{mod}: the game folder's recompiled code (ACNHRecomp-Importer)")
+        elif stale:
             run([py, "-m", "recomp", os.path.join(G, "exefs", mod), gen, "--name", mod, "--base", base,
                  "--jobs", str(min(jobs, cores))] + h, log=log)
             open(prof_file, "w").write(profile + "\n")
-        print(open(log, encoding="utf-8", errors="replace").read().strip().splitlines()[-1] if os.path.exists(log) else "")
+        if not pre:
+            print(open(log, encoding="utf-8", errors="replace").read().strip().splitlines()[-1] if os.path.exists(log) else "")
 
     # ---- shaders ------------------------------------------------------------------------------------------------
     say("shaders (Maxwell -> SPIR-V)")
@@ -487,6 +532,9 @@ def main():
             log=os.path.join(logs, "glyphs.log"))
 
     # ---- build --------------------------------------------------------------------------------------------------
+    if a.no_build:
+        say(f"done: the game is ready for tools/android_install.sh (the desktop build was skipped: --no-build)")
+        return
     say(f"build (-j{jobs}; the first build compiles ~5 CPU-hours of code, about {300 // jobs + 10} minutes here)")
     extra = [f"-DNX_GEN_DIR={os.path.join(G, 'gen')}"]
     if WIN:
