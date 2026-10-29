@@ -77,13 +77,37 @@ def run(cmd, log=None, env=None, cwd=ROOT, check=True):
     return rc
 
 
-def fetch(url, dest_dir, strip=True):
-    """Downloads a .tar.gz / .tar.xz / .zip and extracts it into dest_dir (its single top folder removed if strip)."""
+def fetch(url, dest_dir, strip=True, py=None):
+    """Downloads a .tar.gz / .tar.xz / .tar.zst / .zip and extracts it into dest_dir (its single top folder removed if
+    strip). A .tar.zst is decompressed by the zstandard of py (the tools stage's venv)."""
     os.makedirs(dest_dir, exist_ok=True)
     tmp = dest_dir + ".download"
     with urllib.request.urlopen(url) as r, open(tmp, "wb") as f:
         shutil.copyfileobj(r, f, 1 << 20)
-    if url.endswith(".zip"):
+
+    def stripped(m):
+        parts = m.name.split("/", 1) if strip else [None, m.name]
+        if len(parts) < 2 or not parts[1]:
+            return None
+        m.name = parts[1]
+        if m.islnk() and strip:  # hard links name their target with the top folder too
+            m.linkname = m.linkname.split("/", 1)[-1]
+        return m
+
+    if url.endswith(".tar.zst"):
+        # LLVM's has a 1 GB window (its many copies of one executable then cost almost nothing), more than decoders
+        # allow by default: Windows' tar.exe refuses it, and Python's tarfile reads no .zst before 3.14.
+        with open(tmp, "rb") as f:
+            dec = subprocess.Popen([py, "-c", "import sys, zstandard; zstandard.ZstdDecompressor(max_window_size=1 << 31)"
+                                    ".copy_stream(sys.stdin.buffer, sys.stdout.buffer)"], stdin=f, stdout=subprocess.PIPE)
+            with tarfile.open(fileobj=dec.stdout, mode="r|") as t:
+                for m in t:
+                    if stripped(m):
+                        t.extract(m, dest_dir, filter="data")
+            dec.stdout.read()  # the end of the archive, past its last member: the decoder finishes writing it
+            if dec.wait():
+                fail(f"failed: decompressing {url}")
+    elif url.endswith(".zip"):
         with zipfile.ZipFile(tmp) as z:
             names = z.namelist()
             top = names[0].split("/")[0] + "/"
@@ -100,15 +124,7 @@ def fetch(url, dest_dir, strip=True):
                     shutil.copyfileobj(a, b)
     else:
         with tarfile.open(tmp) as t:
-            members = []
-            for m in t.getmembers():
-                parts = m.name.split("/", 1) if strip else [None, m.name]
-                if len(parts) < 2 or not parts[1]:
-                    continue
-                m.name = parts[1]
-                if m.islnk() and strip:  # hard links name their target with the top folder too
-                    m.linkname = m.linkname.split("/", 1)[-1]
-                members.append(m)
+            members = [m for m in t.getmembers() if stripped(m)]
             t.extractall(dest_dir, members=members, filter="data")
     os.remove(tmp)
 
@@ -290,9 +306,9 @@ def main():
     if WIN:
         llvm = os.path.join(T, f"llvm-{LLVM}")
         if not os.path.exists(os.path.join(llvm, "bin", "clang-cl.exe")):
-            print(f"downloading LLVM {LLVM} (about 860 MB)", flush=True)
+            print(f"downloading LLVM {LLVM} (about 265 MB)", flush=True)
             fetch(f"https://github.com/llvm/llvm-project/releases/download/llvmorg-{LLVM}/"
-                  f"clang+llvm-{LLVM}-x86_64-pc-windows-msvc.tar.xz", llvm)
+                  f"clang+llvm-{LLVM}-x86_64-pc-windows-msvc.tar.zst", llvm, py=py)
         sdl = os.path.join(T, f"SDL3-{SDL3}")
         if not os.path.isdir(os.path.join(sdl, "cmake")):
             fetch(f"https://github.com/libsdl-org/SDL/releases/download/release-{SDL3}/SDL3-devel-{SDL3}-VC.zip", sdl)
