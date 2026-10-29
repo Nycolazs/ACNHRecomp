@@ -287,7 +287,11 @@ bool config_save() {
                 std::fprintf(f, "%s = %s\n", e.key.substr(s.size() + 1).c_str(), e.value.c_str());
     }
     bool ok = std::fclose(f) == 0;
-    if (ok) ok = std::rename(tmp.c_str(), path().c_str()) == 0;
+    if (ok) {  // std::filesystem::rename replaces the old file on Windows too (std::rename fails there if it exists)
+        std::error_code ec;
+        std::filesystem::rename(std::filesystem::u8path(tmp), std::filesystem::u8path(path()), ec);
+        ok = !ec;
+    }
     return ok;
 }
 
