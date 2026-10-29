@@ -237,8 +237,13 @@ fs::path resolve(const std::string& guest) {
 const Pak* in_pak(const fs::path& p, std::string& rel) {
     const Pak* k = pak();
     if (!k) return nullptr;
-    static const std::string romfs = utf8(data_root() / "extract" / "romfs");
-    std::string s = utf8(p);
+    // '/' throughout: on Windows the joined paths have '\' separators, the pack's names '/'.
+    auto slashes = [](std::string v) {
+        std::replace(v.begin(), v.end(), '\\', '/');
+        return v;
+    };
+    static const std::string romfs = slashes(utf8(data_root() / "extract" / "romfs"));
+    std::string s = slashes(utf8(p));
     if (s.compare(0, romfs.size(), romfs) != 0 || (s.size() > romfs.size() && s[romfs.size()] != '/')) return nullptr;
     rel = s.size() > romfs.size() ? s.substr(romfs.size() + 1) : "";
     while (!rel.empty() && rel.back() == '/') rel.pop_back();
