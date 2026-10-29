@@ -979,6 +979,12 @@ const Entry kLauncherNl[] = {
     {"launcher.settings.ptbr_missing", "De pt-BR-vertaling is niet geïnstalleerd in deze build: voeg de .zip toe in de installatie en compileer opnieuw."},
     {"launcher.settings.save_failed", "Kan config.ini niet opslaan"},
     {"launcher.settings.open_data", "Spelmap openen"},
+    {"launcher.welcome.setup.desc", "Kies de spelmap die ACNHRecomp-Importer van je eigen spel heeft voorbereid. Die wordt één keer op deze computer opnieuw gecompileerd."},
+    {"launcher.files.text", "Kies de spelmap die ACNHRecomp-Importer heeft voorbereid met Bladeren…, laat Zoeken hem in je gebruikelijke mappen vinden, of sleep hem op zijn kaart. Hij wordt alleen gelezen, nooit gewijzigd."},
+    {"launcher.item.game.desc", "De map die ACNHRecomp-Importer van het spel van je eigen console heeft voorbereid (game.ini, exefs/, romfs/, aoc/). 3.0.2 of 3.0.3 krijgt alle verbeteringen (60 FPS, brede schermen, muis); 1.0.0 en 2.0.7 werken ook; andere versies draaien zoals ze zijn."},
+    {"launcher.err.game_importer", "Deze map is niet voorbereid door ACNHRecomp-Importer: bereid je spel er eerst mee voor (download het op onze Discord, hieronder)"},
+    {"launcher.files.importer", "ACNHRecomp accepteert alleen spelmappen die ACNHRecomp-Importer heeft voorbereid; die maakt van je NSP of XCI, de update en de sleutels die map. Download het op onze Discord:"},
+    {"launcher.files.discord", "ACNHRecomp-Importer downloaden op Discord"},
 };
 
 const Entry kLauncherRu[] = {
@@ -1102,6 +1108,12 @@ const Entry kLauncherRu[] = {
     {"launcher.settings.ptbr_missing", "Перевод pt-BR не установлен в этой сборке: добавьте его .zip при установке и пересоберите."},
     {"launcher.settings.save_failed", "Не удалось сохранить config.ini"},
     {"launcher.settings.open_data", "Открыть папку игры"},
+    {"launcher.welcome.setup.desc", "Выберите папку игры, которую ACNHRecomp-Importer подготовил из вашей копии игры. Она один раз перекомпилируется на этом компьютере."},
+    {"launcher.files.text", "Выберите папку игры, подготовленную ACNHRecomp-Importer, кнопкой «Обзор…», найдите её Поиском в обычных папках или перетащите на карточку. Она только читается и никогда не изменяется."},
+    {"launcher.item.game.desc", "Папка, которую ACNHRecomp-Importer подготовил из игры с вашей консоли (game.ini, exefs/, romfs/, aoc/). Версии 3.0.2 и 3.0.3 получают все исправления (60 FPS, широкие экраны, мышь); 1.0.0 и 2.0.7 тоже работают; другие версии запускаются как есть."},
+    {"launcher.err.game_importer", "Эта папка не подготовлена ACNHRecomp-Importer: сначала подготовьте игру с его помощью (скачайте его в нашем Discord, ниже)"},
+    {"launcher.files.importer", "ACNHRecomp принимает только папки игры, подготовленные ACNHRecomp-Importer: он превращает ваш NSP или XCI, обновление и ключи в такую папку. Скачайте его в нашем Discord:"},
+    {"launcher.files.discord", "Скачать ACNHRecomp-Importer в Discord"},
 };
 
 const Entry kLauncherJa[] = {
@@ -1225,6 +1237,12 @@ const Entry kLauncherJa[] = {
     {"launcher.settings.ptbr_missing", "このビルドには pt-BR 翻訳がインストールされていません。セットアップでその .zip を追加して再ビルドしてください。"},
     {"launcher.settings.save_failed", "config.ini を保存できませんでした"},
     {"launcher.settings.open_data", "ゲームのフォルダーを開く"},
+    {"launcher.welcome.setup.desc", "ACNHRecomp-Importer があなた自身のゲームから用意したゲームフォルダーを選んでください。このコンピューターで一度だけ再コンパイルされます。"},
+    {"launcher.files.text", "ACNHRecomp-Importer が用意したゲームフォルダーを「参照…」で選ぶか、「検索」でいつものフォルダーから探すか、カードにドラッグしてください。読み取るだけで、変更はしません。"},
+    {"launcher.item.game.desc", "ACNHRecomp-Importer があなたの本体のゲームから用意したフォルダー (game.ini、exefs/、romfs/、aoc/)。3.0.2 または 3.0.3 ではすべての修正 (60 FPS、ワイド画面、マウス) が有効になり、1.0.0 と 2.0.7 も動作します。その他のバージョンはそのまま動きます。"},
+    {"launcher.err.game_importer", "このフォルダーは ACNHRecomp-Importer で用意されていません。まずそれでゲームを準備してください (下の Discord から入手できます)"},
+    {"launcher.files.importer", "ACNHRecomp は ACNHRecomp-Importer が用意したゲームフォルダーだけを受け付けます。Importer はあなたの NSP または XCI、アップデート、キーからそのフォルダーを作ります。Discord で入手してください:"},
+    {"launcher.files.discord", "Discord で ACNHRecomp-Importer を入手"},
 };
 
 const Entry kLauncherKo[] = {
@@ -1348,6 +1366,12 @@ const Entry kLauncherKo[] = {
     {"launcher.settings.ptbr_missing", "이 빌드에는 pt-BR 번역이 설치되어 있지 않습니다. 설정에서 .zip을 추가하고 다시 빌드하세요."},
     {"launcher.settings.save_failed", "config.ini를 저장할 수 없습니다"},
     {"launcher.settings.open_data", "게임 폴더 열기"},
+    {"launcher.welcome.setup.desc", "ACNHRecomp-Importer가 본인의 게임으로 준비한 게임 폴더를 선택하세요. 이 컴퓨터에서 한 번 재컴파일됩니다."},
+    {"launcher.files.text", "ACNHRecomp-Importer가 준비한 게임 폴더를 찾아보기…로 선택하거나, 검색으로 평소 폴더에서 찾거나, 카드로 끌어다 놓으세요. 읽기만 하고 바꾸지 않습니다."},
+    {"launcher.item.game.desc", "ACNHRecomp-Importer가 본인 본체의 게임으로 준비한 폴더(game.ini, exefs/, romfs/, aoc/). 3.0.2 또는 3.0.3은 모든 수정(60 FPS, 와이드 화면, 마우스)을 받고, 1.0.0과 2.0.7도 작동하며, 다른 버전은 그대로 실행됩니다."},
+    {"launcher.err.game_importer", "이 폴더는 ACNHRecomp-Importer로 준비되지 않았습니다. 먼저 그것으로 게임을 준비하세요(아래 Discord에서 받을 수 있습니다)"},
+    {"launcher.files.importer", "ACNHRecomp는 ACNHRecomp-Importer가 준비한 게임 폴더만 받습니다. Importer는 NSP 또는 XCI, 업데이트, 키로 그 폴더를 만듭니다. Discord에서 받으세요:"},
+    {"launcher.files.discord", "Discord에서 ACNHRecomp-Importer 받기"},
 };
 
 const Entry kLauncherZhCn[] = {
@@ -1471,6 +1495,12 @@ const Entry kLauncherZhCn[] = {
     {"launcher.settings.ptbr_missing", "此版本未安装 pt-BR 翻译：请在设置中添加其 .zip 并重新编译。"},
     {"launcher.settings.save_failed", "无法保存 config.ini"},
     {"launcher.settings.open_data", "打开游戏文件夹"},
+    {"launcher.welcome.setup.desc", "选择 ACNHRecomp-Importer 用你自己的游戏准备好的游戏文件夹。它会在这台电脑上重新编译一次。"},
+    {"launcher.files.text", "用“浏览…”选择 ACNHRecomp-Importer 准备好的游戏文件夹，或让“搜索”在常用文件夹中找到它，或把它拖到卡片上。只读取，不会修改。"},
+    {"launcher.item.game.desc", "ACNHRecomp-Importer 用你自己主机上的游戏准备好的文件夹（game.ini、exefs/、romfs/、aoc/）。3.0.2 或 3.0.3 可获得全部修正（60 FPS、宽屏、鼠标）；1.0.0 和 2.0.7 也能运行；其他版本按原样运行。"},
+    {"launcher.err.game_importer", "此文件夹不是由 ACNHRecomp-Importer 准备的：请先用它准备你的游戏（在下方的 Discord 下载）"},
+    {"launcher.files.importer", "ACNHRecomp 只接受由 ACNHRecomp-Importer 准备的游戏文件夹，它会把你的 NSP 或 XCI、更新和密钥变成这个文件夹。请在我们的 Discord 下载："},
+    {"launcher.files.discord", "在 Discord 下载 ACNHRecomp-Importer"},
 };
 
 const Entry kLauncherZhTw[] = {
@@ -1594,4 +1624,10 @@ const Entry kLauncherZhTw[] = {
     {"launcher.settings.ptbr_missing", "此版本未安裝 pt-BR 翻譯：請在設定中新增其 .zip 並重新編譯。"},
     {"launcher.settings.save_failed", "無法儲存 config.ini"},
     {"launcher.settings.open_data", "開啟遊戲資料夾"},
+    {"launcher.welcome.setup.desc", "選擇 ACNHRecomp-Importer 用你自己的遊戲準備好的遊戲資料夾。它會在這台電腦上重新編譯一次。"},
+    {"launcher.files.text", "用「瀏覽…」選擇 ACNHRecomp-Importer 準備好的遊戲資料夾，或讓「搜尋」在常用資料夾中找到它，或把它拖到卡片上。只讀取，不會修改。"},
+    {"launcher.item.game.desc", "ACNHRecomp-Importer 用你自己主機上的遊戲準備好的資料夾（game.ini、exefs/、romfs/、aoc/）。3.0.2 或 3.0.3 可獲得全部修正（60 FPS、寬螢幕、滑鼠）；1.0.0 和 2.0.7 也能執行；其他版本按原樣執行。"},
+    {"launcher.err.game_importer", "此資料夾不是由 ACNHRecomp-Importer 準備的：請先用它準備你的遊戲（在下方的 Discord 下載）"},
+    {"launcher.files.importer", "ACNHRecomp 只接受由 ACNHRecomp-Importer 準備的遊戲資料夾，它會把你的 NSP 或 XCI、更新和金鑰變成這個資料夾。請在我們的 Discord 下載："},
+    {"launcher.files.discord", "在 Discord 下載 ACNHRecomp-Importer"},
 };
