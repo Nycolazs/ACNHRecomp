@@ -1,6 +1,6 @@
 #!/bin/bash
-# The Windows release package, made on macOS or Linux with mingw-w64: this repository's sources at HEAD (git archive:
-# nothing of the game, nothing of private/) with the launcher already built at its root (cross-compiled), SDL3.dll and
+# The Windows release package, made on macOS or Linux with mingw-w64: the sources the setup needs at its root
+# (tools/release_sources.sh: nothing of the game) with the launcher already built beside them (cross-compiled), SDL3.dll and
 # libwinpthread-1.dll beside it, and "Start ACNHRecomp.bat" to double-click. The launcher then checks the computer and
 # sets the game up from the player's own files with tools/setup_acnh.py (Python and Visual Studio's C++ build tools,
 # README "Requirements"), as on the other systems.
@@ -40,9 +40,9 @@ EOF
         -DNX_GEN_DIR="$PWD/$BUILD/no-gen" -DCMAKE_PREFIX_PATH="$SDL" >/dev/null
 cmake --build "$BUILD" --target acnhrecomp_launcher
 
-echo "== sources (git archive HEAD)"
-git archive --format=tar --prefix=ACNHRecomp/ HEAD | tar -x -C "$OUT"
-R=$OUT/ACNHRecomp
+echo "== sources (tools/release_sources.sh)"
+R=$OUT
+tools/release_sources.sh "$R" windows
 cp "$BUILD/acnhrecomp_launcher.exe" "$R/ACNHRecomp Launcher.exe"
 x86_64-w64-mingw32-strip "$R/ACNHRecomp Launcher.exe"
 cp "$SDL/bin/SDL3.dll" "$R/"
@@ -52,6 +52,6 @@ WINPTHREAD=$(x86_64-w64-mingw32-g++ -print-file-name=libwinpthread-1.dll)
 [ -f "$WINPTHREAD" ] || WINPTHREAD=$(find -L "$(brew --prefix mingw-w64 2>/dev/null || echo /usr)/" -name libwinpthread-1.dll -path "*x86_64*" 2>/dev/null | head -1)
 cp "$WINPTHREAD" "$R/"
 printf '@echo off\r\nrem Double-click: opens the launcher, which sets the game up from your own files (README, "Installation").\r\ncd /d "%%~dp0"\r\nstart "" "ACNHRecomp Launcher.exe"\r\n' > "$R/Start ACNHRecomp.bat"
-(cd "$OUT" && zip -qr "../$(basename "$OUT").zip" ACNHRecomp)
+(cd "$OUT" && zip -qr "../$(basename "$OUT").zip" .)
 rm -rf "${OUT:?}"
 ls -la "$OUT.zip"

@@ -1,6 +1,6 @@
 #!/bin/bash
-# The Linux release package: this repository's sources at HEAD (git archive: nothing of the game, nothing of private/)
-# with the launcher already built at its root, SDL3 (zlib licence) beside it so it opens without the system's, and
+# The Linux release package: the sources the setup needs at its root (tools/release_sources.sh: nothing of the game)
+# with the launcher already built beside them, SDL3 (zlib licence) beside it so it opens without the system's, and
 # "Start ACNHRecomp.sh" to run. The launcher then checks the computer and sets the game up from the player's own files
 # (README, "Installation"); building the game still needs the packages of README "Computer".
 # usage: tools/package_release_linux.sh <version> [<SDL3 prefix>]
@@ -24,9 +24,9 @@ echo "== launcher"
         ${SDL:+"-DCMAKE_PREFIX_PATH=$SDL"} >/dev/null
 cmake --build "$BUILD" --target acnhrecomp_launcher
 
-echo "== sources (git archive HEAD)"
-git archive --format=tar --prefix=ACNHRecomp/ HEAD | tar -x -C "$OUT"
-R=$OUT/ACNHRecomp
+echo "== sources (tools/release_sources.sh)"
+R=$OUT
+tools/release_sources.sh "$R" linux
 cp "$BUILD/acnhrecomp_launcher" "$R/ACNHRecomp Launcher"
 strip "$R/ACNHRecomp Launcher"
 # libSDL3.so.0 (its soname) beside the launcher, found there through $ORIGIN.
@@ -42,6 +42,6 @@ exec "./ACNHRecomp Launcher" "$@"
 EOF
 chmod +x "$R/Start ACNHRecomp.sh"
 # A tarball keeps the launcher and the scripts executable.
-tar -czf "$OUT.tar.gz" -C "$OUT" ACNHRecomp
+tar -czf "$OUT.tar.gz" -C "$OUT" .
 rm -rf "${OUT:?}"
 ls -la "$OUT.tar.gz"
