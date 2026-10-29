@@ -762,8 +762,10 @@ void page_about() {
     if (button("Instagram: @nycolazs")) SDL_OpenURL("https://www.instagram.com/nycolazs/");
     ImGui::SameLine();
     if (button("GitHub: nycolazs")) SDL_OpenURL("https://github.com/nycolazs");
-#else
-    ImGui::TextWrapped("Instagram: @nycolazs  ·  GitHub: github.com/nycolazs");
+#else  // in the Instagram / GitHub app when it is installed
+    if (button("Instagram: @nycolazs")) plat::open_url_in_app("https://www.instagram.com/nycolazs/", "com.instagram.android");
+    ImGui::SameLine();
+    if (button("GitHub: nycolazs")) plat::open_url_in_app("https://github.com/nycolazs", "com.github.android");
 #endif
     ImGui::Dummy(ImVec2(0, 6 * g_scale));
     ImGui::TextWrapped("%s", tr("about.credits"));

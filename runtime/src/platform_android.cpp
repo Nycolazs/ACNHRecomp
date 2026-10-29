@@ -147,6 +147,35 @@ void restart_app() {
     exit_process(0);
 }
 
+void open_url_in_app(const std::string& url, const char* package) {
+    JNIEnv* env = nullptr;
+    if (!g_app || g_app->activity->vm->AttachCurrentThread(&env, nullptr) != JNI_OK || !env) return;
+    jobject act = g_app->activity->clazz;
+    jclass actc = env->GetObjectClass(act);
+    jclass uric = env->FindClass("android/net/Uri");
+    jobject uri = env->CallStaticObjectMethod(uric, env->GetStaticMethodID(uric, "parse", "(Ljava/lang/String;)Landroid/net/Uri;"),
+                                              env->NewStringUTF(url.c_str()));
+    jclass ic = env->FindClass("android/content/Intent");
+    jmethodID start = env->GetMethodID(actc, "startActivity", "(Landroid/content/Intent;)V");
+    // ACTION_VIEW in the app first (startActivity throws ActivityNotFoundException when it is not installed), then in
+    // whatever opens links (the browser). FLAG_ACTIVITY_NEW_TASK: the game stays as it is behind it.
+    for (const char* pkg : {package, static_cast<const char*>(nullptr)}) {
+        jobject intent = env->NewObject(ic, env->GetMethodID(ic, "<init>", "(Ljava/lang/String;Landroid/net/Uri;)V"),
+                                        env->NewStringUTF("android.intent.action.VIEW"), uri);
+        env->CallObjectMethod(intent, env->GetMethodID(ic, "addFlags", "(I)Landroid/content/Intent;"), 0x10000000);
+        if (pkg)
+            env->CallObjectMethod(intent, env->GetMethodID(ic, "setPackage", "(Ljava/lang/String;)Landroid/content/Intent;"),
+                                  env->NewStringUTF(pkg));
+        env->CallVoidMethod(act, start, intent);
+        if (!env->ExceptionCheck()) {
+            nx::log("app: opened %s%s%s", url.c_str(), pkg ? " in " : "", pkg ? pkg : "");
+            return;
+        }
+        env->ExceptionClear();
+        if (!pkg) break;
+    }
+}
+
 void sleep_ns(int64_t ns) {
     timespec ts{time_t(ns / 1000000000), long(ns % 1000000000)};
     nanosleep(&ts, nullptr);

@@ -89,6 +89,8 @@ float default_render_scale();
 #if defined(__ANDROID__)
 // The app started again from its launcher activity, and this process ended (settings that take effect at start).
 [[noreturn]] void restart_app();
+// Android: `url` in the app `package` when it is installed (Instagram, GitHub), else in the browser (platform_android).
+void open_url_in_app(const std::string& url, const char* package);
 #endif
 // thermal.cpp: the share of the asked rows the GPU keeps up with now (dynamic resolution; 1 elsewhere).
 float dynamic_render_scale();
