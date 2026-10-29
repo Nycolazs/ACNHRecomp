@@ -433,8 +433,8 @@ def main():
         if mod == "main" and hooks != "-":
             h = ["--hooks", hooks]  # instructions that call the runtime first, at the addresses of this build only
         pch = os.path.join(G, "speedfix_main.pchtxt")
-        if mod == "main" and version == "3.0.2" and os.path.exists(pch):
-            h += ["--variant", pch]  # the native 60 FPS variant (tools/setup_60fps.sh, 3.0.2 only)
+        if mod == "main" and version in ("3.0.2", "3.0.3") and os.path.exists(pch):
+            h += ["--variant", pch]  # the native 60 FPS variant (tools/setup_60fps.sh; tmouh's patch has both builds)
         profile = " ".join(h) or "none"
         gen = os.path.join(G, "gen", mod)
         table, prof_file = os.path.join(gen, "table.cpp"), os.path.join(gen, "profile.txt")
