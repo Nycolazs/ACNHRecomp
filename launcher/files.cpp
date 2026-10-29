@@ -104,6 +104,17 @@ bool game_parts(const std::string& path, GameFolder& g) {
     return !g.exefs.empty() && !g.romfs.empty();
 }
 
+// Whether ACNHRecomp-Importer prepared the folder (and finished): its game.ini says so and .import/complete is
+// there. ACNHRecomp only takes such folders; the importer is on the project's Discord (launcher.files.importer).
+bool from_importer(const std::string& path) {
+    std::error_code ec;
+    fs::path d = u8(path);
+    std::ifstream f(d / "game.ini");
+    std::string first;
+    std::getline(f, first);
+    return first.find("ACNHRecomp-Importer") != std::string::npos && fs::exists(d / ".import" / "complete", ec);
+}
+
 // main's build id (hex), "" when the file is not an NSO.
 std::string build_id(const fs::path& nso) {
     std::ifstream f(nso, std::ios::binary);
@@ -281,6 +292,7 @@ FileCheck check_file(Kind kind, const std::string& path) {
     GameFolder g;
     if (!is_dir(path)) return ok(Status::Error, tr("launcher.err.not_folder"));
     if (!game_parts(path, g)) return ok(Status::Error, tr("launcher.err.game_layout"));
+    if (!from_importer(path)) return ok(Status::Error, tr("launcher.err.game_importer"));
     std::error_code ec;
     std::string id;
     for (const char* m : {"main", "sdk", "subsdk0"}) {

@@ -162,8 +162,12 @@ public class Home extends Activity {
                     "O jogo desta pasta foi preparado para outra versão do app. Prepare de novo no computador "
                             + "(tools/android_install.sh) ou instale o app da mesma versão.");
         if (why.startsWith("missing"))
-            return t("This folder has no prepared game (" + GAME_LIB + ").",
-                    "Esta pasta não tem o jogo preparado (" + GAME_LIB + ").");
+            return t("This folder has no prepared game (" + GAME_LIB + "). Prepare your game with ACNHRecomp-Importer "
+                            + "(download it on our Discord: discord.gg/VJW9Dtdu7a), then on the computer with "
+                            + "tools/android_install.sh.",
+                    "Esta pasta não tem o jogo preparado (" + GAME_LIB + "). Prepare o seu jogo com o "
+                            + "ACNHRecomp-Importer (baixe no nosso Discord: discord.gg/VJW9Dtdu7a) e depois no "
+                            + "computador com tools/android_install.sh.");
         if (why.equals("restart"))
             return t("Close the app and open it again to use another folder.",
                     "Feche o app e abra de novo para usar outra pasta.");

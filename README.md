@@ -142,12 +142,14 @@ via Claude Code), directed and tested by a person. Its base, SuperMarioWonderRec
 
 ### Your game folder
 
-A folder with the game's executables and files from your own copy, laid out as an ExeFS + RomFS dump.
+A folder **prepared by ACNHRecomp-Importer** from your own copy of the game.
 
-> **ACNHRecomp-Importer is required to make it.** This repository only reads a game folder that is already
-> prepared; making one from your own dump of the game is the job of **ACNHRecomp-Importer**, a separate companion
-> project that is **available on our Discord** ([discord.gg/VJW9Dtdu7a](https://discord.gg/VJW9Dtdu7a)). Get it
-> there, run it on your own copy, and point the launcher (or `tools/setup_acnh.py --game`) at the folder it writes.
+> **ACNHRecomp only accepts game folders made by ACNHRecomp-Importer.** The launcher and `tools/setup_acnh.py`
+> refuse any other folder, including an ExeFS + RomFS dump extracted with other tools. ACNHRecomp-Importer is a
+> separate companion app (Windows, macOS, Linux and Android) that turns your NSP or XCI, its update and your console's
+> keys into this folder, and recompiles the game's code on the way. It is **available on our Discord:
+> [discord.gg/VJW9Dtdu7a](https://discord.gg/VJW9Dtdu7a)**. Get it there, prepare your own copy with it, and point the
+> launcher (or `tools/setup_acnh.py --game`) at the folder it writes.
 
 The folder's layout:
 
@@ -156,6 +158,8 @@ The folder's layout:
 | `exefs/` | `main`, `sdk`, `subsdk0` (the game's executables, NSO) and `main.npdm` | Yes |
 | `romfs/` | The game's files, with the update applied (about 10.5 GB). `extract/romfs/` is accepted too | Yes |
 | `aoc/<index>/` | Add-on content (DLC), one folder per add-on | Optional |
+| `game.ini`, `.import/` | What ACNHRecomp-Importer imported (title, update version, main's build id) and its record of a finished import: how the launcher and the setup recognise its folders | Yes |
+| `gen/` | The game's code recompiled to C++ by the importer. When it was made by the same recompiler as this repository's `recomp/`, the setup uses it instead of recompiling | Optional |
 
 Version 3.0.2 (or 3.0.3) gets every fix of the port (native 60 FPS, wide screens, the mouse); 2.0.7 and 1.0.0 play
 with picture, sound and the mouse; any other version is built as it is ([docs/VERSIONS.md](docs/VERSIONS.md)). The
@@ -531,6 +535,12 @@ computer cannot hold 60.
 
 **The setup stops with "no game in ...: pass --game".**
 The game folder has not been linked yet: pass `--game <your game folder>` on the first run.
+
+**The launcher or the setup says the folder was not prepared by ACNHRecomp-Importer.**
+ACNHRecomp only accepts game folders made by ACNHRecomp-Importer. Download it on our Discord
+([discord.gg/VJW9Dtdu7a](https://discord.gg/VJW9Dtdu7a)), prepare your game with it (your NSP or XCI, update 3.0.2 and
+your console's keys) and choose the folder it writes. A folder it is still working on, or that it stopped preparing, is
+not accepted either: let it finish.
 
 **The setup says the game folder has no exefs/ and romfs/, or that romfs/ has no Shader/ folder.**
 Choose the folder that holds both `exefs/` and `romfs/` (see [Requirements](#your-game-folder)), with the update

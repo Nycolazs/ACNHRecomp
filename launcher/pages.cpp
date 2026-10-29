@@ -42,6 +42,8 @@ ImU32 rgb(int r, int g, int b, int a = 255) { return IM_COL32(r, g, b, a); }
 const ImU32 kInk = rgb(107, 79, 54), kInkSoft = rgb(150, 128, 100), kPaper = rgb(248, 239, 214);
 const ImU32 kGreen = rgb(124, 194, 103), kMint = rgb(118, 200, 170), kYellow = rgb(255, 217, 102);
 const ImU32 kOrange = rgb(245, 166, 35), kRed = rgb(232, 115, 122), kBlue = rgb(79, 179, 217);
+// The project's Discord, where ACNHRecomp-Importer (which prepares the game folder) is downloaded
+const char* const kDiscordUrl = "https://discord.gg/VJW9Dtdu7a";
 const ImU32 kPurple = rgb(155, 125, 212), kBrown = rgb(176, 140, 100), kGrey = rgb(214, 200, 168);
 const ImU32 kWhite = rgb(255, 255, 255);
 
@@ -813,6 +815,10 @@ void page_files() {
            tr("launcher.status.game_missing"), g_game);
     single("##ptbr", kSlotMod, nx::ui::kIconText, tr("launcher.item.ptbr"), tr("launcher.item.ptbr.desc"), false,
            tr("launcher.status.none_drop"), g_ptbr);
+    // where the game folder comes from: ACNHRecomp-Importer, on the Discord
+    ImGui::Dummy(ImVec2(0, S(6)));
+    text_small(tr("launcher.files.importer"));
+    if (button(tr("launcher.files.discord"), kBlue)) SDL_OpenURL(kDiscordUrl);
 }
 
 void footer_files() {

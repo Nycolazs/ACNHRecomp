@@ -183,6 +183,20 @@ def msvc_env():
     return env
 
 
+DISCORD = "https://discord.gg/VJW9Dtdu7a"  # where ACNHRecomp-Importer is downloaded
+
+
+def from_importer(game):
+    """Whether ACNHRecomp-Importer prepared the folder (and finished): its game.ini says so and .import/complete is
+    there."""
+    try:
+        with open(os.path.join(game, "game.ini"), encoding="utf-8", errors="replace") as f:
+            first = f.readline()
+    except OSError:
+        return False
+    return "ACNHRecomp-Importer" in first and os.path.exists(os.path.join(game, ".import", "complete"))
+
+
 def find_game(game):
     """The exefs, romfs and aoc folders of a game folder (an ExeFS + RomFS dump: names in either case; the RomFS may
     also be extract/romfs), checked: the three modules are NSOs and the RomFS is the game's."""
@@ -198,6 +212,9 @@ def find_game(game):
     romfs = sub_dir("romfs") or (os.path.join(game, "extract", "romfs") if os.path.isdir(os.path.join(game, "extract", "romfs")) else "")
     if not exefs or not romfs:
         fail(f"{game} must hold exefs/ and romfs/ (the game's executables and files from your own dump)")
+    if not from_importer(game):
+        fail(f"{game} was not prepared by ACNHRecomp-Importer. ACNHRecomp only takes game folders the importer "
+             f"prepared: get it on our Discord ({DISCORD}), prepare your game with it, then pass its folder here.")
     for m in ("main", "sdk", "subsdk0"):
         f = os.path.join(exefs, m)
         if not os.path.isfile(f):
