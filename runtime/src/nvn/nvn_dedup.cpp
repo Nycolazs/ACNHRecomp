@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <map>
+#include <memory>
 #include <memory_resource>
 
 #include "nvn_draw_state.h"
@@ -77,7 +78,14 @@ Upload dedup_upload(const uint8_t* p, uint64_t size, uint64_t padded, uint64_t a
     return u;
 }
 
-void dedup_reset() { (*g_cp).map.clear(), (*g_cp).arena.release(), (*g_generation)++, (*g_upload_epoch)++; }
+void dedup_reset() {
+    // The map is made again after the arena's release: MSVC's std::map allocates its head node from that arena.
+    Copies& c = *g_cp;
+    std::destroy_at(&c.map);
+    c.arena.release();
+    std::construct_at(&c.map, &c.arena);
+    (*g_generation)++, (*g_upload_epoch)++;
+}
 
 void dedup_invalidate(const uint8_t* p, uint64_t size) {
     (*g_upload_epoch)++;
