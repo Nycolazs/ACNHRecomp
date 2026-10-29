@@ -1,7 +1,7 @@
 #!/bin/bash
 # The text files of a release package (tools/package_release_*.sh), in <folder>: README.txt (how to play, for that
 # system), LICENSE (this project's) and THIRD-PARTY.txt (the libraries beside the executables).
-# usage: tools/release_readme.sh <folder> windows|macos|linux
+# usage: tools/release_readme.sh <folder> windows|macos|linux [<version>]
 cd "$(dirname "$0")/.." || exit 1
 set -e
 DIR=${1:?usage: tools/release_readme.sh <folder> windows|macos|linux}
@@ -23,12 +23,12 @@ case $OS in
            EOL=$'\n' ;;
   *) echo "unknown system: $OS (windows, macos or linux)"; exit 1 ;;
 esac
-VERSION=$(git describe --tags --always 2>/dev/null || echo dev)
+VERSION=${3:-$(git describe --tags --always 2>/dev/null || echo dev)}
 
 text() {
 cat <<EOF
-ACNHRecomp ($VERSION)
-=====================
+ACNHRecomp $VERSION
+$(printf '%*s' $((11 + ${#VERSION})) '' | tr ' ' '=')
 
 A native PC port of Animal Crossing: New Horizons made by static recompilation. This package contains NO part of
 the game: you need your own copy, prepared with ACNHRecomp-Importer.

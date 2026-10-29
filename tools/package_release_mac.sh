@@ -77,7 +77,7 @@ xattr -dr com.apple.quarantine . 2>/dev/null
 exec "./ACNHRecomp Launcher"
 EOF
 chmod +x "$R/Start ACNHRecomp.command"
-tools/release_readme.sh "$R" macos
+tools/release_readme.sh "$R" macos "$VER"
 (cd "$OUT" && ditto -c -k --sequesterRsrc --keepParent ACNHRecomp "../$(basename "$OUT").zip")
 rm -rf "${OUT:?}"
 ls -la "$OUT.zip"
