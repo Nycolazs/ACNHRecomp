@@ -614,6 +614,47 @@ std::vector<uint32_t> patched_spirv(const ShaderInfo* s, const uint8_t* kinds, u
     return code;
 }
 
+// The game's effects draw a sprite twice: a depth pass whose fragment shader writes the literal colour (1, 1, 0) (and
+// the sprite's alpha, for its alpha test), then the shaded sprite over it with the depth test LEQUAL. On Maxwell the
+// two vertex shaders round the position alike and the second pass covers the first everywhere; compiled for another
+// GPU they can differ in the last bit, and the yellow showed where the second pass failed the test (the splashes of
+// running on wet sand, the shovel on a rock). True for such a shader: only colour output 0, its x, y, z stored as those
+// constants and nothing else.
+bool writes_depth_pass_yellow(const std::vector<uint32_t>& in) {
+    enum : uint32_t { OpConstant = 43, StorageOutput = 3, OpStore = 62 };
+    if (in.size() < 5) return false;
+    std::map<uint32_t, uint32_t> constant, location, chain_component;  // id -> value bits, Location, component
+    std::map<uint32_t, uint32_t> outputs;                               // output variable -> Location
+    for (size_t i = 5; i < in.size();) {
+        uint32_t len = in[i] >> 16, op = in[i] & 0xffff;
+        if (!len || i + len > in.size()) return false;
+        const uint32_t* w = &in[i];
+        if (op == OpConstant && len == 4) constant[w[2]] = w[3];
+        else if (op == OpDecorate && len == 4 && w[2] == DecorationLocation) location[w[1]] = w[3];
+        else if (op == OpVariable && len >= 4 && w[3] == StorageOutput)
+            outputs[w[2]] = location.count(w[2]) ? location[w[2]] : ~0u;
+        else if ((op == OpAccessChain || op == OpInBoundsAccessChain) && len == 5 && outputs.count(w[3])) {
+            if (outputs[w[3]] != 0 || !constant.count(w[4])) return false;
+            chain_component[w[2]] = constant[w[4]];
+        }
+        i += len;
+    }
+    if (outputs.size() != 1 || outputs.begin()->second != 0) return false;
+    const uint32_t want[3] = {0x3f800000, 0x3f800000, 0};  // 1.0, 1.0, 0.0
+    uint32_t seen = 0;
+    for (size_t i = 5; i < in.size(); i += in[i] >> 16) {
+        const uint32_t* w = &in[i];
+        if ((w[0] & 0xffff) != OpStore || (w[0] >> 16) < 3) continue;
+        if (outputs.count(w[1])) return false;  // the whole vector at once
+        auto c = chain_component.find(w[1]);
+        if (c == chain_component.end() || c->second >= 3) continue;
+        auto v = constant.find(w[2]);
+        if (v == constant.end() || v->second != want[c->second]) return false;
+        seen |= 1u << c->second;
+    }
+    return seen == 7;
+}
+
 // How far into each set 0 uniform block (binding < 64) the shader reads, in bytes: the end of the furthest element an
 // access chain reaches with a constant index (the translator's blocks are struct { vec4 data[4096]; }). 0: unknown,
 // the shader may read anywhere (a computed index, or the block used other than through such a chain). Uploads pad a

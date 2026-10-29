@@ -1096,7 +1096,7 @@ std::unique_ptr<PipeBuild> prepare_graphics_pipeline(const PipelineKey& key, con
         att[k].srcAlphaBlendFactor = factor(b.src_a);
         att[k].dstAlphaBlendFactor = factor(b.dst_a);
         att[k].alphaBlendOp = vk_blend_op(b.eq_a);
-        att[k].colorWriteMask = key.mask.mask[k] & 0xF;
+        att[k].colorWriteMask = key.fs && key.fs->depth_pass ? 0 : key.mask.mask[k] & 0xF;  // its yellow is never seen
     }
     VkPipelineColorBlendStateCreateInfo& cb = B.cb;
     cb = {VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};

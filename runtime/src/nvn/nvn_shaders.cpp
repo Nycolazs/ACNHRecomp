@@ -205,6 +205,7 @@ static_assert(uint32_t(DescriptorType::Sampler) == VK_DESCRIPTOR_TYPE_SAMPLER &&
 uint64_t dynamic_uniform_bindings(const ShaderInfo* s);  // nvn_spirv_patch.cpp
 uint64_t written_storage_bindings(const ShaderInfo* s);
 void uniform_read_extents(const std::vector<uint32_t>& spirv, uint32_t (&extent)[64]);  // nvn_spirv_patch.cpp
+bool writes_depth_pass_yellow(const std::vector<uint32_t>& spirv);                     // nvn_spirv_patch.cpp
 
 namespace {
 
@@ -351,6 +352,9 @@ const ShaderInfo* shader_for(uint64_t code_host, uint64_t control) {
     info->dynamic_uniforms = dynamic_uniform_bindings(info.get());
     info->written_storage = written_storage_bindings(info.get());
     uniform_read_extents(info->spirv, info->uniform_extent);
+    // NX_DEPTH_PASS_COLOUR=1: an effect's depth pass writes its yellow too, as before (A/B).
+    static const bool depth_pass_colour = std::getenv("NX_DEPTH_PASS_COLOUR") && std::getenv("NX_DEPTH_PASS_COLOUR")[0] == '1';
+    info->depth_pass = info->stage == ShaderStage::Fragment && !depth_pass_colour && writes_depth_pass_yellow(info->spirv);
     info->masks_known = true;
     // Only pipeline builds read the words again (shader_spirv): they are dropped here and read back from the .spv,
     // which keeps ~90 MB of SPIR-V for ~2,300 shaders out of RAM.

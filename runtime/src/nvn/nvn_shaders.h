@@ -223,6 +223,8 @@ struct ShaderInfo {
     uint64_t dynamic_uniforms = 0, written_storage = 0;
     // uniform_read_extents (nvn_spirv_patch.cpp): bytes of each set 0 uniform binding the shader reads; 0 unknown.
     uint32_t uniform_extent[64] = {};
+    // writes_depth_pass_yellow (nvn_spirv_patch.cpp): an effect's depth pass; its draws write depth only.
+    bool depth_pass = false;
 };
 
 // Builds a ShaderInfo from a code block, its control section and the SPIR-V words (no I/O). `resources` = the
