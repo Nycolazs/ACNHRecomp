@@ -249,12 +249,11 @@ game, and none needs a compiler. You need two things:
 
 #### The first start, updates and versions
 
-- **Brazilian Portuguese and 60 FPS** come by themselves: the first start downloads the pt-BR fan translation and the
-  files of tmouh's 60 FPS SpeedFix into your game folder (a few seconds; each file is checked against its SHA-256).
-  Português (Brasil) is then in the game's languages (chosen by itself on a Portuguese system), and the game runs at
-  60 FPS at its normal speed unless you pick 30. A game folder whose code was prepared without the SpeedFix stays at
-  30. Without internet the game starts normally and tries again the next day; `game.mod_fetch = off` in
-  `config.ini` turns the download off.
+- **Brazilian Portuguese and 60 FPS** come with the package: the first start copies the pt-BR fan translation and
+  the files of tmouh's 60 FPS SpeedFix into your game folder (no download). Português (Brasil) is then in the game's
+  languages (chosen by itself on a Portuguese system), and the game runs at 60 FPS at its normal speed unless you pick
+  30. A game folder whose code was prepared without the SpeedFix stays at 30. A new package with newer files copies
+  them again; `game.mod_fetch = off` in `config.ini` turns the copy off.
 - **New versions:** the launcher looks for a newer release on GitHub each time it opens and says so on its home page,
   with a button to its download page. *Settings* > *Look for new versions when the launcher opens* turns it off. To
   update, download the new package and replace the old folder (or app): your game folder, saves and settings are

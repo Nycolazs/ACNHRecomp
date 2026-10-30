@@ -89,6 +89,9 @@ cat > "$APP/Contents/Resources/MoltenVK_icd.json" <<'ICD'
     }
 }
 ICD
+# The pt-BR translation and the SpeedFix files (Resources: data, not code), which the player copies into the game
+# folder (mod_fetch.cpp). Before the signature, which covers them.
+tools/bundle_mods.sh "$APP/Contents/Resources"
 for f in "$M"/*.dylib "$M/acnh"; do codesign --force -s - "$f" 2>/dev/null; done
 codesign --force -s - "$APP"  # the bundle last: its seal covers the files above
 if otool -L "$M/acnh" "$M/ACNHRecomp Launcher" "$M"/*.dylib | grep -E "$BREW|/opt/homebrew|/usr/local"; then

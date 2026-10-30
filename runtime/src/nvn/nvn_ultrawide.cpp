@@ -124,6 +124,13 @@ Scale wanted(uint64_t present) {
     if (aa == "ssaa15") s *= 1.5;
     else if (aa == "ssaa2") s *= 2.0;
     s = std::clamp(s, 0.25, 2.0);  // 2: 2160 rows (4K)
+    // Never more rows than the screen has (NX_UW_CAP=0: no cap). Taken here, in the scale every target and every
+    // shader patch uses: capping the targets alone (as uw_resize did) left the shaders that read a target by pixel
+    // position at the uncapped scale, and in a window of fewer rows than asked (1080 rows in a 720-row window, or
+    // Windows at 125-150% scaling) the 3D picture zoomed into its top left corner.
+    static const bool cap = !(std::getenv("NX_UW_CAP") && std::getenv("NX_UW_CAP")[0] == '0');
+    if (const uint32_t rows = g_display_rows.load(std::memory_order_relaxed); cap && rows >= 240)
+        s = std::min(s, double(rows) / (native * std::max(1.0, 1.0 / k)));
     s = std::round(s * native) / native;
     return {float(s), float(k)};
 }
@@ -241,7 +248,12 @@ void uw_resize(Texture& t) {
     // rows (x1.25 for 900) also took the game's 1080-row output to 1350 rows on a 1080-row phone, and the composite,
     // the frame generation and the present ran at 3000x1350 to be scaled down again. NX_UW_CAP=0: as before.
     static const bool cap = !(std::getenv("NX_UW_CAP") && std::getenv("NX_UW_CAP")[0] == '0');
-    if (const uint32_t rows = g_display_rows.load(std::memory_order_relaxed); cap && rows >= 240 && t.base_h * sy > rows) {
+    // The scene's targets are capped by the scale itself (wanted()): the shaders that read targets by pixel position
+    // scale with it. Only targets taller than the scene (handheld mode's 1080-row window textures over a 720-row scene)
+    // are capped here, on their own: the present crops them by their own scale.
+    const double scene = config_is_handheld() ? 720.0 : 1080.0;
+    if (const uint32_t rows = g_display_rows.load(std::memory_order_relaxed);
+        cap && rows >= 240 && t.base_h > scene && t.base_h * sy > rows) {
         const double f = double(rows) / (double(t.base_h) * sy);
         sx *= f, sy *= f;
     }

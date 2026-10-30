@@ -19,7 +19,7 @@ struct ConfigEntry {
 };
 
 void config_load();                    // reads <data root>/config.ini (once; later calls re-read)
-void mods_fetch();  // mod_fetch.cpp: the pt-BR translation and the SpeedFix files, downloaded once (computers)
+void mods_fetch();  // mod_fetch.cpp: the pt-BR translation and the SpeedFix files the package carries, into mods/
 void config_apply();                   // settings -> NX_* environment defaults (call once, early in startup)
 bool config_save();                    // writes the file back
 std::string config_get(const std::string& key, const std::string& fallback = "");

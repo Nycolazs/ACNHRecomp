@@ -9,7 +9,9 @@ were; control tags (colours, pauses, expressions) stay glued to the words they t
 
 The box widths are calibrated on the game's own text: its dialogue lines stop at about 2020 font units (size 100),
 its letters' at about 1910.
-Only the dialogue archives are touched (Talk*, Mail, Tutorials); menus and names have other widths.
+Only the dialogue archives are touched (Talk*, Mail, Tutorials); menus and names have other widths. One exception: the
+tips of the phone's Island Life 101 app (System, LifeSupport/), whose bubbles hold the game's own 3 lines (up to ~3390
+units wide) and do not grow: a tip is re-flowed into as few lines as fit there, or its text spills over the next one.
 
 usage: tools/msg_rewrap.py <game romfs> <mod romfs> [--dry-run]     (needs Pillow)"""
 import glob
@@ -21,6 +23,8 @@ import sys
 
 # The width of the boxes per archive: dialogue, and letters (narrower paper).
 LIMITS = (("Talk", 2020), ("Tutorials_", 2020), ("Mail_", 1910))
+# Messages re-flowed into the fewest lines: (archive prefix, message file prefix, width).
+REFLOW = (("System_", "LifeSupport/", 3300),)
 FONT_KEY = struct.pack(">I", 0x49621806)
 
 
@@ -275,6 +279,21 @@ def rewrap(text, width, limit):
     return changed
 
 
+def reflow(text, width, limit):
+    """Each page's words in the fewest lines that fit, balanced; pages already that short are left as they were."""
+    space = width.text(" ")
+    changed = False
+    for p, lines in enumerate(text.parts):
+        ws = [x for line in lines for x in words(line) if x]
+        for n in range(1, len(lines)):
+            out = balance(ws, n, width, space, limit)
+            if out:
+                text.parts[p][:] = out
+                changed = True
+                break
+    return changed
+
+
 def font(game_romfs):
     d = read_zs(os.path.join(game_romfs, "Font", "ScalableFont.sarc.zs"))
     for name, _, s, t in sarc_files(d)[2]:
@@ -290,8 +309,10 @@ def main():
     width = Measure(ImageFont.truetype(io.BytesIO(font(game)), 100))
 
     for path in sorted(glob.glob(os.path.join(mod, "Message", "*.sarc.zs"))):
-        limit = next((w for prefix, w in LIMITS if os.path.basename(path).startswith(prefix)), None)
-        if not limit:
+        base = os.path.basename(path)
+        limit = next((w for prefix, w in LIMITS if base.startswith(prefix)), None)
+        flow = [(m, w) for prefix, m, w in REFLOW if base.startswith(prefix)]
+        if not limit and not flow:
             continue
         d = read_zs(path)
         new, count = {}, 0
@@ -299,11 +320,14 @@ def main():
             b = d[s:t]
             if b[:8] != b"MsgStdBn":
                 continue
+            fit = next((w for m, w in flow if name.startswith(m)), None)
+            if not limit and not fit:
+                continue
             e, pos, _, strings = msbt_strings(b)
             out, hit = [], False
             for raw in strings:
                 text = Text(raw, e)
-                if rewrap(text, width, limit):
+                if reflow(text, width, fit) if fit else rewrap(text, width, limit):
                     out.append(text.encode())
                     count += 1
                     hit = True

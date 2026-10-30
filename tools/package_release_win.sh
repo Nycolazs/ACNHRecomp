@@ -55,6 +55,8 @@ for exe in "$R/acnh.exe" "$R/ACNHRecomp Launcher.exe"; do
     done
 done
 printf '@echo off\r\nrem Double-click: opens the launcher, which asks for the game folder ACNHRecomp-Importer prepared.\r\ncd /d "%%~dp0"\r\nstart "" "ACNHRecomp Launcher.exe"\r\n' > "$R/Start ACNHRecomp.bat"
+# The pt-BR translation and the SpeedFix files, which the player copies into the game folder (mod_fetch.cpp).
+tools/bundle_mods.sh "$R"
 tools/release_readme.sh "$R" windows "$VER"
 if command -v zip >/dev/null; then (cd "$OUT" && zip -qr "../$(basename "$OUT").zip" ACNHRecomp)
 else (cd "$OUT" && 7z a -tzip -bso0 "../$(basename "$OUT").zip" ACNHRecomp); fi

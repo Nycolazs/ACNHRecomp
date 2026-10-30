@@ -97,7 +97,10 @@ TURNIP=private/third_party/mesa/build-android/src/freedreno/vulkan/libvulkan_fre
 python3 tools/make_android_icon.py 2>/dev/null || true  # needs Pillow; the PNGs are kept in android/res otherwise
 "$BT/aapt2" compile --dir android/res -o "$OUT/res.zip"
 "$BT/aapt2" link -o "$OUT/base.apk" --manifest android/AndroidManifest.xml -I "$PLATFORM" "$OUT/res.zip"
-(cd "$OUT" && zip -q -r base.apk lib classes.dex)
+# The pt-BR translation and the SpeedFix files as assets, which the app copies into the game folder (mod_fetch.cpp).
+rm -rf "${OUT:?}/assets"
+tools/bundle_mods.sh "$OUT/assets"
+(cd "$OUT" && zip -q -r base.apk lib classes.dex && zip -q -r -0 base.apk assets)
 "$BT/zipalign" -f -P 16 4 "$OUT/base.apk" "$OUT/aligned.apk"
 KEY=private/android-debug.keystore
 [ -f "$KEY" ] || keytool -genkeypair -keystore "$KEY" -storepass android -keypass android -alias debug \

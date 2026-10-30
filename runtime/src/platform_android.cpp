@@ -7,6 +7,7 @@
 //   <files>/user/...                  saves
 //   <files>/config.txt                optional: resolution=WxH
 #include <aaudio/AAudio.h>
+#include <android/asset_manager.h>
 #include <android/log.h>
 #include <android/native_window.h>
 #include <android/window.h>
@@ -417,6 +418,16 @@ const nx::ModuleInfo* game_module(const char* name) {
 }
 
 std::string data_root() { return g_root; }
+
+bool read_asset(const std::string& path, std::string& out) {
+    out.clear();
+    AAsset* a = g_app ? AAssetManager_open(g_app->activity->assetManager, path.c_str(), AASSET_MODE_STREAMING) : nullptr;
+    if (!a) return false;
+    char b[65536];
+    for (int n; (n = AAsset_read(a, b, sizeof b)) > 0;) out.append(b, size_t(n));
+    AAsset_close(a);
+    return true;
+}
 
 std::string setting(const std::string& key) {
     // config.txt read once (again only if the data folder changes): window_size asks for two settings every frame,

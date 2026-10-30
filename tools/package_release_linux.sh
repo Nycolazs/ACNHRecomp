@@ -57,6 +57,8 @@ cd "$(dirname "$0")" || exit 1
 exec "./ACNHRecomp Launcher" "$@"
 EOF
 chmod +x "$R/Start ACNHRecomp.sh"
+# The pt-BR translation and the SpeedFix files, which the player copies into the game folder (mod_fetch.cpp).
+tools/bundle_mods.sh "$R"
 tools/release_readme.sh "$R" linux "$VER"
 # A tarball keeps the executables executable.
 tar -czf "$OUT.tar.gz" -C "$OUT" ACNHRecomp
