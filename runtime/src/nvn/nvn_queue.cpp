@@ -25,6 +25,7 @@
 
 #include "nvn.h"
 #include "nvn_ultrawide.h"
+#include "nvn_vk.h"
 #include "platform.h"
 
 namespace nx {
@@ -603,6 +604,15 @@ void QueuePresentTexture(CPU& c) {
     }
     plat::perf_hint_thread();
     if (work_from) plat::perf_hint_frame(int64_t(t_in - work_from));
+    // The thermal governor's view of the game thread: its CPU time since the last present, not the time passed. That
+    // also counted its waits for the replay and the GPU, so frames late because of the GPU looked like a busy CPU and
+    // the big cores were kept at their top clock (2.84 GHz on the S20 FE) for nothing: heat, and the battery's
+    // temperature then made Samsung hold the GPU at 400 MHz (the airport at ~20 fps).
+    static uint64_t cpu_from = 0;
+    if (const uint64_t cpu = thread_cpu_ns(); cpu) {
+        if (cpu_from && cpu >= cpu_from) plat::thermal_main_work(int64_t(cpu - cpu_from));
+        cpu_from = cpu;
+    }
     if (auto* w = get<Window>(c.x[1])) {
         plat::frame_period(int64_t(std::max(w->interval, 1)) * int64_t(tick_period_ns()));  // thermal.cpp, ADPF
         // At most two presents queued: the game runs at most two frames ahead of the replay.

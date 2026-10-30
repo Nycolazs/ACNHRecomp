@@ -115,7 +115,6 @@ void perf_hint_thread() {
 }
 
 void perf_hint_frame(int64_t ns) {
-    thermal_main_work(ns);  // the governor's frame times (thermal.cpp)
     const Api& a = api();
     if (!a.ok || ns <= 0) return;
     // Performance: as before: 33.3 ms when NX_FPS_CAP holds the game at 30 fps, else 16.7, and the game thread's work.

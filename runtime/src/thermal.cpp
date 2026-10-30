@@ -70,8 +70,11 @@ const Mode kModes[3] = {
     {"cool", 0.96, 0.88, 0.08, 305, 1000, 0.75f, 68, 2, 0.95, 39, 0},
 };
 // The big cores' caps, MHz (the S20 FE's SSRM keeps them at 1747 even cold; the replay is memory-bound: at 1.5 GHz it
-// took only a little longer than at 1.75, and 2.5 GHz made it ~10% faster).
-const int kCpuCaps[] = {1600, 1500, 1400, 1300, 1200, 1100, 1000};
+// took only a little longer than at 1.75, and 2.5 GHz made it ~10% faster). The steps over 1600 are there so that a
+// busy frame takes the cores up one step, not straight to the system's own cap (2841 MHz on the S20 FE, where they
+// stayed for whole sessions: 76-80 C, the battery at 41 C, and Samsung then held the GPU at 400 MHz).
+const int kCpuCaps[] = {2400, 2100, 1800, 1600, 1500, 1400, 1300, 1200, 1100, 1000};
+constexpr int kCpuStartLevel = 3;  // 1800: about Samsung's own cap, where the island's replay keeps its frame
 constexpr int kCpuLevels = int(sizeof kCpuCaps / sizeof kCpuCaps[0]);
 
 // The environment (tests) wins over config.ini.
@@ -201,7 +204,7 @@ struct Governor {
     std::vector<Policy> pol;
     bool use_limit = false;
     long limit_restore = 0, limit_written = 0, limit_read = 0;
-    int cpu_level = 0;         // 0: the system's caps; k: kCpuCaps[k - 1]
+    int cpu_level = kCpuStartLevel;  // 0: the system's caps; k: kCpuCaps[k - 1]
     std::vector<std::string> zones;  // thermal_zoneN/temp of the CPU's sensors
     int temp = -1;             // °C, the hottest of them
     // Samples since the last decision.
@@ -411,14 +414,14 @@ struct Governor {
         return true;
     }
 
-    // Dynamic resolution (video.dynamic_resolution = on, NX_DYNAMIC_RES=1; off by default, balanced and cool only): frames late
+    // Dynamic resolution (video.dynamic_resolution, NX_DYNAMIC_RES; on by default, balanced and cool only): frames late
     // while the GPU can go no higher (the system's thermal limit, or our ceiling) take the rows to 5/6 (1080 -> 900,
     // the output size unchanged) for at least a minute; back at full rows once there is no system limit and the GPU's
     // work would fit the ceiling with a third to spare. Each change makes the screen targets again (one frame late).
     template <class ShareAt>
     void dynamic_resolution(const Mode& m, int hi, ShareAt&& share_at) {
         static const bool on = [] {
-            const std::string v = setting_value("NX_DYNAMIC_RES", "video.dynamic_resolution", "off");
+            const std::string v = setting_value("NX_DYNAMIC_RES", "video.dynamic_resolution", "on");
             return v == "on" || v == "1";
         }();
         if (!on || m.gpu_target >= 1.0) {  // performance: full rows always
@@ -501,7 +504,8 @@ struct Governor {
         if (frames < 20) return;  // loading, paused, a menu: no evidence either way
         const bool gpu = !gpu_path.empty();
         const int lo = gpu ? floor_idx(m) : 0, hi = gpu ? std::max(lo, top() - drop) : 0;
-        const int max_l = max_level(m), min_l = std::min(drop, max_l);
+        // Hot (drop steps): the cores' ceiling from 1800 MHz down, a step per drop (the steps over it are for cool phones).
+        const int max_l = max_level(m), min_l = std::min(drop ? kCpuStartLevel + drop - 1 : 0, max_l);
         const int gpu_was = gpu_idx, cpu_was = cpu_level;
         // The GPU's work in MHz-seconds per second: its busy share at the clock it ran at. Busy time grows less than the
         // clock falls (memory), so the share predicted at a lower clock is on the safe side.
@@ -515,11 +519,19 @@ struct Governor {
             // The big cores already at their top: only the GPU can help (frame generation off, the GPU's busy share
             // stays under 90% while frames are late: the replay and the GPU's work in turn make the frame).
             const bool cpu_top = cpu_level <= min_l;
-            bool raise_gpu = gpu && (gpu_full || cpu_top || (!cpu_full && last_down_gpu)),
-                 raise_cpu = !cpu_top && (cpu_full || !raise_gpu);
+            // The CPU only when its work fills it: with it at half the frame, faster cores change nothing but the heat
+            // (the airport: late frames at 40% CPU took the cores back to 2.84 GHz every few seconds).
+            bool raise_gpu = gpu && (gpu_full || cpu_top || !cpu_full),
+                 raise_cpu = !cpu_top && (cpu_full || (!gpu && cpu_p90 > m.cpu_target * 0.75));
             if (raise_gpu) gpu_idx++, gpu_hold = 5;
             if (raise_cpu) cpu_level = cpu_step(cpu_level, -1, min_l, max_l), cpu_hold = 5;
-            gpu_votes = cpu_votes = 0;
+            gpu_votes = 0;
+            // Late because of the GPU (full, the CPU's work well within its cap one step down): the cores do not help
+            // and only heat the phone, which brings the system's GPU limit sooner. They keep coming down.
+            const int next = cpu_step(cpu_level, 1, min_l, max_l);
+            const bool cpu_spare = next > cpu_level && cpu_p90 * cpu_cap(cpu_level) / cpu_cap(next) < m.cpu_target;
+            cpu_votes = !raise_cpu && gpu_full && cpu_spare && !cpu_hold ? cpu_votes + 1 : 0;
+            if (cpu_votes >= 3) cpu_level = next, cpu_votes = 0;
         } else {
             if (work >= 0) {
                 int need = lo;
@@ -624,7 +636,7 @@ void governor_main() {
         }
         if (restored) {  // back from the background: from the top again, the frames meanwhile not counted
             restored = false;
-            g.gpu_idx = g.top(), g.cpu_level = 0, g.drop = 0, g.gpu_votes = g.cpu_votes = 0;
+            g.gpu_idx = g.top(), g.cpu_level = kCpuStartLevel, g.drop = 0, g.gpu_votes = g.cpu_votes = 0;
             g_frames.store(0), g_late.store(0);
             for (auto& b : g_bins) b.store(0);
         }

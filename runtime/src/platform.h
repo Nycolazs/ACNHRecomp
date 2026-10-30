@@ -169,7 +169,7 @@ void frame_period(int64_t ns);    // the game's frame period: its present interv
 int64_t frame_period_ns();        // 0 before the first present
 void frame_replay_work(int64_t ns);  // the replay thread's work for one frame (nvn_vk.cpp)
 int64_t frame_replay_work_ns();
-void thermal_main_work(int64_t ns);  // the game thread's work for one frame (perf_hint_frame)
+void thermal_main_work(int64_t ns);  // the game thread's CPU time for one frame (nvn_queue.cpp)
 void thermal_frame(uint64_t interval_ns);  // one of the game's frames shown, this long after the last (frame_stats.cpp)
 // Frame threads and present intervals (frame_stats.cpp): the cores they run on, their CPU time, NX_AFFINITY.
 // role 0: the thread that replays and presents (frame_presented ticks it); 1: the game's main thread.
