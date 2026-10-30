@@ -30,6 +30,7 @@ namespace nx::nvn {
 
 // The SDK driver's implementation of an NVN proc (0 if it has none). Resolved through its own nvnBootstrapLoader.
 uint64_t real_proc(CPU& c, const char* name);
+uint64_t real_proc_slow(CPU& c, const char* name);  // any name (one built at run time): looked up
 
 // Calls guest function `fn` with integer arguments, returns x0. Registers are restored afterwards.
 uint64_t guest_call(CPU& c, uint64_t fn, std::initializer_list<uint64_t> args);
@@ -373,9 +374,9 @@ struct CmdList {
     uint64_t handle = 0;     // its NVNcommandHandle
     uint64_t epoch = 0;      // the texture epoch when its recording ended (nvn_incarnation.cpp): what its draws name
     uint32_t skinned = 0;    // NX_TRACE_SKINLISTS: binds of skinned programs (a vertex input at location 6) in it
-    // count_dispatches' scan of cmds (nvn_frames.cpp, replay thread only): its own DispatchCompute commands and the
-    // handles it calls, valid while cmds has scanned_size entries.
-    size_t scanned_size = SIZE_MAX;
+    // count_dispatches' scan of cmds (nvn_frames.cpp): its own DispatchCompute commands and the handles it calls,
+    // valid while cmds has scanned_size entries. Kept up by record() as commands come (an empty list is scanned).
+    size_t scanned_size = 0;
     uint32_t own_dispatches = 0;
     uint64_t counted_plan = 0;  // count_dispatches' total with the lists it calls, for frame plan counted_plan
     uint32_t counted_total = 0;

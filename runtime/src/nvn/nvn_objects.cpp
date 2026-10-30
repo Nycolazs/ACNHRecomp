@@ -25,6 +25,28 @@ std::map<uint64_t, MemoryPool*> g_pools_by_gpu;  // gpu start -> pool
 std::atomic<uint64_t> g_pools_generation{1};     // bumped with every change of the map, under g_gpu_lock
 uint64_t g_gpu_next = 0x100000000ull;  // NVN GPU addresses are 40-bit; keep 0 and low values invalid
 
+// The pool of every 64 KiB page of GPU addresses (pools start 64 KiB aligned and are never moved; addresses are never
+// reused): read without a lock by pool_at_gpu, written under g_gpu_lock. 256 blocks of 4 GiB, each made at its first
+// pool (512 KB). Replaced an 8-entry cache per thread in front of the map, ~4.5% of the replay on a Snapdragon 865.
+constexpr int kPageBits = 16, kBlockBits = 32;
+using PageBlock = std::atomic<MemoryPool*>[size_t(1) << (kBlockBits - kPageBits)];
+std::atomic<PageBlock*> g_pages[256];
+
+void pages_set(const MemoryPool* p, MemoryPool* value) {  // g_gpu_lock held
+    if (!p->size) return;
+    for (uint64_t a = p->gpu & ~((1ull << kPageBits) - 1); a < p->gpu + p->size; a += 1ull << kPageBits) {
+        const uint64_t top = a >> kBlockBits;
+        if (top >= 256) return;
+        PageBlock* b = g_pages[top].load(std::memory_order_relaxed);
+        if (!b) {
+            if (!value) continue;
+            b = reinterpret_cast<PageBlock*>(new std::atomic<MemoryPool*>[size_t(1) << (kBlockBits - kPageBits)]());
+            g_pages[top].store(b, std::memory_order_release);
+        }
+        (*b)[(a >> kPageBits) & ((1ull << (kBlockBits - kPageBits)) - 1)].store(value, std::memory_order_release);
+    }
+}
+
 }  // namespace
 
 uint64_t gpu_alloc(uint64_t size) {
@@ -37,40 +59,23 @@ uint64_t gpu_alloc(uint64_t size) {
 void pool_register(MemoryPool* p) {
     std::lock_guard lk(g_gpu_lock);
     g_pools_by_gpu[p->gpu] = p, g_pools_generation.fetch_add(1);
+    pages_set(p, p);
 }
 
 void pool_unregister(MemoryPool* p) {
     std::lock_guard lk(g_gpu_lock);
     g_pools_by_gpu.erase(p->gpu), g_pools_generation.fetch_add(1);
+    pages_set(p, nullptr);
 }
 
-// Asked for every buffer a replayed draw binds, mostly in the same few pools: each thread keeps the last ranges it
-// found, good until a pool is registered or unregistered (a pool's address and size are final when it registers).
+// Asked for every buffer a replayed draw binds: the page table above (two loads).
 MemoryPool* pool_at_gpu(uint64_t gpu, uint64_t* offset) {
-    struct Hits {  // one thread_local: each is a call to reach on macOS
-        struct { uint64_t generation, start, size; MemoryPool* pool; } at[8];
-        uint32_t next;
-    };
-    thread_local Hits t_hits = {};
-    static Hits replay_hits = {};  // the replaying thread's, without the TLS lookup (replay_tls, nvn.h)
-    static Hits worker_hits[kReplaySlots] = {};  // the parallel replay's workers' (nvn_per_thread.h)
-    const int slot = replay_slot();
-    Hits& hits = slot ? worker_hits[slot]
-                 : g_replay_tls && std::this_thread::get_id() == g_replay_thread.load(std::memory_order_relaxed) ? replay_hits
-                                                                                                                 : t_hits;
-    uint64_t generation = g_pools_generation.load(std::memory_order_acquire);
-    for (const auto& h : hits.at)
-        if (h.generation == generation && gpu - h.start < h.size) {
-            if (offset) *offset = gpu - h.start;
-            return h.pool;
-        }
-    std::lock_guard lk(g_gpu_lock);
-    auto it = g_pools_by_gpu.upper_bound(gpu);
-    if (it == g_pools_by_gpu.begin()) return nullptr;
-    --it;
-    MemoryPool* p = it->second;
-    if (gpu - p->gpu >= p->size) return nullptr;
-    hits.at[hits.next++ & 7] = {g_pools_generation.load(std::memory_order_relaxed), p->gpu, p->size, p};
+    const uint64_t top = gpu >> kBlockBits;
+    if (top >= 256) return nullptr;
+    PageBlock* b = g_pages[top].load(std::memory_order_acquire);
+    MemoryPool* p = b ? (*b)[(gpu >> kPageBits) & ((1ull << (kBlockBits - kPageBits)) - 1)].load(std::memory_order_acquire)
+                      : nullptr;
+    if (!p || gpu - p->gpu >= p->size) return nullptr;
     if (offset) *offset = gpu - p->gpu;
     return p;
 }

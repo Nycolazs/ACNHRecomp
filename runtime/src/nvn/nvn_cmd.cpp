@@ -470,7 +470,15 @@ void record(uint64_t guest, Cmd cmd, const void* blob, size_t size) {
         auto* p = static_cast<const uint8_t*>(blob);
         cb->recording->blobs.emplace_back(p, p + size);
     }
-    cb->recording->cmds.push_back(cmd);
+    CmdList& l = *cb->recording;
+    // count_dispatches' scan (nvn_frames.cpp) kept up here, one compare per command on the recording thread: the
+    // game records its lists again every frame, so the replay thread scanned every command of the frame (~6% of it).
+    if (l.scanned_size == l.cmds.size()) {
+        if (cmd.op == Cmd::DispatchCompute) l.own_dispatches++;
+        if (cmd.op == Cmd::CallList) l.calls.push_back(cmd.a[0]);
+        l.scanned_size++;
+    }
+    l.cmds.push_back(cmd);
 }
 
 // A handle's list for the traces, without marking it used (which would keep it from being dropped).

@@ -87,10 +87,10 @@ bool driver_serves(const std::string& name) {
 uint64_t proc_address(CPU& c, const std::string& name) {
     if (name.empty()) return 0;
     static const bool note_all = std::getenv("NX_NVN_REAL") != nullptr;  // record every proc's driver address
-    if (note_all) nvn::real_proc(c, name.c_str());
+    if (note_all) nvn::real_proc_slow(c, name.c_str());
     if (hle_lookup(name.c_str())) return hle_address(name.c_str());
     if (driver_serves(name))
-        if (uint64_t real = nvn::real_proc(c, name.c_str())) return real;
+        if (uint64_t real = nvn::real_proc_slow(c, name.c_str())) return real;
     return hle_address_or(name.c_str(), trace_stub);
 }
 
@@ -153,17 +153,23 @@ uint64_t scratch(CPU&, size_t size) {
 uint64_t real_proc_slow(CPU& c, const char* name);
 
 uint64_t real_proc(CPU& c, const char* name) {
-    // The hot callers (state-object getters, one per bound state) pass string literals: a per-thread cache by the
-    // literal's address, verified by content, instead of a global mutex and a string-keyed tree at every call (the
-    // game's recording threads contended on that lock).
-    struct Hit {
-        std::string name;
-        uint64_t proc = 0;
+    // The hot callers (driver(), state-object getters, one per bound state) pass string literals, whose addresses are
+    // fixed: a global table by the literal's address, without a lock (a name's procedure never changes once found).
+    // It replaced a per-thread unordered_map compared by content: its hashing, the string compare and the thread_local
+    // access (TLSDESC in the app .so) were ~3% of the game's render thread. Names built at run time take real_proc_slow.
+    struct Slot {
+        std::atomic<const char*> name{nullptr};
+        std::atomic<uint64_t> proc{0};
     };
-    thread_local std::unordered_map<const char*, Hit> fast;
-    if (auto it = fast.find(name); it != fast.end() && it->second.name == name) return it->second.proc;
+    static Slot table[512];
+    Slot& s = table[(reinterpret_cast<uintptr_t>(name) >> 3) * 0x9E3779B97F4A7C15ull >> 55];
+    if (s.name.load(std::memory_order_acquire) == name) return s.proc.load(std::memory_order_relaxed);
     uint64_t found = real_proc_slow(c, name);
-    if (found) fast[name] = {name, found};
+    if (found) {
+        s.name.store(nullptr, std::memory_order_relaxed);
+        s.proc.store(found, std::memory_order_relaxed);
+        s.name.store(name, std::memory_order_release);
+    }
     return found;
 }
 
