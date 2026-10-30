@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cstring>
 #include <map>
+#include <set>
 #include <mutex>
 
 #include "nvn_pipeline.h"
@@ -403,15 +404,21 @@ bool default_unwritten_inputs(const std::vector<uint32_t>& in, uint32_t location
     return true;
 }
 
-// ---- vertex outputs start at zero ----------------------------------------------------------------------------------
+// ---- vertex outputs start at (0, 0, 0, 1) -------------------------------------------------------------------------
 // A vertex shader may write an output only on some paths, or only some of its components: the rest is undefined in
-// SPIR-V. On Maxwell it reads back as whatever the register held (zero in practice); Mesa ANV leaves the garbage of
-// the previous vertex's registers there, NaN included, and the fragment shader that normalizes the tangent frame turns
-// it into NaN lighting (the black characters and terrain on the Intel UHD, docs/nvn/studies/intel-60fps-1710.md).
-// zero_vertex_outputs() gives every Location output variable of a vertex module a zero initializer. Defined results
-// are unchanged: only a component that was never stored reads 0 instead of an undefined value.
+// SPIR-V. On Maxwell an attribute component the vertex stage did not write reads as (0, 0, 0, 1) (Ryujinx's
+// translator initializes outputs so, Translator.cs InitializeOutputComponent); Mesa ANV leaves the garbage of the
+// previous vertex's registers there, NaN included, and the fragment shader that normalizes the tangent frame turns it
+// into NaN lighting (the black characters and terrain on the Intel UHD, docs/nvn/studies/intel-60fps-1710.md), and
+// Metal reads 0. zero_vertex_outputs() gives every Location output variable of a vertex module that initializer:
+// (0, 0, 0, 1) for a float vec4, zero otherwise. Defined results are unchanged. The rain's vertex shader writes only
+// .xyz of the colour its fragment shader multiplies the alpha by: read as 0 (zero initializer, or Metal), every drop
+// failed the alpha test.
 bool zero_vertex_outputs(const std::vector<uint32_t>& in, std::vector<uint32_t>& out) {
-    enum : uint32_t { OpEntryPointOp = 15, OpConstantNull = 46, StorageOutput = 3, ModelVertex = 0 };
+    enum : uint32_t {
+        OpEntryPointOp = 15, OpConstant = 43, OpConstantComposite = 44, OpConstantNull = 46, StorageOutput = 3,
+        ModelVertex = 0
+    };
     if (in.size() < 5) return false;
     std::vector<Inst> insts;
     for (size_t i = 5; i < in.size();) {
@@ -421,23 +428,41 @@ bool zero_vertex_outputs(const std::vector<uint32_t>& in, std::vector<uint32_t>&
         i += len;
     }
     std::map<uint32_t, uint32_t> location, pointee;  // variable -> Location; pointer type -> pointee type
+    std::set<uint32_t> vec4f;                        // float vec4 types
+    uint32_t f32 = 0;
+    std::map<uint32_t, std::pair<uint32_t, uint32_t>> vecs;  // vector type -> component type, count
     bool vertex = false;
     for (const Inst& n : insts) {
         const uint32_t* w = &in[n.at];
         if (n.op == OpEntryPointOp && n.len >= 3) vertex |= w[1] == ModelVertex;
         else if (n.op == OpDecorate && n.len >= 4 && w[2] == DecorationLocation) location[w[1]] = w[3];
         else if (n.op == OpTypePointer && n.len == 4 && w[2] == StorageOutput) pointee[w[1]] = w[3];
+        else if (n.op == OpTypeFloat && n.len == 3 && w[2] == 32) f32 = w[1];
+        else if (n.op == OpTypeVector && n.len == 4) vecs[w[1]] = {w[2], w[3]};
     }
+    for (const auto& [id, v] : vecs)
+        if (f32 && v.first == f32 && v.second == 4) vec4f.insert(id);
     if (!vertex) return false;
     uint32_t bound = in[3];
     bool any = false;
+    uint32_t c0 = 0, c1 = 0;  // float 0 and 1, made at the first float vec4 output
     out.assign(in.begin(), in.begin() + 5);
     for (const Inst& n : insts) {
         const uint32_t* w = &in[n.at];
         if (n.op == OpVariable && n.len == 4 && w[3] == StorageOutput && location.count(w[2]) && pointee.count(w[1])) {
-            uint32_t zero = bound++;
-            out.insert(out.end(), {(3u << 16) | OpConstantNull, pointee[w[1]], zero});
-            out.insert(out.end(), {(5u << 16) | OpVariable, w[1], w[2], StorageOutput, zero});
+            const uint32_t type = pointee[w[1]];
+            uint32_t init = bound++;
+            if (vec4f.count(type)) {
+                if (!c0) {
+                    c0 = bound++, c1 = bound++;
+                    out.insert(out.end(), {(4u << 16) | OpConstant, f32, c0, 0u});
+                    out.insert(out.end(), {(4u << 16) | OpConstant, f32, c1, 0x3f800000u});
+                }
+                out.insert(out.end(), {(7u << 16) | OpConstantComposite, type, init, c0, c0, c0, c1});
+            } else {
+                out.insert(out.end(), {(3u << 16) | OpConstantNull, type, init});
+            }
+            out.insert(out.end(), {(5u << 16) | OpVariable, w[1], w[2], StorageOutput, init});
             any = true;
             continue;
         }
@@ -587,13 +612,9 @@ std::vector<uint32_t> patched_spirv(const ShaderInfo* s, const uint8_t* kinds, u
             ok ? " read (0, 0, 0, 1)" : ", left as they are");
     }
     if (clamp_uniform_indices(code, next, nullptr)) code.swap(next);
-    static const bool zero_outputs = [] {  // NX_ZERO_VS_OUTPUTS=0 turns it off (1 turns it on for MoltenVK, not tried)
+    static const bool zero_outputs = [] {  // NX_ZERO_VS_OUTPUTS=0 turns it off
         const char* e = std::getenv("NX_ZERO_VS_OUTPUTS");
-#if defined(__APPLE__)
-        return e && e[0] == '1';
-#else
         return !(e && e[0] == '0');
-#endif
     }();
     if (zero_outputs && s->stage == ShaderStage::Vertex && zero_vertex_outputs(code, next)) code.swap(next);
     static const bool invariant = [] {

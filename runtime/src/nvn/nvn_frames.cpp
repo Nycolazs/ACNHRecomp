@@ -178,6 +178,7 @@ struct LateRange {
     const uint8_t* p;     // guest bytes
     uint64_t size;
     const uint8_t* from;  // the GPU's copy (upload memory, kept until the slot is retired)
+    std::shared_ptr<std::vector<uint8_t>> before;  // the guest bytes that copy started from (null: unknown)
 };
 std::vector<LateRange> g_late;  // under the GPU lock
 const uint8_t* g_late_lo = nullptr;
@@ -201,8 +202,9 @@ void late_bounds() {
     }
 }
 
-void late_add(uint64_t serial, const uint8_t* p, uint64_t size, const uint8_t* from) {
-    g_late.push_back({serial, p, size, from});
+void late_add(uint64_t serial, const uint8_t* p, uint64_t size, const uint8_t* from,
+              std::shared_ptr<std::vector<uint8_t>> before) {
+    g_late.push_back({serial, p, size, from, std::move(before)});
     late_bounds();
 }
 
@@ -327,7 +329,31 @@ bool late_copy(VkCommandBuffer cb, const uint8_t* p, uint64_t size, VkBuffer to,
         const uint8_t* lo = std::max(r.p, p);
         const uint8_t* hi = std::min(r.p + r.size, p + size);
         if (lo >= hi) continue;
-        VkBufferCopy c{uint64_t(r.from - g_ring_ptr) + uint64_t(lo - r.p), to_offset + uint64_t(lo - p), uint64_t(hi - lo)};
+        // Only the words the CPU did not write since that copy was made (the guest still holds its `before`): the
+        // rest is newer than the GPU's result. A bound range is often larger than what the shader writes: the rain's
+        // particles are moved by a compute shader while the game writes each new drop's birth time beside them, and
+        // the whole earlier copy put the first frames' births back over every new one (every drop dead: no rain).
+        // NX_LATE_COPY_WHOLE=1: the whole range, as before.
+        static const bool whole = std::getenv("NX_LATE_COPY_WHOLE") != nullptr;
+        std::vector<VkBufferCopy> runs;
+        const uint64_t src0 = uint64_t(r.from - g_ring_ptr), dst0 = to_offset;
+        if (whole || !r.before || r.before->size() < r.size || (lo - r.p) % 4 || (hi - lo) % 4) {
+            runs.push_back({src0 + uint64_t(lo - r.p), dst0 + uint64_t(lo - p), uint64_t(hi - lo)});
+        } else {
+            const uint8_t* was = r.before->data() + (lo - r.p);
+            const uint64_t n = uint64_t(hi - lo);
+            for (uint64_t k = 0; k < n;) {
+                if (std::memcmp(lo + k, was + k, 4) != 0) {
+                    k += 4;
+                    continue;
+                }
+                uint64_t e = k + 4;
+                while (e < n && std::memcmp(lo + e, was + e, 4) == 0) e += 4;
+                runs.push_back({src0 + uint64_t(lo - r.p) + k, dst0 + uint64_t(lo - p) + k, e - k});
+                k = e;
+            }
+            if (runs.empty()) continue;
+        }
         if (!any) {  // the earlier submits' compute writes, before the copies read them
             VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
             mb.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
@@ -335,7 +361,7 @@ bool late_copy(VkCommandBuffer cb, const uint8_t* p, uint64_t size, VkBuffer to,
             p_vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &mb, 0,
                                    nullptr, 0, nullptr);
         }
-        p_vkCmdCopyBuffer(cb, g_ring, to, 1, &c);
+        p_vkCmdCopyBuffer(cb, g_ring, to, uint32_t(runs.size()), runs.data());
         any = true;
     }
     if (any) {
@@ -694,7 +720,7 @@ void frame_submit(VkSemaphore wait, VkSemaphore signal, std::vector<WriteBack> w
         if (wait_done) {
             retire_through(s.serial);
         } else if (!s.write_backs.empty() && write_back_late()) {
-            for (const WriteBack& w : s.write_backs) late_add(s.serial, w.to, w.size, w.from);
+            for (const WriteBack& w : s.write_backs) late_add(s.serial, w.to, w.size, w.from, w.before);
             g_stats.late++;
         } else if (!s.write_backs.empty()) {
             if (has_first && has_last && replay::written_bind_count() == s.binds_at_split) {
