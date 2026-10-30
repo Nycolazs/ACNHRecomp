@@ -59,15 +59,16 @@ void pixel(ivec2 q, ivec2 base) {
     vec3 cb = mix(mix(c00, c10, w.x), mix(c01, c11, w.x), w.y);
     vec2 vb = cb.xy;
     dm = cb.z;
-    if (abs(dm) > 0.12) {  // too large a change of brightness for a fade between two frames: a cut, the newer frame
-        imageStore(dst, q, vec4(b0, 1.0));
-        return;
-    }
+    // How much of the newer real frame the pixel takes, eased in rather than switched: a hard switch drew seams (the
+    // "cuts" of a moving object split between its interpolated and its newer position) along the cells' edges.
+    // A change of brightness too large for a fade between two frames: a cut.
+    mediump float newer = smoothstep(0.08, 0.16, abs(dm));
     // A motion edge: the cells around disagree (the player, whom the camera follows, over the scrolling ground). A
     // vector of the ground also makes its two ends agree there (ground on both sides of the player) and painted
     // ground over the player's legs and back: nothing is moved there, the pixel is the newer real frame's.
     float spread = max(max(length(c00.xy - vb), length(c10.xy - vb)), max(length(c01.xy - vb), length(c11.xy - vb)));
-    if (spread > 1.5) {
+    newer = max(newer, smoothstep(1.0, 2.5, spread));
+    if (newer >= 1.0) {
         imageStore(dst, q, vec4(b0, 1.0));
         return;
     }
@@ -77,8 +78,8 @@ void pixel(ivec2 q, ivec2 base) {
     if (best_e > 0.015) try_v(vb, 0.01);
     // No vector makes the two ends agree well (a motion edge, something uncovered, effects that do not move): the
     // newer real frame, whole, from a smaller mismatch on than the old cross-fade took over.
-    best_col = mix(best_col, b0, smoothstep(0.05, 0.12, best_e));
-    imageStore(dst, q, vec4(best_col, 1.0));
+    newer = max(newer, smoothstep(0.05, 0.12, best_e));
+    imageStore(dst, q, vec4(mix(best_col, b0, newer), 1.0));
 }
 
 void main() {

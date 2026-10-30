@@ -20,6 +20,7 @@ add_executable(acnhrecomp_launcher WIN32
     launcher/main.cpp launcher/pages.cpp launcher/files.cpp launcher/pipeline.cpp launcher/desktop.cpp
     runtime/src/ui/theme.cpp runtime/src/ui/i18n.cpp runtime/src/app_icon.cpp
     $<$<PLATFORM_ID:Windows>:${CMAKE_SOURCE_DIR}/assets/acnhrecomp.rc>
+    $<$<PLATFORM_ID:Windows>:${CMAKE_SOURCE_DIR}/assets/acnhrecomp.manifest>
     ${NX_LAUNCHER_IMGUI}/imgui.cpp ${NX_LAUNCHER_IMGUI}/imgui_draw.cpp ${NX_LAUNCHER_IMGUI}/imgui_tables.cpp
     ${NX_LAUNCHER_IMGUI}/imgui_widgets.cpp ${NX_LAUNCHER_IMGUI}/backends/imgui_impl_sdl3.cpp
     ${NX_LAUNCHER_IMGUI}/backends/imgui_impl_sdlrenderer3.cpp)
