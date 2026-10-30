@@ -1056,7 +1056,9 @@ std::unique_ptr<PipeBuild> prepare_graphics_pipeline(const PipelineKey& key, con
     ds = {VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
     bool has_depth = key.depth_format != VK_FORMAT_UNDEFINED;
     ds.depthTestEnable = has_depth && key.depth.depth_test;
-    ds.depthWriteEnable = has_depth && key.depth.depth_write;
+    // An effect's depth pass (ShaderInfo::depth_pass) writes nothing: the shaded pass after it writes the depth itself,
+    // and the depth it left made that pass fail by a last bit here, or hid what was drawn after it (black splashes).
+    ds.depthWriteEnable = has_depth && key.depth.depth_write && !(key.fs && key.fs->depth_pass);
     ds.depthCompareOp = vk_compare(key.depth.depth_func);
     // EQUAL after a depth pre-pass (the colour pass does not write depth) needs both passes to compute bit-identical
     // depth; two translated shaders compiled separately by Metal do not, and Wonder's whole course colour pass was
@@ -1096,7 +1098,7 @@ std::unique_ptr<PipeBuild> prepare_graphics_pipeline(const PipelineKey& key, con
         att[k].srcAlphaBlendFactor = factor(b.src_a);
         att[k].dstAlphaBlendFactor = factor(b.dst_a);
         att[k].alphaBlendOp = vk_blend_op(b.eq_a);
-        att[k].colorWriteMask = key.fs && key.fs->depth_pass ? 0 : key.mask.mask[k] & 0xF;  // its yellow is never seen
+        att[k].colorWriteMask = key.fs && key.fs->depth_pass ? 0 : key.mask.mask[k] & 0xF;  // nor its yellow
     }
     VkPipelineColorBlendStateCreateInfo& cb = B.cb;
     cb = {VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};

@@ -99,9 +99,11 @@ float dynamic_render_scale();
 #if defined(__ANDROID__)
 inline constexpr const char* kDefaultResolution = "auto";
 inline constexpr const char* kDefaultUpscaler = "fsr";
+inline constexpr const char* kDefaultAspect = "auto";  // the whole phone screen (20:9 ...), no side bars
 #else
 inline constexpr const char* kDefaultResolution = "native";
 inline constexpr const char* kDefaultUpscaler = "linear";
+inline constexpr const char* kDefaultAspect = "16:9";
 #endif
 
 // NpadButton bits (console layout: A is the right face button, B the bottom one).

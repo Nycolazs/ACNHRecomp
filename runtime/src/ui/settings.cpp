@@ -406,7 +406,7 @@ void page_video() {
         combo("video.resolution", plat::kDefaultResolution, resolutions, w);
     });
     row("video.aspect", "video.aspect.desc", [&](float w) {
-        combo("video.aspect", "16:9",
+        combo("video.aspect", plat::kDefaultAspect,
               {{"auto", tr("video.aspect.screen")}, {"16:9", console("video.aspect.original")}, {"16:10", "16:10"},
                {"4:3", "4:3"}, {"21:9", "21:9"}, {"32:9", "32:9"}, {"20:9", trf("video.aspect.phone", "20:9")},
                {"19.5:9", trf("video.aspect.phone", "19.5:9")}},
@@ -418,8 +418,26 @@ void page_video() {
         char now[160];
         std::snprintf(now, sizeof now, tr("video.picture.now"), int(std::lround(rows * 16.0f / 9.0f * k)), rows,
                       double(16.0f / 9.0f * k));
+        // And the size it is shown at: the screen's rows that hold the picture's shape (bars elsewhere).
+        uint32_t sw = 0, sh = 0;
+        plat::screen_size(sw, sh);
+        char shown[200] = {};
+        if (sw && sh) {
+            const double aspect = 16.0 / 9.0 * k;
+            const int out_h = int(std::min(double(sh), double(sw) / aspect) + 0.5), out_w = int(out_h * aspect + 0.5);
+            if (std::abs(out_h - rows) <= 2)
+                std::snprintf(shown, sizeof shown, tr("video.picture.screen_size"), out_w, out_h);
+            else if (out_h < rows)
+                std::snprintf(shown, sizeof shown, tr("video.picture.downscaled"), out_w, out_h);
+            else {
+                const bool fsr = config_get("video.upscaler", plat::kDefaultUpscaler) == "fsr";
+                std::snprintf(shown, sizeof shown, tr("video.picture.upscaled"), out_w, out_h,
+                              tr(fsr ? "video.upscaler.fsr" : "video.upscaler.linear"));
+            }
+        }
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.35f, 0.55f, 0.35f, 1));
         ImGui::TextWrapped("%s", now);
+        if (shown[0]) ImGui::TextWrapped("%s", shown);
         ImGui::PopStyleColor();
         ImGui::Dummy(ImVec2(0, 4 * g_scale));
     }

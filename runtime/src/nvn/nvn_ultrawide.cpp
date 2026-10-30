@@ -98,7 +98,7 @@ Scale wanted(uint64_t present) {
     g_display_rows.store(ww && wh ? std::min(ww, wh) : 0, std::memory_order_relaxed);
     window_px(present, ww, wh);
     const double window = double(ww) / double(wh);
-    std::string a = setting("NX_ULTRAWIDE", "video.aspect", "16:9");
+    std::string a = setting("NX_ULTRAWIDE", "video.aspect", plat::kDefaultAspect);
     double aspect = k169, n = 0, d = 0;
     if (a == "auto" || a == "window" || a == "1")
         aspect = window;
