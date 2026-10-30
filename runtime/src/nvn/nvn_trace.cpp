@@ -154,21 +154,37 @@ uint64_t real_proc_slow(CPU& c, const char* name);
 
 uint64_t real_proc(CPU& c, const char* name) {
     // The hot callers (driver(), state-object getters, one per bound state) pass string literals, whose addresses are
-    // fixed: a global table by the literal's address, without a lock (a name's procedure never changes once found).
+    // fixed: a global table by the literal's address, read without a lock (a name's procedure never changes once
+    // found). A slot is written once, under a mutex, proc before name, and never overwritten: a reader that sees the
+    // name sees its proc (overwriting on a collision let a reader pair one name with another's proc: a crash).
     // It replaced a per-thread unordered_map compared by content: its hashing, the string compare and the thread_local
     // access (TLSDESC in the app .so) were ~3% of the game's render thread. Names built at run time take real_proc_slow.
     struct Slot {
         std::atomic<const char*> name{nullptr};
-        std::atomic<uint64_t> proc{0};
+        uint64_t proc = 0;
     };
-    static Slot table[512];
-    Slot& s = table[(reinterpret_cast<uintptr_t>(name) >> 3) * 0x9E3779B97F4A7C15ull >> 55];
-    if (s.name.load(std::memory_order_acquire) == name) return s.proc.load(std::memory_order_relaxed);
+    constexpr size_t kSlots = 2048, kProbe = 16;
+    static Slot table[kSlots];
+    const size_t at = (reinterpret_cast<uintptr_t>(name) >> 3) * 0x9E3779B97F4A7C15ull >> 53;
+    for (size_t k = 0; k < kProbe; k++) {
+        const char* n = table[(at + k) & (kSlots - 1)].name.load(std::memory_order_acquire);
+        if (n == name) return table[(at + k) & (kSlots - 1)].proc;
+        if (!n) break;
+    }
     uint64_t found = real_proc_slow(c, name);
     if (found) {
-        s.name.store(nullptr, std::memory_order_relaxed);
-        s.proc.store(found, std::memory_order_relaxed);
-        s.name.store(name, std::memory_order_release);
+        static std::mutex insert;
+        std::lock_guard lk(insert);
+        for (size_t k = 0; k < kProbe; k++) {
+            Slot& s = table[(at + k) & (kSlots - 1)];
+            const char* n = s.name.load(std::memory_order_relaxed);
+            if (n == name) break;
+            if (!n) {
+                s.proc = found;
+                s.name.store(name, std::memory_order_release);
+                break;
+            }
+        }
     }
     return found;
 }
