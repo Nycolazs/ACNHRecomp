@@ -229,6 +229,7 @@ bool draw_inputs(VkCommandBuffer cb, const ShaderInfo* vs, bool indexed, const C
         const Range& r = (*g_state).vertex_buffers[s];
         const uint8_t* p = r.address ? guest_bytes(r.address) : nullptr;
         uint64_t size = p ? std::min<uint64_t>(r.size, 64ull << 20) : 0;
+        if (p && zero_copy_range(r.address, size, 4, in.vertex[s])) continue;  // in place (nvn_zero_copy.cpp)
         in.vertex[s] = read_upload(cb, p, size, std::max<uint64_t>((size + 15) & ~15ull, 16), 16);
     }
     if (!indexed) return true;
@@ -248,6 +249,7 @@ bool draw_inputs(VkCommandBuffer cb, const ShaderInfo* vs, bool indexed, const C
         return true;
     }
     uint64_t bytes = uint64_t(count) * index_size(c.mask);
+    if (zero_copy_range(c.a[0], bytes, index_size(c.mask), in.index)) return true;
     if (!written_read(cb, p, bytes, bytes, index_size(c.mask), in.index)) in.index = upload(p, bytes, 16);
     return true;
 }

@@ -206,7 +206,16 @@ struct MemoryPool : Object {
         uint64_t physical = 0, physical_offset = 0, size = 0;
     };
     std::map<uint64_t, Mapping> mappings;
+    // Zero copy (nvn_zero_copy.cpp, Android): the pool's storage is Vulkan memory mapped at its own address, and
+    // this buffer covers it, byte 0 at offset 0 (VK_NULL_HANDLE: an ordinary pool, its bytes copied for each use).
+    void* zc_buffer = nullptr;  // VkBuffer
+    void* zc_memory = nullptr;  // VkDeviceMemory
 };
+// nvn_zero_copy.cpp: the pool's storage moved to GPU-visible memory at the same address (Android; NX_ZERO_COPY=0 off);
+// and back to ordinary memory when it is finalized.
+void zero_copy_pool(MemoryPool& p);
+void zero_copy_release(MemoryPool& p);
+bool zero_copy_device_extensions();  // the Vulkan device enables the dma-buf export extensions
 
 // Host address of `offset` in a pool, through its virtual mappings if it has no storage of its own; 0 if unmapped.
 uint64_t pool_host(const MemoryPool& pool, uint64_t offset);

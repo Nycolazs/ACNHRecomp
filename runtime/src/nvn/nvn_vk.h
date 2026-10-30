@@ -152,6 +152,9 @@ struct WriteBack {
     std::shared_ptr<std::vector<uint8_t>> before;
 };
 void apply_write_back(const WriteBack& w);  // nvn_written.cpp
+// nvn_zero_copy.cpp (Android): [gpu, + bytes) bound in place in its pool's GPU-visible storage; false: copy it.
+bool zero_copy_range(uint64_t gpu, uint64_t bytes, uint64_t align, Upload& out);
+uint64_t zero_copy_uniform_align();
 std::vector<WriteBack> draw_take_write_backs();  // nvn_draw.cpp: this submit's, for an asynchronous submit
 void debug_dump_textures(uint64_t frame);  // nvn_debug.cpp: NX_DUMP_TEXTURES and the requested ones
 void debug_dump_requested(uint64_t n);      // nvn_debug.cpp: NX_DUMP_ON_TARGET / NX_DUMP_ON_FS
@@ -181,6 +184,7 @@ void late_prepare(const uint8_t* p, uint64_t size);  // nvn_frames.cpp: before a
 bool late_copy(VkCommandBuffer cb, const uint8_t* p, uint64_t size, VkBuffer to, uint64_t to_offset);
 bool ab_b(const char* name);  // nvn_vk.cpp: NX_AB=<name>, the B half of an in-run A/B test
 uint64_t frame_completed();  // the serial of the last retired submit (for free_retired_images)
+uint64_t frame_submitted();  // the serial of the latest submit queued (nvn_frames.cpp)
 Upload frame_upload_alloc(uint64_t size, uint64_t align);
 VkDescriptorSet frame_descriptor_set(VkDescriptorSetLayout layout);
 // Pipelined: a submit with dispatches is split after the last one; its first part is queued at once and carries the

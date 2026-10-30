@@ -294,6 +294,11 @@ bool init() {
         dexts.push_back("VK_EXT_depth_clip_control");
         *tail = &fclip, tail = &fclip.pNext;
     }
+    if (zero_copy_device_extensions() && has_extension(dext, "VK_KHR_external_memory_fd") &&
+        has_extension(dext, "VK_EXT_external_memory_dma_buf")) {  // nvn_zero_copy.cpp
+        dexts.push_back("VK_KHR_external_memory_fd");
+        dexts.push_back("VK_EXT_external_memory_dma_buf");
+    }
     if (has_extension(dext, "VK_KHR_portability_subset")) {
         dexts.push_back("VK_KHR_portability_subset");
         *tail = &fport, tail = &fport.pNext;

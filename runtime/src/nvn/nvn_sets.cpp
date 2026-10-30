@@ -360,8 +360,12 @@ VkDescriptorBufferInfo uniform_info(VkCommandBuffer cb, const ShaderInfo* s, con
     const uint32_t reads = b.nvn.source == NvnSource::UniformBlock && !indexed && b.set == 0 && b.binding < 64 &&
                                    s->masks_known
                                ? s->uniform_extent[b.binding] : 0;
-    return buffer_of(cb, p, p ? std::min<uint64_t>(r.size, 0x10000) : 0,
-                     reads ? pad_min((reads + 15) & ~15u) : pad_min(indexed ? 0x10000 : 0x1000));
+    const uint64_t size = p ? std::min<uint64_t>(r.size, 0x10000) : 0;
+    const uint64_t min_size = reads ? pad_min((reads + 15) & ~15u) : pad_min(indexed ? 0x10000 : 0x1000);
+    // In place (nvn_zero_copy.cpp) when every byte bound is the block's own: past it Maxwell reads 0.
+    const uint64_t n = std::max<uint64_t>((size + 15) & ~15ull, min_size);
+    if (Upload u; p && n <= r.size && zero_copy_range(r.address, n, zero_copy_uniform_align(), u)) return {u.buffer, u.offset, n};
+    return buffer_of(cb, p, size, min_size);
 }
 
 namespace {
@@ -919,6 +923,7 @@ bool draw_inputs_shared(VkCommandBuffer cb, const ShaderInfo* vs, bool indexed, 
     if (!p) return false;
     in.index_type = vk_index_type(c.mask);
     uint64_t bytes = uint64_t(uint32_t(c.i[0])) * index_size(c.mask);
+    if (zero_copy_range(c.a[0], bytes, index_size(c.mask), in.index)) return true;  // in place (nvn_zero_copy.cpp)
     if (!written_read(cb, p, bytes, bytes, index_size(c.mask), in.index)) in.index = dedup_upload(p, bytes, bytes, 16);
     return true;
 }

@@ -120,6 +120,7 @@ void MemoryPoolInitialize(CPU& c) {
     p.flags = uint32_t(driver(c, "nvnMemoryPoolBuilderGetFlags", {builder}));
     p.gpu = gpu_alloc(p.size);
     pool_register(&p);
+    zero_copy_pool(p);  // NX_ZERO_COPY (nvn_zero_copy.cpp)
     if (g_trace)
         log("nvn: pool %llx: memory %llx size %llx flags %x gpu %llx", (unsigned long long)guest,
             (unsigned long long)p.memory, (unsigned long long)p.size, p.flags, (unsigned long long)p.gpu);
@@ -130,7 +131,7 @@ void MemoryPoolFinalize(CPU& c) {
     wait_submits_so_far(kWaitInvalidate);  // a submit replayed on another thread may still read it
     worker_finish();                    // the replay thread may still read it
     gpu_wait(gpu_write_back_serial());  // NX_ASYNC_GPU: no compute result lands in freed memory
-    if (auto* p = get<MemoryPool>(c.x[0])) pool_unregister(p), command_memory_released(p->gpu, p->size);
+    if (auto* p = get<MemoryPool>(c.x[0])) pool_unregister(p), command_memory_released(p->gpu, p->size), zero_copy_release(*p);
     destroy(c.x[0]);
 }
 
