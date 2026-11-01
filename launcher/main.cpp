@@ -36,6 +36,9 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
         return 1;
     }
+    // ImGui's SDL backend discovers and polls gamepads once this subsystem is available.
+    if (!SDL_InitSubSystem(SDL_INIT_GAMEPAD))
+        std::fprintf(stderr, "SDL gamepad: %s\n", SDL_GetError());
     settings().load(launcher_ini_path());
     const char* lang_env = std::getenv("NX_LAUNCHER_LANG");
     nx::ui::ui_set_language(lang_env ? lang_env : settings().get("launcher.language", "auto"));
@@ -83,7 +86,8 @@ int main(int argc, char** argv) {
     int settle = 0;  // frames still drawn at full rate after an event (hover, popups opening)
     while (run) {
         SDL_Event e;
-        if (SDL_WaitEventTimeout(&e, pages_busy() || shot || settle > 0 ? 16 : 250)) {
+        if (SDL_WaitEventTimeout(&e, pages_busy() || shot || settle > 0 ||
+                                         (io.BackendFlags & ImGuiBackendFlags_HasGamepad) ? 16 : 250)) {
             settle = 8;
             do {
                 ImGui_ImplSDL3_ProcessEvent(&e);
