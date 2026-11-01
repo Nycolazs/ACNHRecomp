@@ -706,6 +706,9 @@ More detail: [docs/ACNH.md](docs/ACNH.md) (the game's modules, RomFS and shader 
 - [Ryujinx / Ryubing](https://codeberg.org/Software_arch/Ryubing) (MIT): the Maxwell shader translator, used
   offline.
 - [Dear ImGui](https://github.com/ocornut/imgui) (MIT): the settings screen.
+- [RenoDX](https://github.com/clshortfuse/renodx) by Carlos Lopez Jr. (MIT): the HDR output and tonemapping
+  (`SwapChainPass`, `ToneMapPass`, RenoDRT, user grading) compiled into the HDR shaders (`tools/shaders/hdr`; the
+  generated `.inc` files are in the repository, regenerating them needs a RenoDX checkout: `tools/gen_spirv_inc.py`).
 - [ACNH 60 FPS + SpeedFix](https://github.com/tmouh/acnh-60fps) by tmouh (CC BY-NC 4.0): the 60 FPS game-speed
   rescaling, downloaded by `tools/setup_60fps.sh` (or, with a release, at the first start) and applied on your
   machine (not part of this repository).
