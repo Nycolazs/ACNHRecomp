@@ -12,6 +12,7 @@ const Entry kLauncherEn[] = {
     {"launcher.update.available", "A new version of ACNHRecomp is out: {}"},
     {"launcher.update.get", "Download it"},
     {"launcher.update.check", "Look for new versions when the launcher opens"},
+    {"launcher.fullscreen", "Show the launcher in fullscreen"},
     {"launcher.update.newer", "{} is available"},
     {"launcher.update.latest", "this is the latest version"},
     {"launcher.version", "Version in use: {}"},
@@ -173,6 +174,7 @@ const Entry kLauncherPtBr[] = {
     {"launcher.update.available", "Saiu uma nova versão do ACNHRecomp: {}"},
     {"launcher.update.get", "Baixar"},
     {"launcher.update.check", "Procurar novas versões ao abrir o launcher"},
+    {"launcher.fullscreen", "Exibir o launcher em tela cheia"},
     {"launcher.update.newer", "a {} está disponível"},
     {"launcher.update.latest", "esta é a versão mais recente"},
     {"launcher.version", "Versão em uso: {}"},
@@ -333,6 +335,7 @@ const Entry kLauncherEs[] = {
     {"launcher.update.available", "Hay una nueva versión de ACNHRecomp: {}"},
     {"launcher.update.get", "Descargar"},
     {"launcher.update.check", "Buscar nuevas versiones al abrir el launcher"},
+    {"launcher.fullscreen", "Mostrar el launcher en pantalla completa"},
     {"launcher.update.newer", "la {} está disponible"},
     {"launcher.update.latest", "es la versión más reciente"},
     {"launcher.version", "Versión en uso: {}"},
@@ -483,6 +486,7 @@ const Entry kLauncherEs[] = {
 };
 
 const Entry kLauncherFr[] = {
+    {"launcher.fullscreen", "Afficher le lanceur en plein écran"},
     {"launcher.subtitle", "Animal Crossing: New Horizons, recompilé pour PC"},
     {"launcher.welcome.title", "Bienvenue !"},
     {"launcher.welcome.text", "ACNHRecomp transforme votre propre copie d'Animal Crossing: New Horizons en un programme natif pour cet ordinateur. Comment voulez-vous commencer ?"},
@@ -630,6 +634,7 @@ const Entry kLauncherFr[] = {
 };
 
 const Entry kLauncherDe[] = {
+    {"launcher.fullscreen", "Launcher im Vollbild anzeigen"},
     {"launcher.subtitle", "Animal Crossing: New Horizons, für den PC rekompiliert"},
     {"launcher.welcome.title", "Willkommen!"},
     {"launcher.welcome.text", "ACNHRecomp macht aus deiner eigenen Kopie von Animal Crossing: New Horizons ein natives Programm für diesen Computer. Wie möchtest du beginnen?"},
@@ -777,6 +782,7 @@ const Entry kLauncherDe[] = {
 };
 
 const Entry kLauncherIt[] = {
+    {"launcher.fullscreen", "Mostra il launcher a schermo intero"},
     {"launcher.subtitle", "Animal Crossing: New Horizons, ricompilato per PC"},
     {"launcher.welcome.title", "Benvenuto!"},
     {"launcher.welcome.text", "ACNHRecomp trasforma la tua copia di Animal Crossing: New Horizons in un programma nativo per questo computer. Come vuoi cominciare?"},
@@ -924,6 +930,7 @@ const Entry kLauncherIt[] = {
 };
 
 const Entry kLauncherNl[] = {
+    {"launcher.fullscreen", "Launcher op volledig scherm weergeven"},
     {"launcher.subtitle", "Animal Crossing: New Horizons, gehercompileerd voor pc"},
     {"launcher.welcome.title", "Welkom!"},
     {"launcher.welcome.text", "ACNHRecomp maakt van je eigen exemplaar van Animal Crossing: New Horizons een native programma voor deze computer. Hoe wil je beginnen?"},
@@ -1059,6 +1066,7 @@ const Entry kLauncherNl[] = {
 };
 
 const Entry kLauncherRu[] = {
+    {"launcher.fullscreen", "Показывать лаунчер на весь экран"},
     {"launcher.subtitle", "Animal Crossing: New Horizons, перекомпилированная для ПК"},
     {"launcher.welcome.title", "Добро пожаловать!"},
     {"launcher.welcome.text", "ACNHRecomp превращает вашу собственную копию Animal Crossing: New Horizons в нативную программу для этого компьютера. С чего начнём?"},
@@ -1193,6 +1201,7 @@ const Entry kLauncherRu[] = {
 };
 
 const Entry kLauncherJa[] = {
+    {"launcher.fullscreen", "ランチャーを全画面で表示"},
     {"launcher.subtitle", "Animal Crossing: New Horizons を PC 向けに再コンパイル"},
     {"launcher.welcome.title", "ようこそ！"},
     {"launcher.welcome.text", "ACNHRecomp は、あなたが持っている『あつまれ どうぶつの森』を、このコンピューターで動くネイティブのプログラムにします。どちらから始めますか？"},
@@ -1327,6 +1336,7 @@ const Entry kLauncherJa[] = {
 };
 
 const Entry kLauncherKo[] = {
+    {"launcher.fullscreen", "런처를 전체 화면으로 표시"},
     {"launcher.subtitle", "Animal Crossing: New Horizons, PC용으로 다시 컴파일"},
     {"launcher.welcome.title", "환영합니다!"},
     {"launcher.welcome.text", "ACNHRecomp는 직접 가지고 있는 『모여봐요 동물의 숲』을 이 컴퓨터에서 실행되는 네이티브 프로그램으로 바꿔 줍니다. 어떻게 시작할까요?"},
@@ -1461,6 +1471,7 @@ const Entry kLauncherKo[] = {
 };
 
 const Entry kLauncherZhCn[] = {
+    {"launcher.fullscreen", "全屏显示启动器"},
     {"launcher.subtitle", "Animal Crossing: New Horizons，为 PC 重新编译"},
     {"launcher.welcome.title", "欢迎！"},
     {"launcher.welcome.text", "ACNHRecomp 会把你自己拥有的《集合啦！动物森友会》变成在这台电脑上运行的原生程序。想怎样开始？"},
@@ -1595,6 +1606,7 @@ const Entry kLauncherZhCn[] = {
 };
 
 const Entry kLauncherZhTw[] = {
+    {"launcher.fullscreen", "全螢幕顯示啟動器"},
     {"launcher.subtitle", "Animal Crossing: New Horizons，為 PC 重新編譯"},
     {"launcher.welcome.title", "歡迎！"},
     {"launcher.welcome.text", "ACNHRecomp 會把你自己擁有的《集合啦！動物森友會》變成在這台電腦上執行的原生程式。想怎麼開始？"},

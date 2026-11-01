@@ -1563,12 +1563,20 @@ void page_home() {
     if (valid) {
         hero(nx::ui::kIconHouse, kGreen, S(46));
         centered(tr("launcher.home.title"), g_title, 1.1f, kInk);
-        ImGui::Dummy(ImVec2(0, S(6)));
         if (g_autostart_at >= 0) {
             int left = std::max(1, int(std::ceil(g_autostart_at - ImGui::GetTime())));
-            centered(trf("launcher.autostart", std::to_string(left)).c_str(), g_body, 0.9f, kInkSoft);
-            ImGui::Dummy(ImVec2(0, S(4)));
+            std::string text = trf("launcher.autostart", std::to_string(left));
+            const float width = ImGui::GetContentRegionAvail().x;
+            const float height = S(6) + ImGui::GetStyle().ItemSpacing.y;
+            float fs = font_size(g_body) * 0.8f;
+            ImVec2 text_size = measure(g_body, fs, text.c_str(), -1);
+            fs *= std::min({1.0f, width / std::max(1.0f, text_size.x), height / std::max(1.0f, text_size.y)});
+            text_size = measure(g_body, fs, text.c_str(), -1);
+            ImVec2 p = ImGui::GetCursorScreenPos();
+            ImGui::GetWindowDrawList()->AddText(g_body, fs,
+                ImVec2(p.x + (width - text_size.x) * 0.5f, p.y + (height - text_size.y) * 0.5f), kInkSoft, text.c_str());
         }
+        ImGui::Dummy(ImVec2(0, S(6)));
         contents_row();
         ImGui::Dummy(ImVec2(0, S(16)));
         play_block();
@@ -1667,7 +1675,7 @@ void setting_row(const char* label, const char* desc, const char* key, const cha
 
 void page_settings() {
     heading(tr("app.title"), tr("launcher.settings.text"));
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, col4(kPaper));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0, 0, 0, 0));
     ImGui::BeginChild("##rows", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_NavFlattened);
     setting_row("game.language", "game.language.desc", "game.language", "auto",
                 {{"auto", tr("game.language.system")}, {"en-US", "English (US)"}, {"en-GB", "English (UK)"},
@@ -1702,6 +1710,16 @@ void page_settings() {
             li.set("launcher.update_check", check ? "1" : "0");
             li.save();
             if (check) update_check_start();
+        }
+        bool fullscreen = li.get("launcher.fullscreen", "0") == "1";
+        bool fullscreen_changed = ImGui::Checkbox(tr("launcher.fullscreen"), &fullscreen);
+        if (fullscreen_changed) {
+            if (SDL_SetWindowFullscreen(g_window, fullscreen)) {
+                li.set("launcher.fullscreen", fullscreen ? "1" : "0");
+                if (!li.save()) toast(tr("launcher.settings.save_failed"));
+            } else {
+                toast(SDL_GetError());
+            }
         }
         const UpdateInfo u = update_info();
         std::string ver = trf("launcher.version", current_version());
@@ -2026,8 +2044,12 @@ bool pages_draw(float scale, ImFont* title) {
     g_nav_section = 0;
     ribbon();
     float footer = ImGui::GetFrameHeight() + S(20);
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0, 0, 0, 0));
-    ImGui::BeginChild("##page", ImVec2(0, -footer), ImGuiChildFlags_NavFlattened);
+    const bool settings_page = g_page == Page::Settings;
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, settings_page ? col4(kPaper) : ImVec4(0, 0, 0, 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, S(22));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(14), S(12)));
+    ImGui::BeginChild("##page", ImVec2(0, -footer), ((settings_page ? ImGuiChildFlags_AlwaysUseWindowPadding : ImGuiChildFlags_None) | ImGuiChildFlags_NavFlattened));
+    ImGui::PopStyleVar(2);
     ImGui::PopStyleColor();
     g_nav_section = 1;
     // The short pages sit in the middle of the card: their height from the last frame. The offset is whole pixels:

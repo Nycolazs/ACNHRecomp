@@ -61,6 +61,8 @@ int main(int argc, char** argv) {
     }
     nx::plat::set_window_icon(window);
     SDL_SetWindowMinimumSize(window, 360, 480);
+    if (settings().get("launcher.fullscreen", "0") == "1" && !SDL_SetWindowFullscreen(window, true))
+        std::fprintf(stderr, "SDL fullscreen: %s\n", SDL_GetError());
     SDL_Renderer* renderer = SDL_CreateRenderer(window, nullptr);
     if (!renderer) {
         std::fprintf(stderr, "SDL_CreateRenderer: %s\n", SDL_GetError());
