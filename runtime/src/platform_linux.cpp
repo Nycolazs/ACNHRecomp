@@ -474,6 +474,7 @@ static void sample_input() {
     }
     // The settings screen takes the input while it is open (and watches for its Minus + Plus combo).
     bool ui = nx::ui::ui_pad(p.buttons, p.lx, p.ly);
+    p.buttons = nx::ui::ui_game_buttons(p.buttons, ui);
     if (ui) {
         for (PadState& q : players) q = PadState{};
         std::memset(usb, 0, sizeof usb);

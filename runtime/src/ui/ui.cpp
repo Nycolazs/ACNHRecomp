@@ -601,6 +601,43 @@ bool ui_pad(uint64_t buttons, int32_t lx, int32_t ly) {
     return true;
 }
 
+uint64_t ui_game_buttons(uint64_t buttons, bool captured) {
+    using clock = std::chrono::steady_clock;
+    constexpr uint64_t plus = 1ull << 10, minus = 1ull << 11, shortcut = plus | minus;
+    constexpr auto grace = std::chrono::milliseconds(200);
+    static uint64_t previous = 0, pending = 0, passed = 0, blocked = 0;
+    static clock::time_point since[2], tap_until[2];
+    const auto now = clock::now();
+    if (captured) {
+        blocked |= buttons & shortcut;
+        pending = passed = 0;
+        tap_until[0] = tap_until[1] = clock::time_point{};
+        previous = buttons;
+        return buttons & ~shortcut;
+    }
+    blocked &= buttons;
+    const uint64_t pressed = buttons & ~previous & shortcut & ~blocked;
+    const uint64_t released = previous & ~buttons & shortcut;
+    uint64_t output = buttons & ~shortcut;
+    const uint64_t bits[] = {plus, minus};
+    for (int i = 0; i < 2; ++i) {
+        const uint64_t bit = bits[i];
+        if (pressed & bit) pending |= bit, since[i] = now;
+        if (released & bit) {
+            if (pending & bit) tap_until[i] = now + std::chrono::milliseconds(50);
+            pending &= ~bit;
+            passed &= ~bit;
+        } else if ((pending & bit) && now - since[i] >= grace) {
+            pending &= ~bit;
+            passed |= bit;
+        }
+        if (now < tap_until[i]) output |= bit;  // Keep a quick tap visible to the game's next poll.
+    }
+    output |= buttons & passed & ~blocked;
+    previous = buttons;
+    return output;
+}
+
 bool ui_visible() { return g_visible; }
 
 void ui_begin_key_capture() {
