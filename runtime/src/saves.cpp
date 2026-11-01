@@ -32,6 +32,7 @@
 #include <nx/runtime.h>
 
 #include "platform.h"
+#include "save_storage.h"
 
 namespace fs = std::filesystem;
 
@@ -75,9 +76,19 @@ void set(std::string* out, const std::string& v) {
     if (out) *out = v;
 }
 
-fs::path user_dir() { return u8(plat::data_root()) / "user"; }
-fs::path device_dir() { return user_dir() / "device_save"; }
+fs::path user_dir() { return save_storage::user_dir(plat::data_root()); }
+fs::path device_dir() { return save_storage::device_dir(plat::data_root()); }
 fs::path backups_dir() { return user_dir() / "backups"; }
+
+bool flat_save(const fs::path& d, std::string* why) { return save_storage::flat_save(d, why); }
+bool copy_tree(const fs::path& src, const fs::path& dst, std::string* error) {
+    return save_storage::copy_tree(src, dst, error);
+}
+bool non_empty_dir(const fs::path& d) { return save_storage::non_empty_dir(d); }
+void recover() { save_storage::recover(plat::data_root()); }
+bool swap_in(const fs::path& staging, std::string* error) {
+    return save_storage::swap_in(plat::data_root(), staging, error);
+}
 
 std::string stamp(const char* fmt) {
     std::time_t t = std::time(nullptr);
@@ -101,14 +112,6 @@ fs::path unique_in(const fs::path& dir, const std::string& base, const std::stri
 }
 
 // ---- recognising a save ----
-
-bool flat_save(const fs::path& d, std::string* why) {
-    if (!is_dir(d)) return set(why, "folder not found"), false;
-    if (!is_file(d / "main.dat")) return set(why, "main.dat missing"), false;
-    if (!is_file(d / "mainHeader.dat")) return set(why, "mainHeader.dat missing"), false;
-    if (!is_file(d / "Villager0" / "personal.dat")) return set(why, "Villager0/personal.dat missing"), false;
-    return true;
-}
 
 std::vector<fs::path> subdirs(const fs::path& d) {
     std::vector<fs::path> v;
@@ -374,68 +377,6 @@ bool zip_write(const fs::path& src, const fs::path& zip, std::string* error) {
     o.write(end.data(), std::streamsize(end.size()));
     o.close();
     if (!o) return set(error, "cannot write " + utf8(zip)), false;
-    return true;
-}
-
-// ---- folders ----
-
-// Regular files and folders only (a symlink in a save folder is not something the game wrote).
-bool copy_tree(const fs::path& src, const fs::path& dst, std::string* error) {
-    std::error_code ec;
-    fs::create_directories(dst, ec);
-    if (ec) return set(error, "cannot create " + utf8(dst) + ": " + ec.message()), false;
-    for (fs::recursive_directory_iterator it(src, ec), end; !ec && it != end; it.increment(ec)) {
-        fs::path to = dst / it->path().lexically_relative(src);
-        std::error_code e2;
-        if (it->is_symlink(e2)) {
-            it.disable_recursion_pending();
-            continue;
-        }
-        if (it->is_directory(e2)) {
-            fs::create_directories(to, e2);
-        } else if (it->is_regular_file(e2)) {
-            fs::copy_file(it->path(), to, fs::copy_options::overwrite_existing, e2);
-        }
-        if (e2) return set(error, "cannot copy " + utf8(it->path()) + ": " + e2.message()), false;
-    }
-    if (ec) return set(error, "cannot read " + utf8(src) + ": " + ec.message()), false;
-    return true;
-}
-
-bool non_empty_dir(const fs::path& d) {
-    std::error_code ec;
-    return is_dir(d) && !fs::is_empty(d, ec) && !ec;
-}
-
-// A swap interrupted between its two renames (crash, power loss) left the previous save as device_save.old: put it
-// back before anything looks at device_save.
-void recover() {
-    fs::path dir = device_dir(), old = u8(utf8(dir) + ".old");
-    std::error_code ec;
-    if (!fs::exists(dir, ec) && is_dir(old)) {
-        fs::rename(old, dir, ec);
-        log("saves: restored %s after an interrupted swap", utf8(dir).c_str());
-    }
-}
-
-// Replaces device_save with the complete folder `staging` (a sibling, so renames stay on one file system). A
-// directory rename cannot replace a non-empty one, so it is two renames; recover() covers the gap between them.
-bool swap_in(const fs::path& staging, std::string* error) {
-    fs::path dir = device_dir(), old = u8(utf8(dir) + ".old");
-    std::error_code ec;
-    fs::remove_all(old, ec);
-    bool had = fs::exists(dir, ec);
-    if (had) {
-        fs::rename(dir, old, ec);
-        if (ec) return set(error, "cannot move the current save aside: " + ec.message()), false;
-    }
-    fs::rename(staging, dir, ec);
-    if (ec) {
-        std::error_code e2;
-        if (had) fs::rename(old, dir, e2);
-        return set(error, "cannot move the new save in: " + ec.message()), false;
-    }
-    fs::remove_all(old, ec);
     return true;
 }
 
@@ -708,22 +649,7 @@ bool has_save() {
 
 std::string last_modified() {
     try {
-        std::error_code ec;
-        auto ft = fs::last_write_time(device_dir() / "main.dat", ec);
-        if (ec) return std::string();
-        // file_clock -> system_clock through "now" on both (clock_cast is not in every standard library yet).
-        auto sys = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
-            ft - fs::file_time_type::clock::now() + std::chrono::system_clock::now());
-        std::time_t t = std::chrono::system_clock::to_time_t(sys);
-        std::tm tm{};
-#if defined(_WIN32)
-        localtime_s(&tm, &t);
-#else
-        localtime_r(&t, &tm);
-#endif
-        char buf[32];
-        std::strftime(buf, sizeof buf, "%Y-%m-%d %H:%M", &tm);
-        return buf;
+        return save_storage::last_modified(device_dir());
     } catch (...) {
         return std::string();
     }

@@ -31,6 +31,8 @@
 #include "imgui.h"
 #include "imgui_internal.h"
 
+#include "save_profiles.h"
+
 #include "ui/i18n.h"
 #include "ui/theme.h"
 
@@ -163,6 +165,8 @@ std::string g_install;
 std::vector<Prereq> g_prereqs;
 Build g_build;
 const char* g_build_problem = "launcher.reason.none";  // "" when g_build is valid
+std::vector<nx::save_profiles::ProfileInfo> g_save_profiles;
+std::string g_save_profile_active;
 std::string g_banner;  // an error under the page title (a refused file or folder)
 std::string g_toast;
 double g_toast_until = 0;
@@ -244,11 +248,44 @@ void recheck_files() {
         for (Found& f : s.found) f.check = check_file(f.kind, f.path);
 }
 
+void refresh_save_profiles();
+
 void set_build(const std::string& folder, bool remember) {
     g_build = Build();
     g_build_problem = find_build(folder, g_build);
     if (*g_build_problem == 0 && remember) {
         settings().set("launcher.build", folder);
+        settings().save();
+    }
+    if (*g_build_problem == 0) refresh_save_profiles();
+}
+
+void refresh_save_profiles() {
+    g_save_profiles.clear();
+    g_save_profile_active.clear();
+    if (*g_build_problem != 0) return;
+    std::string err;
+    if (!nx::save_profiles::ensure_migrated(g_build.data, &err)) {
+        g_banner = trf("launcher.profiles.switch_failed", err);
+        return;
+    }
+    std::string want = settings().get("launcher.save_profile");
+    if (want.empty()) want = nx::save_profiles::read_active_id(g_build.data);
+    if (want.empty()) want = "default";
+    std::string active = nx::save_profiles::read_active_id(g_build.data);
+    if (want != active) {
+        if (!nx::save_profiles::activate_profile(g_build.data, want, &err)) {
+            g_banner = trf("launcher.profiles.switch_failed", err);
+            return;
+        }
+        settings().set("launcher.save_profile", want);
+        settings().save();
+    }
+    g_save_profile_active = nx::save_profiles::read_active_id(g_build.data);
+    if (g_save_profile_active.empty()) g_save_profile_active = want;
+    g_save_profiles = nx::save_profiles::list_profiles(g_build.data);
+    if (settings().get("launcher.save_profile").empty()) {
+        settings().set("launcher.save_profile", g_save_profile_active);
         settings().save();
     }
 }
@@ -1250,6 +1287,12 @@ double g_opening_since = -1;
 void play() {
     if (g_opening_since >= 0) return;  // already starting
     std::string err;
+    std::string profile = settings().get("launcher.save_profile", g_save_profile_active);
+    if (profile.empty()) profile = "default";
+    if (!nx::save_profiles::activate_profile(g_build.data, profile, &err)) {
+        g_banner = trf("launcher.profiles.switch_failed", err);
+        return;
+    }
     if (launch_game(g_build, err, g_window))
         g_opening_since = ImGui::GetTime(), start_sound_play();
     else
@@ -1344,6 +1387,54 @@ void hero(int icon, ImU32 color, float r) {
     dl->AddCircleFilled(c, r, color);
     theme_icon(dl, icon, c, r * 0.6f, kWhite);
     ImGui::Dummy(ImVec2(w, 2 * r + S(14)));
+}
+
+void select_save_profile(const std::string& id) {
+    if (id == g_save_profile_active) return;
+    std::string err;
+    if (!nx::save_profiles::activate_profile(g_build.data, id, &err)) {
+        g_banner = trf("launcher.profiles.switch_failed", err);
+        return;
+    }
+    settings().set("launcher.save_profile", id);
+    settings().save();
+    g_save_profile_active = id;
+    g_save_profiles = nx::save_profiles::list_profiles(g_build.data);
+    g_banner.clear();
+}
+
+void profiles_block() {
+    ImGui::TextUnformatted(tr("launcher.profiles.title"));
+    text_small(tr("launcher.profiles.hint"));
+    ImGui::Dummy(ImVec2(0, S(4)));
+    float list_h = std::min(S(140), ImGui::GetContentRegionAvail().y * 0.35f);
+    if (list_h < S(56)) list_h = S(56);
+    ImGui::BeginChild("##profiles", ImVec2(0, list_h), ImGuiChildFlags_Borders);
+    if (g_save_profiles.empty()) {
+        ImGui::TextDisabled("%s", tr("launcher.profiles.empty"));
+    } else {
+        for (const nx::save_profiles::ProfileInfo& p : g_save_profiles) {
+            ImGui::PushID(p.id.c_str());
+            bool active = p.id == g_save_profile_active;
+            std::string label = p.has_save && !p.island_name.empty() ? p.island_name : tr("launcher.profiles.empty");
+            if (active) label += std::string(" (") + tr("launcher.profiles.active") + ")";
+            if (ImGui::Selectable(label.c_str(), active)) select_save_profile(p.id);
+            nav_item();
+            if (p.has_save && !p.last_modified.empty())
+                ImGui::TextDisabled("%s", trf("launcher.profiles.last_saved", p.last_modified).c_str());
+            ImGui::PopID();
+        }
+    }
+    ImGui::EndChild();
+    ImGui::Dummy(ImVec2(0, S(4)));
+    if (button(tr("launcher.profiles.new"), kMint)) {
+        std::string err;
+        std::string id = nx::save_profiles::create_empty_profile(g_build.data, &err);
+        if (id.empty())
+            g_banner = trf("launcher.profiles.switch_failed", err);
+        else
+            select_save_profile(id);
+    }
 }
 
 void play_block() {
@@ -1578,7 +1669,9 @@ void page_home() {
         }
         ImGui::Dummy(ImVec2(0, S(6)));
         contents_row();
-        ImGui::Dummy(ImVec2(0, S(16)));
+        ImGui::Dummy(ImVec2(0, S(10)));
+        profiles_block();
+        ImGui::Dummy(ImVec2(0, S(10)));
         play_block();
     }
     // Settings, Rebuild, Change build folder.
