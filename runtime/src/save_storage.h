@@ -14,6 +14,8 @@ std::filesystem::path device_dir(const std::string& data_root);
 std::filesystem::path device_size_file(const std::string& data_root);
 
 bool flat_save(const std::filesystem::path& d, std::string* why = nullptr);
+// The save folder in `path` itself, or the only one one or two levels below (JKSV / Checkpoint layouts).
+bool find_acnh_save_root(const std::filesystem::path& path, std::filesystem::path* root, std::string* why = nullptr);
 bool non_empty_dir(const std::filesystem::path& d);
 
 void recover(const std::string& data_root);

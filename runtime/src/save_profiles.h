@@ -27,4 +27,9 @@ using BackupHook = std::function<bool(std::string* error)>;
 bool activate_profile(const std::string& data_root, const std::string& id, std::string* error = nullptr,
                       BackupHook backup = {});
 
+bool delete_profile(const std::string& data_root, const std::string& id, std::string* error = nullptr);
+// Replaces the profile's device save from a folder (or JKSV/Checkpoint layout under it).
+bool import_into_profile(const std::string& data_root, const std::string& id, const std::string& from,
+                         std::string* error = nullptr);
+
 }  // namespace nx::save_profiles

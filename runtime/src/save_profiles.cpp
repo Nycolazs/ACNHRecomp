@@ -18,7 +18,9 @@ namespace {
 constexpr const char* kDefaultId = "default";
 constexpr const char* kActiveFile = "active.txt";
 
+using nx::save_storage::copy_tree;
 using nx::save_storage::device_dir;
+using nx::save_storage::find_acnh_save_root;
 using nx::save_storage::flat_save;
 using nx::save_storage::island_display_name;
 using nx::save_storage::last_modified;
@@ -56,6 +58,29 @@ std::vector<fs::path> profile_subdirs(const fs::path& root) {
         if (it->is_directory(ec)) v.push_back(it->path());
     std::sort(v.begin(), v.end());
     return v;
+}
+
+void remove_all_quiet(const fs::path& p) {
+    std::error_code ec;
+    fs::remove_all(p, ec);
+}
+
+bool replace_profile_save(const std::string& data_root, const fs::path& profile_dir, const fs::path& src_root,
+                          std::string* error) {
+    fs::path staging = profile_dir / "device_save.new";
+    std::error_code ec;
+    remove_all_quiet(staging);
+    if (!copy_tree(src_root, staging, error)) return remove_all_quiet(staging), false;
+    if (!flat_save(staging, error)) return remove_all_quiet(staging), false;
+    remove_all_quiet(profile_dir / "device_save");
+    fs::rename(staging, profile_dir / "device_save", ec);
+    if (ec) {
+        remove_all_quiet(staging);
+        return set_err(error, "cannot install the save: " + ec.message()), false;
+    }
+    remove_all_quiet(profile_dir / "device_save.size");
+    (void)data_root;
+    return true;
 }
 
 std::string next_profile_id(const std::string& data_root) {
@@ -172,6 +197,62 @@ bool activate_profile(const std::string& data_root, const std::string& id, std::
 
     write_active_id(data_root, id);
     log("save_profiles: activated profile %s", id.c_str());
+    return true;
+}
+
+bool delete_profile(const std::string& data_root, const std::string& id, std::string* error) {
+    if (!valid_id(id)) return set_err(error, "invalid profile"), false;
+    if (!ensure_migrated(data_root, error)) return false;
+
+    std::vector<fs::path> dirs = profile_subdirs(profiles_root(data_root));
+    if (dirs.size() <= 1) return set_err(error, "cannot delete the only save profile"), false;
+
+    fs::path target = profile_dir(data_root, id);
+    std::error_code ec;
+    if (!fs::is_directory(target, ec)) return set_err(error, "profile not found: " + id), false;
+
+    std::string active = read_active_id(data_root);
+    if (active.empty()) active = kDefaultId;
+
+    if (id == active) {
+        std::string next;
+        for (const fs::path& d : dirs) {
+            std::string pid = path_utf8(d.filename());
+            if (pid != id && valid_id(pid)) {
+                next = pid;
+                break;
+            }
+        }
+        if (next.empty()) return set_err(error, "no profile to switch to"), false;
+        if (!activate_profile(data_root, next, error)) return false;
+    }
+
+    remove_all_quiet(target);
+    log("save_profiles: deleted profile %s", id.c_str());
+    return true;
+}
+
+bool import_into_profile(const std::string& data_root, const std::string& id, const std::string& from,
+                         std::string* error) {
+    if (!valid_id(id)) return set_err(error, "invalid profile"), false;
+    if (!ensure_migrated(data_root, error)) return false;
+
+    fs::path target = profile_dir(data_root, id);
+    std::error_code ec;
+    if (!fs::is_directory(target, ec)) return set_err(error, "profile not found: " + id), false;
+
+    fs::path root;
+    if (!find_acnh_save_root(u8_path(from), &root, error)) return false;
+    if (!replace_profile_save(data_root, target, root, error)) return false;
+
+    std::string active = read_active_id(data_root);
+    if (active.empty()) active = kDefaultId;
+    if (id == active) {
+        fs::path save = target / "device_save";
+        if (!promote_profile_into_active(data_root, target, !flat_save(save, nullptr), error)) return false;
+    }
+
+    log("save_profiles: imported save into profile %s", id.c_str());
     return true;
 }
 

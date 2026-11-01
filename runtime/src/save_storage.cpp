@@ -1,10 +1,12 @@
 #include "save_storage.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <vector>
 
 #include "save_log.h"
 
@@ -54,6 +56,38 @@ bool flat_save(const fs::path& d, std::string* why) {
     if (!is_file(d / "main.dat")) return set_err(why, "main.dat missing"), false;
     if (!is_file(d / "mainHeader.dat")) return set_err(why, "mainHeader.dat missing"), false;
     if (!is_file(d / "Villager0" / "personal.dat")) return set_err(why, "Villager0/personal.dat missing"), false;
+    return true;
+}
+
+std::vector<fs::path> subdirs(const fs::path& d) {
+    std::vector<fs::path> v;
+    std::error_code ec;
+    for (fs::directory_iterator it(d, ec), end; !ec && it != end; it.increment(ec))
+        if (it->is_directory(ec)) v.push_back(it->path());
+    std::sort(v.begin(), v.end());
+    return v;
+}
+
+bool find_acnh_save_root(const fs::path& d, fs::path* root, std::string* why) {
+    std::string own_why;
+    if (flat_save(d, &own_why)) return *root = d, true;
+    if (!is_dir(d)) return set_err(why, own_why), false;
+    std::vector<fs::path> found;
+    for (const fs::path& a : subdirs(d)) {
+        if (flat_save(a, nullptr)) {
+            found.push_back(a);
+            continue;
+        }
+        for (const fs::path& b : subdirs(a))
+            if (flat_save(b, nullptr)) found.push_back(b);
+    }
+    if (found.size() == 2 && found[0].filename() == "0" && found[1].filename() == "1" &&
+        found[0].parent_path() == found[1].parent_path())
+        found.pop_back();
+    if (found.empty()) return set_err(why, own_why), false;
+    if (found.size() > 1)
+        return set_err(why, std::to_string(found.size()) + " saves in this folder: choose one of them"), false;
+    *root = found[0];
     return true;
 }
 
