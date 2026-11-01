@@ -18,6 +18,8 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
+#include <cstring>
 #include <deque>
 #include <map>
 #include <mutex>
@@ -35,6 +37,10 @@
 #include "ui/settings.h"
 #include "ui/theme.h"
 #include "ui/ui_internal.h"
+
+namespace nx::nvn {
+int hdr_ui_params(float& ui_nits, bool& gamma22);  // nvn_present.cpp: 0 SDR, 1 scRGB, 2 HDR10
+}  // namespace nx::nvn
 
 namespace nx::ui {
 
@@ -56,6 +62,7 @@ std::mutex g_in_lock;
 std::deque<Input> g_in;
 std::atomic<bool> g_visible{std::getenv("NX_UI_OPEN") != nullptr};  // NX_UI_OPEN=1: open from the start (tests)
 std::atomic<bool> g_first_hint{true};  // the "F1: settings" hint at startup
+std::atomic<bool> g_hdr_panel{false};  // F2: the HDR settings over the game (settings.cpp hdr_panel_draw), mouse only
 std::atomic<int64_t> g_picture_ns{0};  // when the game's first picture was shown: the hint's clock starts there
 std::atomic<bool> g_capture{false};     // a key binding is being chosen (settings.cpp)
 std::atomic<int> g_captured{0};
@@ -160,11 +167,72 @@ VkRenderPass make_pass(VkFormat format) {
     return rp;
 }
 
-PFN_vkVoidFunction load(const char* name, void* user) {
-    (void)user;
+PFN_vkVoidFunction load_raw(const char* name) {
     auto gdpa = reinterpret_cast<PFN_vkGetDeviceProcAddr>(g_vk.gipa(g_vk.instance, "vkGetDeviceProcAddr"));
     if (PFN_vkVoidFunction f = gdpa ? gdpa(g_vk.device, name) : nullptr) return f;
     return g_vk.gipa(g_vk.instance, name);
+}
+
+// HDR swapchain (nvn_present.cpp hdr_ui_params): ImGui writes sRGB-encoded colours, which scRGB takes as linear light
+// at 80 nits (light, washed out) and HDR10 as PQ (wrong). ImGui 1.91 has no custom shaders, but it makes its modules
+// through this loader: its fragment module becomes tools/shaders/hdr/imgui_hdr.frag, with the brightness, the output
+// and the gamma as the defaults of its specialization constants 0, 1, 2. Made again when they change (init_imgui).
+struct UiHdr {
+    int mode = 0;  // 0 SDR, 1 scRGB, 2 HDR10
+    float nits = 0;
+    bool gamma22 = true;
+    bool operator==(const UiHdr& o) const { return mode == o.mode && nits == o.nits && gamma22 == o.gamma22; }
+};
+UiHdr g_ui_hdr;  // what the modules were made with
+PFN_vkCreateShaderModule g_create_module = nullptr;
+
+#include "ui/ui_hdr_spirv.inc"
+
+UiHdr ui_hdr_now() {
+    UiHdr h;
+    h.mode = nx::nvn::hdr_ui_params(h.nits, h.gamma22);
+    if (!h.mode) h.nits = 0, h.gamma22 = true;
+    return h;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL create_module(VkDevice device, const VkShaderModuleCreateInfo* ci,
+                                             const VkAllocationCallbacks* alloc, VkShaderModule* out) {
+    // Its fragment module: OpEntryPoint's execution model 4 (Fragment).
+    bool fragment = false;
+    const uint32_t* w = ci->pCode;
+    for (size_t i = 5, n = ci->codeSize / 4; i < n && (w[i] >> 16);) {
+        if ((w[i] & 0xffff) == 15) {
+            fragment = i + 1 < n && w[i + 1] == 4;
+            break;
+        }
+        i += w[i] >> 16;
+    }
+    if (!fragment || !g_ui_hdr.mode) return g_create_module(device, ci, alloc, out);
+    std::vector<uint32_t> code(kImguiHdrFrag, kImguiHdrFrag + sizeof kImguiHdrFrag / 4);
+    uint32_t spec_of[3] = {0, 0, 0};  // result ids of SpecId 0, 1, 2
+    for (size_t i = 5; i < code.size() && (code[i] >> 16); i += code[i] >> 16)
+        if ((code[i] & 0xffff) == 71 && (code[i] >> 16) == 4 && code[i + 2] == 1 && code[i + 3] < 3)  // OpDecorate SpecId
+            spec_of[code[i + 3]] = code[i + 1];
+    for (size_t i = 5; i < code.size() && (code[i] >> 16); i += code[i] >> 16) {
+        if ((code[i] & 0xffff) != 50 || (code[i] >> 16) != 4) continue;  // OpSpecConstant type id value
+        const uint32_t id = code[i + 2];
+        if (id == spec_of[0]) std::memcpy(&code[i + 3], &g_ui_hdr.nits, 4);
+        else if (id == spec_of[1]) code[i + 3] = g_ui_hdr.mode == 2 ? 1 : 0;
+        else if (id == spec_of[2]) code[i + 3] = g_ui_hdr.gamma22 ? 1 : 0;
+    }
+    VkShaderModuleCreateInfo hdr = *ci;
+    hdr.codeSize = code.size() * 4;
+    hdr.pCode = code.data();
+    return g_create_module(device, &hdr, alloc, out);
+}
+
+PFN_vkVoidFunction load(const char* name, void* user) {
+    (void)user;
+    if (std::strcmp(name, "vkCreateShaderModule") == 0) {
+        g_create_module = reinterpret_cast<PFN_vkCreateShaderModule>(load_raw(name));
+        return reinterpret_cast<PFN_vkVoidFunction>(&create_module);
+    }
+    return load_raw(name);
 }
 
 template <typename F>
@@ -218,7 +286,9 @@ void build_fonts(float scale) {
 
 bool init_imgui(VkFormat format) {
     if (!g_vk_ok) return false;
-    if (g_imgui_ok && format == g_format) return true;
+    const UiHdr hdr = ui_hdr_now();  // its shader's constants: made again when the HDR settings change
+    if (g_imgui_ok && format == g_format && hdr == g_ui_hdr) return true;
+    g_ui_hdr = hdr;
     if (g_imgui_ok) {
         g_vk.DeviceWaitIdle(g_vk.device);
         ImGui_ImplVulkan_Shutdown();
@@ -251,7 +321,10 @@ bool init_imgui(VkFormat format) {
     ii.Queue = g_vk.queue;
     ii.DescriptorPoolSize = 16;
     ii.MinImageCount = 2;
-    ii.ImageCount = 3;
+    // ImGui rotates this many vertex/index buffer sets and destroys a set's buffers at once when it outgrows them:
+    // more sets than frames the runtime keeps in flight (up to 8 slots, nvn_frames.cpp kMaxSlots), or a growing
+    // settings screen frees a buffer the GPU is still reading (a GPU hang opening it over a dialogue, HDR scRGB).
+    ii.ImageCount = 10;
     ii.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
     static VkFormat fmt;
     fmt = format;
@@ -396,7 +469,7 @@ void ui_record(VkCommandBuffer cb, VkImage image, VkFormat format, VkExtent2D ex
     if (hint_t > 8.0f) g_first_hint = false;
     const bool hint = g_first_hint && pic;
     const bool show_fps = config_show_fps();
-    if ((!g_visible && !hint && !show_fps) || !extent.width || !extent.height) return;
+    if ((!g_visible && !hint && !show_fps && !g_hdr_panel) || !extent.width || !extent.height) return;
     if (!init_imgui(format)) return;
     ImGuiIO& io = ImGui::GetIO();
     float scale = theme_scale(up_w, up_h);
@@ -415,8 +488,9 @@ void ui_record(VkCommandBuffer cb, VkImage image, VkFormat format, VkExtent2D ex
     ImGui::PushFont(g_font_body);
     if (g_visible) {
         if (!settings_draw(scale, g_font_title)) g_visible = false;  // closed from the screen
-    } else if (hint) {
-        settings_hint(scale, hint_t);
+    } else {
+        if (hint) settings_hint(scale, hint_t);
+        if (g_hdr_panel) hdr_panel_draw(scale);
     }
     if (show_fps) {
         draw_fps_overlay(scale);
@@ -506,6 +580,23 @@ void ui_event(const SDL_Event& e) {
                 ui_toggle();
                 return;
             }
+            if (down && !e.key.repeat && e.key.scancode == SDL_SCANCODE_F8) {
+                // The player saw something (a flicker): a log mark, and with NX_DEBUG_FILES=1 the frames that follow
+                // traced draw by draw (nvn_draw_trace.cpp trace_draws) and dumped to frames/ (nvn_debug.cpp
+                // dump_frames: 8 in a row; an SDR swapchain, its writer takes 4-byte texels).
+                static int marks = 0;
+                log("ui: F8 mark %d ================================================", ++marks);
+                if (plat::debug_files()) {
+                    if (FILE* f = plat::fopen_utf8(plat::data_root() + "/trace_draws", "wb")) std::fputs("20000", f), std::fclose(f);
+                    if (FILE* f = plat::fopen_utf8(plat::data_root() + "/dump_frames", "wb")) std::fputs("8 1", f), std::fclose(f);
+                }
+                return;
+            }
+            if (down && !e.key.repeat && e.key.scancode == SDL_SCANCODE_F2) {
+                g_hdr_panel = !g_hdr_panel;
+                log("ui: HDR panel %s", g_hdr_panel ? "opened" : "closed");
+                return;
+            }
             if (!g_visible) return;
             if (ImGuiKey k = imgui_key(e.key.scancode); k != ImGuiKey_None) push({Input::Key, k, down});
             Input mod{Input::Key, ImGuiMod_Ctrl, (e.key.mod & SDL_KMOD_CTRL) != 0};
@@ -522,11 +613,11 @@ void ui_event(const SDL_Event& e) {
             break;
         }
         case SDL_EVENT_MOUSE_MOTION:
-            if (g_visible) push(mouse_at(e.motion.windowID, e.motion.x, e.motion.y));
+            if (g_visible || g_hdr_panel) push(mouse_at(e.motion.windowID, e.motion.x, e.motion.y));
             break;
         case SDL_EVENT_MOUSE_BUTTON_DOWN:
         case SDL_EVENT_MOUSE_BUTTON_UP: {
-            if (!g_visible) return;
+            if (!g_visible && !g_hdr_panel) return;
             int b = e.button.button == SDL_BUTTON_LEFT ? 0 : e.button.button == SDL_BUTTON_RIGHT ? 1 : 2;
             push(mouse_at(e.button.windowID, e.button.x, e.button.y));
             push({Input::MouseButton, b, e.type == SDL_EVENT_MOUSE_BUTTON_DOWN});

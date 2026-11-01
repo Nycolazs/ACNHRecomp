@@ -295,11 +295,16 @@ void WindowInitialize(CPU& c) {  // NVNboolean (NVNwindow*, const NVNwindowBuild
     uint64_t guest = c.x[0], builder = c.x[1];
     auto& w = make<Window>(guest);
     int n = int(driver(c, "nvnWindowBuilderGetNumTextures", {builder}));
-    for (int k = 0; k < n; k++) w.textures.push_back(driver(c, "nvnWindowBuilderGetTexture", {builder, uint64_t(k)}));
+    for (int k = 0; k < n; k++) {
+        w.textures.push_back(driver(c, "nvnWindowBuilderGetTexture", {builder, uint64_t(k)}));
+        if (Texture* t = get<Texture>(w.textures.back())) t->window = true;
+    }
     w.active = int(driver(c, "nvnWindowBuilderGetNumActiveTextures", {builder}));
     if (w.active <= 0 || w.active > n) w.active = n;
     w.interval = forced_interval(int(driver(c, "nvnWindowBuilderGetPresentInterval", {builder})));
-    log("nvn: window %llx: %d textures (%d active), present interval %d", (unsigned long long)guest, n, w.active, w.interval);
+    const Texture* first = n > 0 ? get<Texture>(w.textures[0]) : nullptr;
+    log("nvn: window %llx: %d textures (%d active, format %#x flags %#x), present interval %d", (unsigned long long)guest,
+        n, w.active, first ? first->format : 0, first ? first->flags : 0, w.interval);
     c.x[0] = 1;
 }
 

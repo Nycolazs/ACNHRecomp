@@ -122,6 +122,7 @@ const Mapping kMappings[] = {
     {"video.frame_gen", "NX_FRAMEGEN", framegen, true},
     {"video.async_shaders", "NX_ASYNC_PIPELINES", on_or_zero, true},  // on by default on Android
     {"video.vsync", "NX_VSYNC", off_is_zero, true},
+    {"video.hdr", "NX_HDR", off_empty, true},  // scrgb / hdr10 (nvn_present.cpp); the brightness keys are read live
     {"video.shader_prepare", "NX_PIPE_PREWARM", off_is_zero, true},
     {"audio.reverb", "NX_AUDIO_REVERB", off_is_zero, false},  // also read live (hle_audio.cpp)
     {"video.root_clocks", "NX_ROOT_CLOCKS", on_off, true},  // Android, rooted phones (perf_hint.cpp)

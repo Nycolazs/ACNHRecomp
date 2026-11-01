@@ -351,12 +351,13 @@ void trace_draw(const Targets& t, uint32_t mode, bool indexed, const Cmd& c, con
         log("nvn: huge draw %llu: vs %s fs %s %s count %u x%u", (unsigned long long)(*g_stats).done, vs->hash.c_str(),
             fs ? fs->hash.c_str() : "-", indexed ? "indexed" : "arrays", count, instances);
     // The traces below, each behind an env check of its own, were ~3% of a draw's replay with none of them set.
+    // NX_FRAME_SIG and the live trace_draws file (NX_DEBUG_FILES=1) are below too: they were left out, and did nothing.
     static const bool any = [] {
         for (const char* e : {"NX_TRACE_CUBE_DRAWS", "NX_TRACE_TARGET_SIZE", "NX_TRACE_3D", "NX_TRACE_COUNT",
                               "NX_TRACE_DRAWS", "NX_TRACE_FRAME", "NX_TRACE_FS_HASH", "NX_TRACE_GLYPHS", "NX_TRACE_SAMPLERS",
-                              "NX_TRACE_SKIN", "NX_TRACE_TARGET", "NX_TRACE_VERTS", "NX_TRACE_VS_BLOCKS"})
+                              "NX_TRACE_SKIN", "NX_TRACE_TARGET", "NX_TRACE_VERTS", "NX_TRACE_VS_BLOCKS", "NX_FRAME_SIG"})
             if (std::getenv(e)) return true;
-        return false;
+        return plat::debug_files();
     }();
     if (!any) return;
     trace_cube_draw(t, vs, fs, tex_bindings, handles);

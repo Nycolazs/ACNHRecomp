@@ -12,9 +12,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 #include <vector>
 
 #include "config.h"
+#include "nvn_shaders.h"
 #include "nvn_vk.h"
 #include "platform.h"
 
@@ -173,10 +175,12 @@ constexpr size_t kOverlayBytes = sizeof(float) * 4 * kOverlayMax + sizeof(uint32
 
 struct Push {
     float rot[4], off[4], box[4], crop[4];
+    float hdr[4];  // HDR shader only (tools/shaders/hdr/present_hdr.hlsl): UI nits, peak nits, gamma, output preset
 };
 
 #include "nvn_fsr_spirv.inc"
 #include "nvn_aa_spirv.inc"
+#include "nvn_hdr_spirv.inc"
 
 struct Pass {
     VkFormat format = VK_FORMAT_UNDEFINED;
@@ -230,6 +234,42 @@ bool fxaa_on() {
         if (const char* e = config_env_override("NX_AA")) return std::strcmp(e, "fxaa") == 0;
         return config_get("video.antialiasing", "off") == "fxaa";
     });
+}
+
+// The HDR shader's brightness settings, read while the game runs: the UI's white (video.hdr_ui_nits; the scene's is
+// its tonemap's), the display's peak (video.hdr_peak_nits) and the gamma the game's picture is decoded with
+// (video.hdr_gamma: 2.2, as most displays show SDR, or srgb). 203 nits is BT.2408's reference and graphics white.
+// The tonemap replacements (spirv_hdr) also take the scene's white (video.hdr_game_nits), the tonemap
+// (video.hdr_tonemap: hdr, or vanilla: the game's curve, clipped at its white), an exposure in stops and the F2
+// panel's grading: highlights, shadows, contrast and saturation as 0..100 (50 neutral, RenoDX's scale), temperature
+// and tint as -100..100 (0 neutral).
+struct HdrLevels {
+    float ui_nits = 203, peak_nits = 1000, gamma = 1;
+    float game_nits = 203, tonemap = 1, exposure = 0;
+    float highlights = 1, shadows = 1, contrast = 1, saturation = 1, temperature = 0, tint = 0;
+};
+
+HdrLevels hdr_levels() {
+    static std::atomic<uint64_t> gen{~0ull};
+    static HdrLevels v;
+    static std::mutex lock;
+    std::lock_guard lk(lock);
+    if (gen.load(std::memory_order_relaxed) != config_generation()) {
+        gen = config_generation();
+        v.ui_nits = std::clamp(config_get_float("video.hdr_ui_nits", 203), 80.0f, 500.0f);
+        v.peak_nits = std::clamp(config_get_float("video.hdr_peak_nits", 1000), 400.0f, 10000.0f);
+        v.gamma = config_get("video.hdr_gamma", "2.2") == "srgb" ? 0.0f : 1.0f;  // renodx GAMMA_CORRECTION_*
+        v.game_nits = std::clamp(config_get_float("video.hdr_game_nits", 203), 80.0f, 500.0f);
+        const std::string tm = config_get("video.hdr_tonemap", "hdr");
+        v.tonemap = tm == "vanilla" ? 0.0f : tm == "renodrt" ? 2.0f : 1.0f;  // acnh_tonemap.hlsli FinishTonemap
+        v.exposure = std::clamp(config_get_float("video.hdr_exposure", 0), -2.0f, 2.0f);
+        auto grade = [](const char* key) { return std::clamp(config_get_float(key, 50), 0.0f, 100.0f) * 0.02f; };
+        v.highlights = grade("video.hdr_highlights"), v.shadows = grade("video.hdr_shadows");
+        v.contrast = grade("video.hdr_contrast"), v.saturation = grade("video.hdr_saturation");
+        v.temperature = std::clamp(config_get_float("video.hdr_temperature", 0), -100.0f, 100.0f);
+        v.tint = std::clamp(config_get_float("video.hdr_tint", 0), -100.0f, 100.0f);
+    }
+    return v;
 }
 
 float fsr_sharpness() {  // stops of sharpening: 0 the most, 2 none (FSR's own default is 0.2)
@@ -413,9 +453,16 @@ bool make_pipeline(VkFormat format) {
     pli.pushConstantRangeCount = 1, pli.pPushConstantRanges = &push;
     if (p_vkCreatePipelineLayout(d, &pli, nullptr, &g.layout) != VK_SUCCESS) return false;
 
-    VkResult ok = build_pipeline(g.render_pass, kFragment, sizeof kFragment, &g.pipeline) ? VK_SUCCESS : VK_ERROR_UNKNOWN;
-    if (ok == VK_SUCCESS && fsr_on() && !make_fsr()) log("nvn/vk: FSR unavailable: plain scaling");
-    if (ok == VK_SUCCESS && fxaa_on() && !build_pipeline(g.render_pass, kFxaa, sizeof kFxaa, &g.fxaa))
+    // HDR: the picture is encoded for the display by the main pass, and FSR's and FXAA's shaders write it as it is: off.
+    const bool hdr = g_hdr != HdrOutput::Off;
+    VkResult ok = (hdr ? build_pipeline(g.render_pass, kHdrPresent, sizeof kHdrPresent, &g.pipeline)
+                       : build_pipeline(g.render_pass, kFragment, sizeof kFragment, &g.pipeline))
+                      ? VK_SUCCESS
+                      : VK_ERROR_UNKNOWN;
+    if (ok == VK_SUCCESS && hdr) log("nvn/vk: HDR present (%s)%s", g_hdr == HdrOutput::ScRgb ? "scRGB" : "HDR10",
+                                     fsr_on() || fxaa_on() ? ": FSR and FXAA off" : "");
+    if (ok == VK_SUCCESS && !hdr && fsr_on() && !make_fsr()) log("nvn/vk: FSR unavailable: plain scaling");
+    if (ok == VK_SUCCESS && !hdr && fxaa_on() && !build_pipeline(g.render_pass, kFxaa, sizeof kFxaa, &g.fxaa))
         log("nvn/vk: FXAA unavailable: no anti-aliasing");
     g.format = format;
     return ok == VK_SUCCESS;
@@ -423,13 +470,41 @@ bool make_pipeline(VkFormat format) {
 
 }  // namespace
 
+HdrOutput hdr_requested() {
+    static const HdrOutput v = [] {
+        const char* e = std::getenv("NX_HDR");  // set from video.hdr by config_apply
+        return !e ? HdrOutput::Off : std::strcmp(e, "scrgb") == 0 ? HdrOutput::ScRgb
+                                   : std::strcmp(e, "hdr10") == 0 ? HdrOutput::Hdr10
+                                                                  : HdrOutput::Off;
+    }();
+    return v;
+}
+
+void hdr_shader_settings(float out[4][4]) {
+    const HdrLevels l = hdr_levels();
+    out[0][0] = l.peak_nits, out[0][1] = l.game_nits, out[0][2] = l.ui_nits, out[0][3] = l.gamma;
+    out[1][0] = l.tonemap, out[1][1] = l.exposure, out[1][2] = l.highlights, out[1][3] = l.shadows;
+    out[2][0] = l.contrast, out[2][1] = l.saturation, out[2][2] = l.temperature, out[2][3] = l.tint;
+    out[3][0] = out[3][1] = out[3][2] = out[3][3] = 0;
+}
+
+// The settings screen on the HDR swapchain (ui.cpp): 0 SDR, 1 scRGB, 2 HDR10; the UI brightness and the gamma (2.2 or
+// sRGB) its colours are decoded with, as the game's UI is.
+int hdr_ui_params(float& ui_nits, bool& gamma22) {
+    if (g_hdr == HdrOutput::Off) return 0;
+    const HdrLevels l = hdr_levels();
+    ui_nits = l.ui_nits, gamma22 = l.gamma != 0;
+    return g_hdr == HdrOutput::ScRgb ? 1 : 2;
+}
+
 bool present_pass_wanted() {
     static const bool on = [] {
         const char* e = std::getenv("NX_PRESENT_PASS");
 #if defined(__ANDROID__)
         return !e || e[0] != '0';
 #else
-        return (e && e[0] == '1') || fsr_on() || fxaa_on();  // FSR and FXAA are passes of this one
+        // FSR, FXAA and HDR are passes of this one
+        return (e && e[0] == '1') || fsr_on() || fxaa_on() || hdr_requested() != HdrOutput::Off;
 #endif
     }();
     return on;
@@ -538,7 +613,12 @@ bool present_pass_record(VkCommandBuffer cb, GpuImage& src, const int32_t* crop,
 
     // FSR 1: upscale the shown part into `inter` (the picture's size on the target), then sharpen it in the main pass.
     // FSR and FXAA turned on in the settings while the game runs: their pipelines are made now.
-    const bool fsr = fsr_on(), fxaa = !fsr && fxaa_on();
+    const bool hdr = g_hdr != HdrOutput::Off;
+    const bool fsr = !hdr && fsr_on(), fxaa = !hdr && !fsr && fxaa_on();
+    if (hdr) {
+        const HdrLevels l = hdr_levels();
+        p.hdr[0] = l.ui_nits, p.hdr[1] = l.peak_nits, p.hdr[2] = l.gamma, p.hdr[3] = float(g_hdr);
+    }
     if (fsr && !g.easu && !g.fsr_failed && !(g.fsr_failed = !make_fsr())) g.fsr_logged = false;
     if (fxaa && !g.fxaa && !g.fxaa_failed) g.fxaa_failed = !build_pipeline(g.render_pass, kFxaa, sizeof kFxaa, &g.fxaa);
     uint32_t out_w = uint32_t(bw * tw + 0.5f), out_h = uint32_t(bh * th + 0.5f);
