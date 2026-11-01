@@ -1123,6 +1123,7 @@ void present_image(const int32_t* crop, Record&& record) {
                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
     }
     if (!drawn) transition(g_cb, dst, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+    screenshot_record(g_cb, dst.image, g_sc_format, g_sc_extent);  // F12 (nvn_screenshot.cpp): before the settings screen
     ui::ui_record(g_cb, dst.image, g_sc_format, g_sc_extent);  // the settings screen over the picture, when open
     static uint64_t presents = 0;  // the game's frames (not the generated ones)
     if (real) {

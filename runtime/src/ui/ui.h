@@ -6,6 +6,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 #include <vulkan/vulkan.h>
 
@@ -30,6 +31,9 @@ void ui_event(const SDL_Event& e);               // every SDL event (keys, mouse
 bool ui_pad(uint64_t buttons, int32_t lx, int32_t ly);
 bool ui_visible();
 void ui_toggle();
+// Any thread: a short message over the game for a few seconds (the screenshot key: "Screenshot saved: <file>").
+void ui_notice(const std::string& text);
+void ui_screenshot_saved(const std::string& file);
 // Touch screens (Android): one finger as the mouse, in pixels of the presented image. Returns true when the menu
 // took the touch (it is open): the game must not see it.
 bool ui_touch(float x, float y, bool down);

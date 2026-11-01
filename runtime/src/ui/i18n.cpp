@@ -212,6 +212,8 @@ const Entry kEn[] = {
     {"action.zr", "ZR — Phone"},
     {"action.plus", "+ — Map / menu"},
     {"action.minus", "− — Settings shortcut"},
+    {"action.screenshot", "Screenshot (HDR PNG with HDR on)"},
+    {"ui.screenshot_saved", "Screenshot taken!"},
     {"action.dpad", "D-pad"},
     {"saves.title", "Save data"},
     {"saves.current", "Current island"},

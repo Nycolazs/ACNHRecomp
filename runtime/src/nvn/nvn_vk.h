@@ -86,6 +86,9 @@ void transition(VkCommandBuffer cb, GpuImage& img, VkImageLayout to);
 // HDR output (video.hdr / NX_HDR = scrgb or hdr10): values as RenoDX's SWAP_CHAIN_OUTPUT_PRESET_* (HDR10 1, scRGB 2).
 enum class HdrOutput : uint8_t { Off = 0, Hdr10 = 1, ScRgb = 2 };
 HdrOutput hdr_requested();  // nvn_present.cpp: the setting, read once (a restart applies it)
+// nvn_screenshot.cpp: F12 asks for the next presented frame (HDR PNG with an HDR swapchain); the present records it
+void screenshot_request();
+void screenshot_record(VkCommandBuffer cb, VkImage image, VkFormat format, VkExtent2D extent);
 extern HdrOutput g_hdr;     // the swapchain's: what the surface gave (make_surface)
 // nvn_present.cpp: the window texture drawn into the swapchain (rotated, fit, alpha 1) instead of blitted.
 bool present_pass_wanted();

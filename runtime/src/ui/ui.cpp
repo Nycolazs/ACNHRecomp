@@ -40,6 +40,7 @@
 
 namespace nx::nvn {
 int hdr_ui_params(float& ui_nits, bool& gamma22);  // nvn_present.cpp: 0 SDR, 1 scRGB, 2 HDR10
+void screenshot_request();                         // nvn_screenshot.cpp: F12
 }  // namespace nx::nvn
 
 namespace nx::ui {
@@ -63,6 +64,13 @@ std::deque<Input> g_in;
 std::atomic<bool> g_visible{std::getenv("NX_UI_OPEN") != nullptr};  // NX_UI_OPEN=1: open from the start (tests)
 std::atomic<bool> g_first_hint{true};  // the "F1: settings" hint at startup
 std::atomic<bool> g_hdr_panel{false};  // F2: the HDR settings over the game (settings.cpp hdr_panel_draw), mouse only
+// A short message over the game (ui_notice: "Screenshot saved"), shown for a few seconds from when it was set.
+std::mutex g_notice_lock;
+std::string g_notice;
+std::atomic<int64_t> g_notice_ns{0};
+int64_t now_ns() {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
 std::atomic<int64_t> g_picture_ns{0};  // when the game's first picture was shown: the hint's clock starts there
 std::atomic<bool> g_capture{false};     // a key binding is being chosen (settings.cpp)
 std::atomic<int> g_captured{0};
@@ -469,7 +477,9 @@ void ui_record(VkCommandBuffer cb, VkImage image, VkFormat format, VkExtent2D ex
     if (hint_t > 8.0f) g_first_hint = false;
     const bool hint = g_first_hint && pic;
     const bool show_fps = config_show_fps();
-    if ((!g_visible && !hint && !show_fps && !g_hdr_panel) || !extent.width || !extent.height) return;
+    const float notice_t = g_notice_ns ? float(now_ns - g_notice_ns) / 1e9f : -1.0f;
+    const bool notice = notice_t >= 0 && notice_t < 2.5f;
+    if ((!g_visible && !hint && !show_fps && !g_hdr_panel && !notice) || !extent.width || !extent.height) return;
     if (!init_imgui(format)) return;
     ImGuiIO& io = ImGui::GetIO();
     float scale = theme_scale(up_w, up_h);
@@ -491,6 +501,20 @@ void ui_record(VkCommandBuffer cb, VkImage image, VkFormat format, VkExtent2D ex
     } else {
         if (hint) settings_hint(scale, hint_t);
         if (g_hdr_panel) hdr_panel_draw(scale);
+    }
+    if (notice) {  // a pill at the top centre, fading out over its last half second
+        std::string text;
+        {
+            std::lock_guard lk(g_notice_lock);
+            text = g_notice;
+        }
+        const float a = std::clamp((2.5f - notice_t) / 0.5f, 0.0f, 1.0f);
+        ImDrawList* dl = ImGui::GetForegroundDrawList();
+        const ImVec2 ts = ImGui::CalcTextSize(text.c_str());
+        const float pad = 14.0f * scale, h = ts.y + 16.0f * scale, w = ts.x + pad * 2;
+        const ImVec2 p(std::floor((io.DisplaySize.x - w) * 0.5f), 24.0f * scale);
+        dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), IM_COL32(255, 249, 232, int(235 * a)), h * 0.5f);
+        dl->AddText(ImVec2(p.x + pad, p.y + (h - ts.y) * 0.5f), IM_COL32(107, 79, 54, int(255 * a)), text.c_str());
     }
     if (show_fps) {
         draw_fps_overlay(scale);
@@ -590,6 +614,15 @@ void ui_event(const SDL_Event& e) {
                     if (FILE* f = plat::fopen_utf8(plat::data_root() + "/trace_draws", "wb")) std::fputs("20000", f), std::fclose(f);
                     if (FILE* f = plat::fopen_utf8(plat::data_root() + "/dump_frames", "wb")) std::fputs("8 1", f), std::fclose(f);
                 }
+                return;
+            }
+            // The screenshot key (F1 > Controls, input.key.screenshot; F12): an HDR PNG with HDR on, else SDR.
+            static const SDL_Scancode shot = [] {
+                SDL_Scancode sc = SDL_GetScancodeFromName(config_get("input.key.screenshot", "F12").c_str());
+                return sc != SDL_SCANCODE_UNKNOWN ? sc : SDL_SCANCODE_F12;
+            }();
+            if (down && !e.key.repeat && e.key.scancode == shot) {
+                nx::nvn::screenshot_request();
                 return;
             }
             if (down && !e.key.repeat && e.key.scancode == SDL_SCANCODE_F2) {
@@ -700,6 +733,18 @@ void ui_begin_key_capture() {
 }
 
 int ui_take_captured_key() { return g_captured.exchange(0); }
+
+void ui_notice(const std::string& text) {
+    {
+        std::lock_guard lk(g_notice_lock);
+        g_notice = text;
+    }
+    g_notice_ns = now_ns();
+}
+
+void ui_screenshot_saved(const std::string& file) {
+    ui_notice(file.empty() ? std::string(tr("ui.screenshot_saved")) : std::string(tr("ui.screenshot_saved")) + " " + file);
+}
 
 void ui_picture_shown() {
     using namespace std::chrono;

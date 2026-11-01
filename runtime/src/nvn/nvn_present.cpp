@@ -497,6 +497,8 @@ int hdr_ui_params(float& ui_nits, bool& gamma22) {
     return g_hdr == HdrOutput::ScRgb ? 1 : 2;
 }
 
+int hdr_tonemap_mode() { return int(hdr_levels().tonemap); }  // 0 vanilla, 1 HDR, 2 RenoDRT (nvn_screenshot.cpp)
+
 bool present_pass_wanted() {
     static const bool on = [] {
         const char* e = std::getenv("NX_PRESENT_PASS");

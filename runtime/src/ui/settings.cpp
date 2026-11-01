@@ -541,6 +541,7 @@ const Binding kBindings[] = {
     {"action.zr", "zr", "C"},             {"action.plus", "plus", "Return"},   {"action.minus", "minus", "Escape"},
     {"action.dpad", "dpad_up", "Up"},     {"action.dpad", "dpad_down", "Down"}, {"action.dpad", "dpad_left", "Left"},
     {"action.dpad", "dpad_right", "Right"},
+    {"action.screenshot", "screenshot", "F12"},  // not a game button: ui.cpp (an HDR PNG with HDR on, nvn_screenshot.cpp)
 };
 int g_capturing = -1;
 
