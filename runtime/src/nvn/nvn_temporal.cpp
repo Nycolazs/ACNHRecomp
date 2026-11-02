@@ -1751,6 +1751,17 @@ bool split_init() {
 // backbuffer and lays the UI layer (registered with its swapchain, double-buffered by it) over the real and the
 // generated frames alike.
 void ffx_fg_ui_split(VkCommandBuffer cb, VkImage backbuffer, uint32_t slot) {
+    // Separate UI composition crashes in the AMD Vulkan present path on the
+    // tested RX 9070 XT. Interpolate the complete frame there until the SDK/
+    // driver path is fixed; retain separate UI composition on other vendors.
+    static const bool split_by_default = [] {
+        VkPhysicalDeviceProperties props{};
+        p_vkGetPhysicalDeviceProperties(vk_physical(), &props);
+        return props.vendorID != 0x1002;
+    }();
+    const char* split_override = std::getenv("NX_FG_UI_SPLIT");
+    if (split_override ? split_override[0] == '0' :
+                         !config_get_bool("video.framegen_ui_split", split_by_default)) return;
     const VkImage hudless = fg.hudless[slot];
     if (!fg.swapchain_ctx || !hudless || !split_init()) return;
     const VkExtent2D e = fg.hudless_extent;
