@@ -4,6 +4,7 @@
 // Layout: a cream card over the dimmed game, the pages as round coloured buttons down its left side (along its top
 // when the screen is narrow or portrait), each setting a row with its name and a short explanation on the left and
 // the control on the right (under them when narrow). Sizes are in design pixels times `scale` (ui.cpp).
+#include "../hle_ldn.h"
 #include "ui/settings.h"
 
 #if !defined(__ANDROID__)
@@ -56,11 +57,13 @@ struct Page {
 };
 const Page kPages[] = {
     {"tab.game", rgb(124, 194, 103), 0},  {"tab.video", rgb(79, 179, 217), 1},   {"tab.audio", rgb(245, 166, 35), 2},
-    {"tab.controls", rgb(155, 125, 212), 3}, {"tab.saves", rgb(232, 115, 122), 4}, {"tab.about", rgb(176, 140, 100), 5},
+    {"tab.controls", rgb(155, 125, 212), 3}, {"tab.saves", rgb(232, 115, 122), 4}, {"tab.online", rgb(72, 190, 170), kIconBox}, {"tab.about", rgb(176, 140, 100), 5},
 };
 constexpr int kPageCount = int(sizeof(kPages) / sizeof(kPages[0]));
 
 int g_page = 0;
+constexpr int kOnlinePage = 5;
+std::atomic<bool> g_show_online{false};  // the game asked for local play with the setting off (hle_ldn.cpp)
 float g_scale = 1;
 std::string g_toast;
 double g_toast_until = 0;
@@ -78,6 +81,7 @@ void toast(const std::string& text) {
 // frame generation are read while the game runs (nvn_present.cpp, nvn_framegen.cpp); elsewhere they are not (the
 // desktop's present pass is chosen at start).
 bool needs_restart(const std::string& key) {
+    if (key.rfind("online.", 0) == 0) return false;  // read when the game next starts local play (hle_ldn.cpp)
 #if defined(__ANDROID__)
     for (const char* k : {"video.upscaler", "video.fsr_sharpness_pct", "video.antialiasing", "video.frame_gen"})
         if (key == k) return false;
@@ -376,6 +380,72 @@ void section(const char* key) {
 
 // The choice that matches the console, tagged as such ("1080p (TV mode) · console original").
 std::string console(const char* key) { return std::string(tr(key)) + " · " + tr("common.console_tag"); }
+
+// Direct play over the internet: the switch, what the router allows, the address to share, a friend's address.
+void page_online() {
+    const bool busy = ldn_enabled();  // held until the session ends (hle_ldn.cpp): no switch to touch
+    row("online.enabled", tr(busy ? "online.enabled.busy" : "online.enabled.desc"), [&](float w) {
+        if (busy) ImGui::TextDisabled("%s", tr("common.on"));
+        else toggle("online.enabled", false, w);
+    });
+    if (config_get("online.enabled", "0") != "1") return;
+    static bool checked = false;
+    if (!checked) {  // once per session, as soon as it is on
+        checked = true;
+        link_check();
+        address_check_start(config_get("online.join"));
+    }
+    const LinkStatus s = link_status();
+    const char* text = "online.status.idle";
+    switch (s.check) {
+    case LinkCheck::Running: text = "online.status.running"; break;
+    case LinkCheck::NoRouter: text = "online.status.no_router"; break;
+    case LinkCheck::Refused: text = "online.status.refused"; break;
+    case LinkCheck::NoPublicAddress: text = "online.status.no_public"; break;
+    case LinkCheck::Open: text = "online.status.open"; break;
+    case LinkCheck::OpenVerified: text = "online.status.verified"; break;
+    case LinkCheck::Idle: break;
+    }
+    if (s.hosting && (s.check == LinkCheck::Open || s.check == LinkCheck::OpenVerified)) text = "online.status.hosting";
+    row("online.status", tr(text), [&](float w) {
+        if (!s.hosting && !busy && ImGui::Button(tr("online.test"), ImVec2(w, 0))) link_check();
+    });
+    if (!s.address.empty()) {
+        static bool shown = false;
+        row("online.address", tr("online.address.desc"), [&](float w) {
+            ImGui::TextUnformatted(shown ? s.address.c_str() : "\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2");
+            const float half = (w - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+            if (ImGui::Button(tr(shown ? "online.hide" : "online.show"), ImVec2(half, 0))) shown = !shown;
+            ImGui::SameLine();
+            if (ImGui::Button(tr("online.copy"), ImVec2(half, 0))) {
+                ImGui::SetClipboardText(s.address.c_str());
+                toast(tr("online.copied"));
+            }
+        });
+    }
+    const AddressResult a = address_check_result();
+    std::string join_text = tr("online.join.desc");
+    switch (a.check) {
+    case AddressCheck::Running: join_text = tr("online.join.running"); break;
+    case AddressCheck::Bad: join_text = tr("online.join.bad"); break;
+    case AddressCheck::NoAnswer: join_text = tr("online.join.no_answer"); break;
+    case AddressCheck::Found: join_text = trf("online.join.found", a.island); break;
+    case AddressCheck::Idle: break;
+    }
+    row("online.join", join_text.c_str(), [&](float w) {
+        static char join[128] = {};
+        static bool loaded = false;
+        if (!loaded) {
+            loaded = true;
+            std::snprintf(join, sizeof join, "%s", config_get("online.join").c_str());
+        }
+        ImGui::SetNextItemWidth(w);
+        if (ImGui::InputText("##online_join", join, sizeof join)) store("online.join", join);
+        if (ImGui::IsItemDeactivatedAfterEdit()) address_check_start(join);
+        if (join[0] && ImGui::Button(tr("online.join.test"), ImVec2(w, 0))) address_check_start(join);
+    });
+    if (s.players > 0) ImGui::TextUnformatted(trf("online.players", std::to_string(s.players)).c_str());
+}
 
 void page_video() {
     section("video.section.screen");
@@ -866,8 +936,11 @@ bool g_quit_confirm = false;
 
 }  // namespace
 
+void settings_show_online() { g_show_online = true; }
+
 bool settings_draw(float scale, ImFont* title) {
     g_scale = scale;
+    if (g_show_online.exchange(false)) g_page = kOnlinePage;
     static const bool cycle = std::getenv("NX_UI_CYCLE") != nullptr;  // tests: every page in turn, 10 s each
     if (cycle) g_page = int(double(plat::monotonic_ns()) / 1e10) % kPageCount;
     static const char* page = std::getenv("NX_UI_PAGE");  // tests: that page (0 game, 1 video, ...) when opened
@@ -1058,6 +1131,7 @@ bool settings_draw(float scale, ImFont* title) {
         case 2: page_audio(); break;
         case 3: page_controls(); break;
         case 4: page_saves(); break;
+        case 5: page_online(); break;
         default: page_about(); break;
     }
     // Tests: NX_UI_SCROLL=<0..1> scrolls the page that far down (headless dumps show the rows further down).

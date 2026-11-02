@@ -18,6 +18,7 @@ endif()
 
 add_executable(acnhrecomp_launcher WIN32
     launcher/main.cpp launcher/pages.cpp launcher/files.cpp launcher/pipeline.cpp launcher/desktop.cpp
+    runtime/src/ldn_upnp.cpp
     runtime/src/ui/theme.cpp runtime/src/ui/i18n.cpp runtime/src/app_icon.cpp
     $<$<PLATFORM_ID:Windows>:${CMAKE_SOURCE_DIR}/assets/acnhrecomp.rc>
     $<$<PLATFORM_ID:Windows>:${CMAKE_SOURCE_DIR}/assets/acnhrecomp.manifest>
@@ -27,7 +28,7 @@ add_executable(acnhrecomp_launcher WIN32
 target_include_directories(acnhrecomp_launcher PRIVATE launcher runtime/src ${NX_LAUNCHER_IMGUI})
 target_link_libraries(acnhrecomp_launcher PRIVATE SDL3::SDL3 Threads::Threads)
 if(WIN32)
-    target_link_libraries(acnhrecomp_launcher PRIVATE ole32 shell32 uuid)  # desktop.cpp: the shortcuts
+    target_link_libraries(acnhrecomp_launcher PRIVATE ole32 shell32 uuid ws2_32)  # desktop.cpp: the shortcuts
 endif()
 execute_process(COMMAND git describe --always --dirty WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
                 OUTPUT_VARIABLE NX_LAUNCHER_DESCRIBE OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)

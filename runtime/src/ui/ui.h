@@ -29,7 +29,10 @@ void ui_event(const SDL_Event& e);               // every SDL event (keys, mouse
 // Returns true when the menu has the input: the game must then see a neutral pad.
 bool ui_pad(uint64_t buttons, int32_t lx, int32_t ly);
 bool ui_visible();
+// A text field has the keyboard: its keys type there and must not drive the pad (Shift is B, which would close the menu).
+bool ui_text_field();
 void ui_toggle();
+void ui_open_online();  // the settings screen, on its Online page: from any thread
 // Touch screens (Android): one finger as the mouse, in pixels of the presented image. Returns true when the menu
 // took the touch (it is open): the game must not see it.
 bool ui_touch(float x, float y, bool down);

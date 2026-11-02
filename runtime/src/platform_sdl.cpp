@@ -265,6 +265,13 @@ static void sample_input() {
     uint64_t mods = 0;
     const bool focused = g_window && (SDL_GetWindowFlags(g_window) & SDL_WINDOW_INPUT_FOCUS);
     const bool typing = nx::plat::keyboard_typing();
+    // The settings screen's text fields: SDL only sends typed characters while text input is on.
+    static bool text_on = false;
+    if (g_window && nx::ui::ui_text_field() != text_on) {
+        text_on = !text_on;
+        if (text_on) SDL_StartTextInput(g_window);
+        else SDL_StopTextInput(g_window);
+    }
     if (focused && typing) {
         const bool* k = SDL_GetKeyboardState(nullptr);
         if (k[SDL_SCANCODE_UP]) p.buttons |= kUp;
@@ -273,7 +280,7 @@ static void sample_input() {
         if (k[SDL_SCANCODE_RIGHT]) p.buttons |= kRight;
         if (k[SDL_SCANCODE_RETURN] || k[SDL_SCANCODE_KP_ENTER]) p.buttons |= kPlus;
         if (k[SDL_SCANCODE_BACKSPACE]) p.buttons |= kB;
-    } else if (focused) {
+    } else if (focused && !nx::ui::ui_text_field()) {
         const bool* k = SDL_GetKeyboardState(nullptr);
         const uint64_t now = SDL_GetTicks();
         auto key = [&](int i) {

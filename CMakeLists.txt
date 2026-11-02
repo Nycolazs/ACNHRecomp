@@ -211,6 +211,10 @@ set(NX_RUNTIME_SOURCES
     runtime/src/hle_hid.cpp
     runtime/src/hle_net.cpp
     runtime/src/hle_ldn.cpp
+    runtime/src/hle_vsock.cpp
+    runtime/src/ldn_link.cpp
+    runtime/src/ldn_discovery.cpp
+    runtime/src/ldn_upnp.cpp
     runtime/src/hle_audio.cpp
     runtime/src/hle_pl.cpp
     runtime/src/hle_nfp.cpp
@@ -435,7 +439,7 @@ else()
                    runtime/src/app_icon.cpp assets/acnhrecomp.rc assets/acnhrecomp.manifest
                    runtime/src/memguard_win.cpp)
     target_include_directories(${NX_GAME} PRIVATE runtime/include runtime/src "${NX_GAME_DIR}" "${NX_VULKAN_INCLUDE}")
-    target_link_libraries(${NX_GAME} PRIVATE SDL3::SDL3 ole32 psapi winmm dxgi)
+    target_link_libraries(${NX_GAME} PRIVATE SDL3::SDL3 ole32 psapi winmm dxgi ws2_32)
     if(NX_GAME_FROM_FOLDER)
         # The game's code from game/windows-x64/<game>_game.dll, which the player hands its runtime calls to
         # (game_abi.cpp: nx_game_bind).

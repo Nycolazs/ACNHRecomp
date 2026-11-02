@@ -102,7 +102,8 @@ GPU; see [docs/STATUS.md](docs/STATUS.md) for the full, regularly updated log.
 | Free roaming on the island | Working, 30 fps on an Intel Iris Xe |
 | First save (written at the end of the first day) | Not yet verified in a full playthrough |
 | 60 fps | Not native yet (see below) |
-| Online features (visits, Nook Link, Dream Suite) | Unavailable |
+| Online features through Nintendo (Dodo codes, Nook Link, Dream Suite) | Unavailable |
+| Visits between PCs (airport, Local Play), over LAN or the internet, no server | Works on Windows; [docs/LOCAL_PLAY.md](docs/LOCAL_PLAY.md) |
 
 **Known issues**
 
@@ -113,7 +114,8 @@ GPU; see [docs/STATUS.md](docs/STATUS.md) for the full, regularly updated log.
   done yet. Play at 30 fps.
 - The first save only happens at the end of the first in-game day, and that path has not been verified end to end
   in a full playthrough. Back up and be prepared for surprises.
-- Online play is not available: the game sees a console with no internet connection.
+- Nintendo's online services are not available: the game sees a console with no internet connection. Visits between
+  PCs go through Local Play instead (page Online in the settings, [docs/LOCAL_PLAY.md](docs/LOCAL_PLAY.md)).
 
 **Platforms**
 
@@ -626,7 +628,9 @@ Some GNOME setups make libdecor/GTK abort the process; the runtime prefers X11/X
 `private/acnh/nx_play.log`.
 
 **Can I visit friends or use Nook Link?**
-No. Online services answer as a console without an internet connection.
+Visiting friends: yes, through Local Play at the airport, on a LAN or over the internet (page Online in the settings,
+[docs/LOCAL_PLAY.md](docs/LOCAL_PLAY.md)). Nook Link and the rest of Nintendo's online services: no, they answer as a
+console without an internet connection.
 
 **Does time pass on my island?**
 Yes. The island follows your computer's date, time and time zone.
@@ -706,6 +710,8 @@ More detail: [docs/ACNH.md](docs/ACNH.md) (the game's modules, RomFS and shader 
 - [Ryujinx / Ryubing](https://codeberg.org/Software_arch/Ryubing) (MIT): the Maxwell shader translator, used
   offline.
 - [Dear ImGui](https://github.com/ocornut/imgui) (MIT): the settings screen.
+- [MHGURecomp](https://github.com/morerokk/MHGURecomp) by morerokk (MIT): the design of local play between PCs
+  (`nn::ldn`, virtual sockets), [docs/LOCAL_PLAY.md](docs/LOCAL_PLAY.md).
 - [ACNH 60 FPS + SpeedFix](https://github.com/tmouh/acnh-60fps) by tmouh (CC BY-NC 4.0): the 60 FPS game-speed
   rescaling, downloaded by `tools/setup_60fps.sh` (or, with a release, at the first start) and applied on your
   machine (not part of this repository).

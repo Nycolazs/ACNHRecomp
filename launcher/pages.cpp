@@ -13,7 +13,10 @@
 // page under it and its buttons in a footer line. Sizes are design pixels times `scale` (main.cpp); below an aspect
 // of 1.2 the two-column parts stack.
 #include "launcher.h"
+#include "ldn_upnp.h"
 
+#include <thread>
+#include <atomic>
 #include <SDL3/SDL.h>
 
 #include <algorithm>
@@ -49,7 +52,7 @@ const ImU32 kWhite = rgb(255, 255, 255);
 
 ImVec4 col4(ImU32 c) { return ImGui::ColorConvertU32ToFloat4(c); }
 
-enum class Page { Welcome, Files, Install, Build, Done, Home, Settings };
+enum class Page { Welcome, Files, Install, Build, Done, Home, Settings, Online };
 
 Page g_page = Page::Welcome;
 SDL_Window* g_window = nullptr;
@@ -1474,6 +1477,7 @@ void page_home() {
     std::vector<A> acts;
     if (valid) acts.push_back({"##settings", nx::ui::kIconGear, kPurple, tr("launcher.home.settings"),
                                tr("launcher.home.settings.desc"), true, 0});
+    if (valid) acts.push_back({"##online", nx::ui::kIconBox, kBlue, tr("tab.online"), tr("online.home.desc"), true, 4});
     const bool player = !player_beside().empty();  // a release: the folder is played as it is, nothing to rebuild
     if (setup_supported() && !player)
         acts.push_back({"##rebuild", nx::ui::kIconLeaf, kOrange, tr("launcher.home.rebuild"),
@@ -1497,6 +1501,7 @@ void page_home() {
         const A& a = acts[k];
         if (action_card(a.id, a.icon, a.color, a.title, a.desc, ImVec2(w, h), a.enabled)) {
             if (a.action == 0) load_game_ini(), g_page = Page::Settings;
+            if (a.action == 4) load_game_ini(), g_page = Page::Online;
             if (a.action == 1) start_setup(true);
             if (a.action == 2) pick(kPickBuild);
             if (a.action == 3) {
@@ -1595,6 +1600,117 @@ void footer_settings() {
     if (button(tr("common.back"), kWhite)) g_page = Page::Home;
     align_right({tr("launcher.settings.open_data")});
     if (button(tr("launcher.settings.open_data"), kWhite)) open_folder(g_build.data);
+}
+
+// ---- online: local play over the internet, the same settings as the game's Online page -------------------------
+
+struct OnlineCheck {
+    std::mutex lock;
+    nx::LinkCheck state = nx::LinkCheck::Idle;
+    std::string address;
+    std::atomic<bool> running{false};
+};
+OnlineCheck g_online;
+
+void online_check_start() {
+    if (g_online.running.exchange(true)) return;
+    {
+        std::lock_guard lk(g_online.lock);
+        g_online.state = nx::LinkCheck::Running;
+    }
+    std::thread([] {
+        std::string address;
+        const nx::LinkCheck r = nx::upnp_check(39500, address);
+        std::lock_guard lk(g_online.lock);
+        g_online.state = r;
+        g_online.address = address;
+        g_online.running = false;
+    }).detach();
+}
+
+void page_online() {
+    heading(tr("tab.online"), tr("online.enabled.desc"));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, col4(kPaper));
+    ImGui::BeginChild("##rows", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
+    bool on = g_game_ini.get("online.enabled", "0") == "1";
+    if (ImGui::Checkbox(tr("online.enabled"), &on)) {
+        g_game_ini.set("online.enabled", on ? "1" : "0");
+        if (!g_game_ini.save()) toast(tr("launcher.settings.save_failed"));
+        if (on) online_check_start();
+    }
+    if (on) {
+        static bool checked = false;
+        if (!checked) {
+            checked = true;
+            online_check_start();
+        }
+        nx::LinkCheck state;
+        std::string address;
+        {
+            std::lock_guard lk(g_online.lock);
+            state = g_online.state;
+            address = g_online.address;
+        }
+        const char* text = "online.status.idle";
+        switch (state) {
+        case nx::LinkCheck::Running: text = "online.status.running"; break;
+        case nx::LinkCheck::NoRouter: text = "online.status.no_router"; break;
+        case nx::LinkCheck::Refused: text = "online.status.refused"; break;
+        case nx::LinkCheck::NoPublicAddress: text = "online.status.no_public"; break;
+        case nx::LinkCheck::Open: text = "online.status.open"; break;
+        case nx::LinkCheck::OpenVerified: text = "online.status.verified"; break;
+        case nx::LinkCheck::Idle: break;
+        }
+        ImGui::Separator();
+        ImGui::TextUnformatted(tr("online.status"));
+        text_small(tr(text));
+        if (button(tr("online.test"), kWhite, !g_online.running)) online_check_start();
+        if (!address.empty()) {
+            static bool shown = false;
+            ImGui::Separator();
+            ImGui::TextUnformatted(tr("online.address"));
+            text_small(tr("online.address.desc"));
+            ImGui::TextUnformatted(shown ? address.c_str() : "\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2");
+            if (button(tr(shown ? "online.hide" : "online.show"), kWhite)) shown = !shown;
+            ImGui::SameLine();
+            if (button(tr("online.copy"), kMint)) {
+                ImGui::SetClipboardText(address.c_str());
+                toast(tr("online.copied"));
+            }
+        }
+        ImGui::Separator();
+        ImGui::TextUnformatted(tr("online.join"));
+        const nx::AddressResult a = nx::address_check_result();
+        std::string join_text = tr("online.join.desc");
+        switch (a.check) {
+        case nx::AddressCheck::Running: join_text = tr("online.join.running"); break;
+        case nx::AddressCheck::Bad: join_text = tr("online.join.bad"); break;
+        case nx::AddressCheck::NoAnswer: join_text = tr("online.join.no_answer"); break;
+        case nx::AddressCheck::Found: join_text = trf("online.join.found", a.island); break;
+        case nx::AddressCheck::Idle: break;
+        }
+        text_small(join_text.c_str());
+        static char join[128] = {};
+        static bool loaded = false;
+        if (!loaded) {
+            loaded = true;
+            std::snprintf(join, sizeof join, "%s", g_game_ini.get("online.join").c_str());
+            nx::address_check_start(join);
+        }
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+        if (ImGui::InputText("##join", join, sizeof join)) {
+            g_game_ini.set("online.join", join);
+            if (!g_game_ini.save()) toast(tr("launcher.settings.save_failed"));
+        }
+        if (ImGui::IsItemDeactivatedAfterEdit()) nx::address_check_start(join);
+        if (join[0] && button(tr("online.join.test"), kWhite)) nx::address_check_start(join);
+    }
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
+}
+
+void footer_online() {
+    if (button(tr("common.back"), kWhite)) g_page = Page::Home;
 }
 
 // ---- popups ---------------------------------------------------------------------------------------------------
@@ -1767,6 +1883,7 @@ bool pages_draw(float scale, ImFont* title) {
         case Page::Done: page_done(); break;
         case Page::Home: page_home(); break;
         case Page::Settings: page_settings(); break;
+        case Page::Online: page_online(); break;
     }
     if (int(g_page) == pi) content_h[pi] = ImGui::GetCursorPosY() - start;
     static const char* scroll = std::getenv("NX_LAUNCHER_SCROLL");  // tests: 0..1 of the page's scroll range
@@ -1786,6 +1903,7 @@ bool pages_draw(float scale, ImFont* title) {
         case Page::Done: footer_done(); break;
         case Page::Home: footer_home(); break;
         case Page::Settings: footer_settings(); break;
+        case Page::Online: footer_online(); break;
     }
     popups();
     opening_overlay();
