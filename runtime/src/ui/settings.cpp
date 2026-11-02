@@ -65,6 +65,55 @@ int g_page = 0;
 constexpr int kOnlinePage = 5;
 std::atomic<bool> g_show_online{false};  // the game asked for local play with the setting off (hle_ldn.cpp)
 float g_scale = 1;
+int g_nav_index = 0, g_nav_target = -1, g_nav_count = 0;
+bool g_page_navigation = false;
+bool g_nav_sidebar = false, g_sidebar_focus = false;
+int g_sidebar_index = 0;
+std::vector<ImVec2> g_nav_positions;
+constexpr int kResumeFocus = -2, kQuitFocus = -3;
+
+void action_nav_item(int index) {
+    if (ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId)) return;
+    if (g_nav_target == index) {
+        ImGuiContext& ctx = *ImGui::GetCurrentContext();
+        ImGui::ClearActiveID();
+        ImGui::FocusWindow(ctx.CurrentWindow);
+        ImGui::SetFocusID(ImGui::GetItemID(), ctx.CurrentWindow);
+        ctx.NavInitRequest = false;
+        ctx.NavInitResult.Clear();
+        ImGui::NavMoveRequestCancel();
+        ImGui::SetNavCursorVisible(true);
+        g_nav_target = -1;
+        g_nav_index = index;
+        g_nav_sidebar = false;
+    } else if (ImGui::IsItemFocused() && g_nav_target == -1) {
+        g_nav_index = index;
+        g_nav_sidebar = false;
+    }
+}
+
+// Register controls in display order instead of relying on geometric navigation between columns.
+void page_nav_item() {
+    if (!g_page_navigation || ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId)) return;
+    ImGuiContext& ctx = *ImGui::GetCurrentContext();
+    if (!ctx.LastItemData.ID || (ctx.LastItemData.ItemFlags & ImGuiItemFlags_Disabled)) return;
+    const int index = g_nav_count++;
+    const ImRect rect = ctx.LastItemData.Rect;
+    g_nav_positions.push_back(rect.GetCenter());
+    if (index == g_nav_target) {
+        ImGui::ClearActiveID();
+        ImGui::FocusWindow(ctx.CurrentWindow);
+        ImGui::SetFocusID(ctx.LastItemData.ID, ctx.CurrentWindow);
+        ImGui::SetNavCursorVisible(true);
+        ImGui::SetScrollHereY();
+        g_nav_index = index;
+        g_nav_target = -1;
+        g_nav_sidebar = false;
+    } else if (ImGui::IsItemFocused() && g_nav_target < 0) {
+        g_nav_index = index;
+        g_nav_sidebar = false;
+    }
+}
 std::string g_toast;
 double g_toast_until = 0;
 bool g_restart_note = false;
@@ -207,7 +256,10 @@ void combo(const std::string& key, const std::string& fallback, const Choices& c
         shown += "…";
     }
     ImGui::SetNextItemWidth(width);
-    if (ImGui::BeginCombo("##c", shown.c_str())) {
+    ImGui::PushStyleColor(ImGuiCol_NavCursor, ImVec4(0, 0, 0, 0));
+    bool combo_open = ImGui::BeginCombo("##c", shown.c_str());
+    ImGui::PopStyleColor();
+    if (combo_open) {
         for (auto& [v, t] : choices) {
             bool sel = v == cur;
             if (ImGui::Selectable(t.c_str(), sel)) store(key, v);
@@ -217,17 +269,18 @@ void combo(const std::string& key, const std::string& fallback, const Choices& c
         ImGui::EndCombo();
     }
     if (full != shown && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", full.c_str());
+    page_nav_item();
     bool focused = ImGui::IsItemFocused();
     if (focused) {
         ImDrawList* dl = ImGui::GetWindowDrawList();
         ImVec2 rmin = ImGui::GetItemRectMin();
         ImVec2 rmax = ImGui::GetItemRectMax();
-        dl->AddRect(rmin, rmax, rgb(246, 170, 40), 6.0f * g_scale, 0, 2.5f * g_scale);
+        dl->AddRect(rmin, rmax, rgb(246, 170, 40), ImGui::GetStyle().FrameRounding, 0, 2.5f * g_scale);
         if (cur_idx >= 0 && choices.size() > 1) {
-            if (ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft, true) || ImGui::IsKeyPressed(ImGuiKey_LeftArrow, true)) {
+            if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow, true)) {
                 int next_idx = (cur_idx - 1 + int(choices.size())) % int(choices.size());
                 store(key, choices[next_idx].first);
-            } else if (ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight, true) || ImGui::IsKeyPressed(ImGuiKey_RightArrow, true)) {
+            } else if (ImGui::IsKeyPressed(ImGuiKey_RightArrow, true)) {
                 int next_idx = (cur_idx + 1) % int(choices.size());
                 store(key, choices[next_idx].first);
             }
@@ -245,7 +298,10 @@ void toggle(const std::string& key, bool fallback, float width = 0) {
     float natural_w = pill_w + 10.0f * g_scale + ts.x;
     float hit_w = width > 0 ? width : natural_w;
     ImVec2 p = ImGui::GetCursorScreenPos();
+    ImGui::PushStyleColor(ImGuiCol_NavCursor, ImVec4(0, 0, 0, 0));
     bool clicked = ImGui::InvisibleButton("##t", ImVec2(hit_w, h), ImGuiButtonFlags_EnableNav);
+    ImGui::PopStyleColor();
+    page_nav_item();
     bool focused = ImGui::IsItemFocused();
     bool hov = ImGui::IsItemHovered();
     bool was_on = on;
@@ -255,12 +311,12 @@ void toggle(const std::string& key, bool fallback, float width = 0) {
         on = !on;
         changed = true;
     } else if (focused) {
-        if (ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft, true) || ImGui::IsKeyPressed(ImGuiKey_LeftArrow, true)) {
+        if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow, true)) {
             if (on) {
                 on = false;
                 changed = true;
             }
-        } else if (ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight, true) || ImGui::IsKeyPressed(ImGuiKey_RightArrow, true)) {
+        } else if (ImGui::IsKeyPressed(ImGuiKey_RightArrow, true)) {
             if (!on) {
                 on = true;
                 changed = true;
@@ -280,11 +336,6 @@ void toggle(const std::string& key, bool fallback, float width = 0) {
     dl->AddRectFilled(p, ImVec2(p.x + pill_w, p.y + h), bg, h * 0.5f);
     if (hov || focused) {
         dl->AddRect(p, ImVec2(p.x + pill_w, p.y + h), rgb(246, 170, 40), h * 0.5f, 0, 2.5f * g_scale);
-        if (focused) {
-            dl->AddRect(ImVec2(p.x - 2.0f * g_scale, p.y - 2.0f * g_scale),
-                        ImVec2(p.x + hit_w + 2.0f * g_scale, p.y + h + 2.0f * g_scale),
-                        rgb(246, 170, 40), 6.0f * g_scale, 0, 2.0f * g_scale);
-        }
     }
     float r = h * 0.5f - 3.0f * g_scale;
     ImVec2 knob(on ? p.x + pill_w - h * 0.5f : p.x + h * 0.5f, p.y + h * 0.5f);
@@ -298,7 +349,10 @@ void slider(const std::string& key, int lo, int hi, int fallback, const char* fm
     g_row_key = key;
     int v = config_get_int(key, fallback);
     ImGui::SetNextItemWidth(width);
+    ImGui::PushStyleColor(ImGuiCol_NavCursor, ImVec4(0, 0, 0, 0));
     const bool changed = ImGui::SliderInt("##s", &v, lo, hi, fmt);
+    ImGui::PopStyleColor();
+    page_nav_item();
     g_slider_held |= ImGui::IsItemActive();
     if (changed) {
         config_set(key, std::to_string(v));
@@ -308,18 +362,21 @@ void slider(const std::string& key, int lo, int hi, int fallback, const char* fm
         ImDrawList* dl = ImGui::GetWindowDrawList();
         ImVec2 rmin = ImGui::GetItemRectMin();
         ImVec2 rmax = ImGui::GetItemRectMax();
-        dl->AddRect(rmin, rmax, rgb(246, 170, 40), 6.0f * g_scale, 0, 2.5f * g_scale);
+        dl->AddRect(rmin, rmax, rgb(246, 170, 40), ImGui::GetStyle().FrameRounding, 0, 2.5f * g_scale);
     }
     if (ImGui::IsItemDeactivatedAfterEdit()) config_save();
 }
 
 bool button(const char* text, float width = 0) {
+    ImGui::PushStyleColor(ImGuiCol_NavCursor, ImVec4(0, 0, 0, 0));
     bool res = ImGui::Button(text, ImVec2(width, 0));
+    ImGui::PopStyleColor();
+    page_nav_item();
     if (ImGui::IsItemFocused()) {
         ImDrawList* dl = ImGui::GetWindowDrawList();
         ImVec2 rmin = ImGui::GetItemRectMin();
         ImVec2 rmax = ImGui::GetItemRectMax();
-        dl->AddRect(rmin, rmax, rgb(246, 170, 40), 6.0f * g_scale, 0, 2.5f * g_scale);
+        dl->AddRect(rmin, rmax, rgb(246, 170, 40), ImGui::GetStyle().FrameRounding, 0, 2.5f * g_scale);
     }
     return res;
 }
@@ -658,6 +715,7 @@ void page_controls() {
                 g_capturing = k;
                 ui_begin_key_capture();
             }
+            page_nav_item();
             ImGui::PopID();
         }
         ImGui::EndTable();
@@ -752,6 +810,7 @@ void page_saves() {
         ImGui::BulletText("%s", found[k].label.c_str());
         ImGui::SameLine();
         if (ImGui::SmallButton(tr("saves.import"))) g_confirm_import = found[k].path;
+        page_nav_item();
         ImGui::PopID();
     }
     ImGui::Dummy(ImVec2(0, 6 * g_scale));
@@ -761,6 +820,7 @@ void page_saves() {
         ImGui::BulletText("%s", b.c_str());
         ImGui::SameLine();
         if (ImGui::SmallButton(tr("saves.restore"))) g_confirm_restore = b;
+        page_nav_item();
         ImGui::PopID();
     }
     // Confirmations.
@@ -774,7 +834,10 @@ void page_saves() {
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (button(tr("common.cancel"))) g_confirm_import.clear(), ImGui::CloseCurrentPopup();
+        bool cancel = button(tr("common.cancel"));
+        ImGui::SetItemDefaultFocus();
+        if (cancel || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+            g_confirm_import.clear(), ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
     if (!g_confirm_restore.empty()) ImGui::OpenPopup("confirm_restore");
@@ -790,7 +853,10 @@ void page_saves() {
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (button(tr("common.cancel"))) g_confirm_restore.clear(), ImGui::CloseCurrentPopup();
+        bool cancel = button(tr("common.cancel"));
+        ImGui::SetItemDefaultFocus();
+        if (cancel || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+            g_confirm_restore.clear(), ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
 }
@@ -938,7 +1004,7 @@ bool g_quit_confirm = false;
 
 void settings_show_online() { g_show_online = true; }
 
-bool settings_draw(float scale, ImFont* title) {
+bool settings_draw(float scale, ImFont* title, bool opened) {
     g_scale = scale;
     if (g_show_online.exchange(false)) g_page = kOnlinePage;
     static const bool cycle = std::getenv("NX_UI_CYCLE") != nullptr;  // tests: every page in turn, 10 s each
@@ -948,6 +1014,84 @@ bool settings_draw(float scale, ImFont* title) {
     if (page && !paged) g_page = std::clamp(std::atoi(page), 0, kPageCount - 1), paged = true;
     ImGuiIO& io = ImGui::GetIO();
     ImVec2 ds = io.DisplaySize;
+    static int last_page = -1;
+    const bool popup = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId);
+    bool back_to_sidebar = false;
+    const bool cancel_capture = g_capturing >= 0 && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false);
+    if (cancel_capture) {
+        g_capturing = -1;
+        ui_cancel_key_capture();
+        ImGui::ClearActiveID();
+    }
+    if (!popup && g_capturing < 0 && !cancel_capture) {
+        if (opened) {
+            g_nav_sidebar = true;
+            g_sidebar_index = g_page;
+            g_sidebar_focus = true;
+            g_nav_target = -1;
+        }
+        if (!g_nav_sidebar && !opened && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) {
+            ImGui::ClearActiveID();
+            g_nav_sidebar = true;
+            g_sidebar_index = g_page;
+            g_sidebar_focus = true;
+            g_nav_target = -1;
+            back_to_sidebar = true;
+        }
+        const int direction = (ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown, true) ? 1 : 0) -
+                              (ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp, true) ? 1 : 0);
+        const int horizontal = (ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight, false) ? 1 : 0) -
+                               (ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft, false) ? 1 : 0);
+        ImGuiContext& ctx = *ImGui::GetCurrentContext();
+        const bool editing = ctx.ActiveId && ctx.ActiveId == ctx.NavId;
+        if (direction && g_nav_sidebar) {
+            int next = g_sidebar_index + direction;
+            if (next < 0 || next >= kPageCount) {
+                g_nav_sidebar = false;
+                g_nav_target = next < 0 ? kResumeFocus : kQuitFocus;
+            } else {
+                g_sidebar_index = next;
+                g_sidebar_focus = true;
+            }
+        } else if (direction && g_nav_index == kResumeFocus) {
+            if (direction > 0) g_nav_target = g_nav_count > 0 ? 0 : kQuitFocus;
+        } else if (direction && g_nav_index == kQuitFocus) {
+            if (direction < 0) g_nav_target = g_nav_count > 0 ? g_nav_count - 1 : kResumeFocus;
+        } else if (direction && g_nav_count > 0) {
+            int next = g_nav_index + direction;
+            g_nav_target = next < 0 ? kResumeFocus : next >= g_nav_count ? kQuitFocus : next;
+            ImGui::ClearActiveID();
+        }
+        if (horizontal && !editing) {
+            if (g_nav_sidebar && horizontal > 0 && g_nav_count > 0) {
+                g_nav_sidebar = false;
+                g_nav_target = std::clamp(g_nav_index, 0, g_nav_count - 1);
+            } else if (!g_nav_sidebar && g_nav_index < 0 && horizontal < 0) {
+                g_nav_sidebar = true;
+                g_sidebar_index = g_page;
+                g_sidebar_focus = true;
+                g_nav_target = -1;
+            } else if (!g_nav_sidebar && g_nav_index >= 0 && g_nav_index < g_nav_count) {
+                const ImVec2 origin = g_nav_positions[g_nav_index];
+                int neighbour = -1;
+                float best = 1e30f;
+                for (int i = 0; i < int(g_nav_positions.size()); ++i) {
+                    const ImVec2 p = g_nav_positions[i];
+                    float dx = (p.x - origin.x) * horizontal;
+                    if (dx > 1.0f && std::abs(p.y - origin.y) < 20.0f * scale && dx < best)
+                        neighbour = i, best = dx;
+                }
+                if (neighbour >= 0) g_nav_target = neighbour;
+                else if (horizontal < 0) {
+                    g_nav_sidebar = true;
+                    g_sidebar_index = g_page;
+                    g_sidebar_focus = true;
+                    g_nav_target = -1;
+                }
+            }
+        }
+        if (ctx.NavInputSource == ImGuiInputSource_Gamepad && !(editing && horizontal)) ImGui::NavMoveRequestCancel();
+    }
     bool portrait = ds.x < ds.y * 1.2f;
     g_slider_held = false;  // set again by a slider still held (slider)
     // Dim the game.
@@ -976,21 +1120,29 @@ bool settings_draw(float scale, ImFont* title) {
         float bw = std::max(130.0f * scale, ImGui::CalcTextSize(resume_text.c_str()).x + 36 * scale);
         ImGui::SetCursorScreenPos(ImVec2(p.x + w - bw - 10 * scale, p.y + (h - ImGui::GetFrameHeight()) * 0.5f));
         ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(255, 255, 255, 230));
+        ImGui::PushStyleColor(ImGuiCol_NavCursor, ImVec4(0, 0, 0, 0));
         if (ImGui::Button(resume_text.c_str(), ImVec2(bw, 0))) open = false;
+        ImGui::PopStyleColor();
+        action_nav_item(kResumeFocus);
         if (ImGui::IsItemFocused()) {
-            dl->AddRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), rgb(246, 170, 40), ImGui::GetFrameHeight() * 0.5f, 0, 2.5f * scale);
+            dl->AddRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), rgb(246, 170, 40), ImGui::GetStyle().FrameRounding, 0, 2.5f * scale);
         }
         ImGui::PopStyleColor();
         ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + h + 14 * scale));
     }
     // Gamepad shoulder buttons (L/R/ZL/ZR) & PageUp/PageDown to switch tabs from anywhere
     if (g_capturing < 0 && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId)) {
+        const int previous_page = g_page;
         if (ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadL2, false) ||
             ImGui::IsKeyPressed(ImGuiKey_PageUp, false)) {
             g_page = (g_page - 1 + kPageCount) % kPageCount;
         } else if (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadR2, false) ||
                    ImGui::IsKeyPressed(ImGuiKey_PageDown, false)) {
             g_page = (g_page + 1) % kPageCount;
+        }
+        if (g_page != previous_page && g_nav_sidebar) {
+            g_sidebar_index = g_page;
+            g_sidebar_focus = true;
         }
     }
     // Page buttons: a column on the left, or a row on top when narrow. The footer keeps its line below both.
@@ -1085,8 +1237,33 @@ bool settings_draw(float scale, ImFont* title) {
         float bh = 52.0f * scale;
         float bw = portrait ? std::max(140.0f * scale, ImGui::CalcTextSize(label).x + bh + 24 * scale) : -1;
         ImVec2 p = ImGui::GetCursorScreenPos();
+        ImGui::PushStyleColor(ImGuiCol_NavCursor, ImVec4(0, 0, 0, 0));
+        bool activate = ImGui::InvisibleButton("##p", ImVec2(bw < 0 ? ImGui::GetContentRegionAvail().x : bw, bh), ImGuiButtonFlags_EnableNav);
+        ImGui::PopStyleColor();
+        if (g_sidebar_focus && g_sidebar_index == k) {
+            ImGui::ClearActiveID();
+            ImGui::FocusWindow(ImGui::GetCurrentWindow());
+            ImGui::SetFocusID(ImGui::GetItemID(), ImGui::GetCurrentWindow());
+            ImGui::SetNavCursorVisible(true);
+            ImGui::SetScrollHereY();
+            g_sidebar_focus = false;
+        }
+        // Preserve the requested destination until its tab has received focus.
+        if (ImGui::IsItemFocused() && !g_sidebar_focus) {
+            g_nav_sidebar = true;
+            g_sidebar_index = k;
+        }
+        // Confirming a tab enters its content, including when it is already selected.
+        activate |= ImGui::IsItemFocused() && !g_sidebar_focus &&
+                    ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false);
+        if (activate) {
+            ImGui::ClearActiveID();
+            g_page = k;
+            g_nav_sidebar = false;
+            g_nav_index = 0;
+            g_nav_target = 0;
+        }
         bool sel = g_page == k;
-        if (ImGui::InvisibleButton("##p", ImVec2(bw < 0 ? ImGui::GetContentRegionAvail().x : bw, bh), ImGuiButtonFlags_EnableNav)) g_page = k;
         bool hov = ImGui::IsItemHovered() || ImGui::IsItemFocused();
         ImVec2 q = ImGui::GetItemRectMax();
         ImDrawList* cl = ImGui::GetWindowDrawList();
@@ -1125,6 +1302,15 @@ bool settings_draw(float scale, ImFont* title) {
     // The page.
     ImGui::BeginChild("##page", ImVec2(0, -footer), ImGuiChildFlags_None, ImGuiWindowFlags_NavFlattened);
     ImGui::Dummy(ImVec2(0, 4 * scale));
+    if (last_page != g_page) {
+        g_nav_target = g_nav_sidebar ? -1 : 0;
+        g_nav_index = 0;
+        ImGui::SetScrollY(0);
+        last_page = g_page;
+    }
+    g_nav_count = 0;
+    g_nav_positions.clear();
+    g_page_navigation = true;
     switch (g_page) {
         case 0: page_game(); break;
         case 1: page_video(); break;
@@ -1134,6 +1320,7 @@ bool settings_draw(float scale, ImFont* title) {
         case 5: page_online(); break;
         default: page_about(); break;
     }
+    g_page_navigation = false;
     // Tests: NX_UI_SCROLL=<0..1> scrolls the page that far down (headless dumps show the rows further down).
     if (static const char* sc = std::getenv("NX_UI_SCROLL"); sc && ImGui::GetScrollMaxY() > 0)
         ImGui::SetScrollY(float(std::atof(sc)) * ImGui::GetScrollMaxY());
@@ -1172,9 +1359,12 @@ bool settings_draw(float scale, ImFont* title) {
         float qw = ImGui::CalcTextSize(tr("common.quit_game")).x + 30 * scale;
         ImGui::SetCursorPosX(ImGui::GetWindowContentRegionMax().x - qw);
         ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(232, 115, 122, 255));
+        ImGui::PushStyleColor(ImGuiCol_NavCursor, ImVec4(0, 0, 0, 0));
         if (ImGui::Button(tr("common.quit_game"), ImVec2(qw, 0))) g_quit_confirm = true;
+        ImGui::PopStyleColor();
+        action_nav_item(kQuitFocus);
         if (ImGui::IsItemFocused()) {
-            dl->AddRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), rgb(246, 170, 40), ImGui::GetFrameHeight() * 0.5f, 0, 2.5f * scale);
+            dl->AddRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), rgb(246, 170, 40), ImGui::GetStyle().FrameRounding, 0, 2.5f * scale);
         }
         ImGui::PopStyleColor();
     }
@@ -1186,7 +1376,10 @@ bool settings_draw(float scale, ImFont* title) {
             plat::exit_process(0);
         }
         ImGui::SameLine();
-        if (ImGui::Button(tr("common.no"))) g_quit_confirm = false, ImGui::CloseCurrentPopup();
+        bool cancel = ImGui::Button(tr("common.no"));
+        ImGui::SetItemDefaultFocus();
+        if (cancel || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+            g_quit_confirm = false, ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
     if (g_must_quit) ImGui::OpenPopup("must_quit");
@@ -1197,8 +1390,9 @@ bool settings_draw(float scale, ImFont* title) {
     }
     // Cancel (B / Escape) closes the screen when nothing else wants it (never after an import: see g_must_quit).
     if (g_must_quit) open = true;
-    if (g_capturing < 0 && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) &&
-        (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)))
+    if (g_capturing < 0 && !cancel_capture && !popup && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) &&
+        (ImGui::IsKeyPressed(ImGuiKey_Escape, false) ||
+         (!back_to_sidebar && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false))))
         open = false;
     if (g_must_quit) open = true;
     ImGui::End();
