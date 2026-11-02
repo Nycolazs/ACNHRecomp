@@ -28,6 +28,8 @@ void ui_event(const SDL_Event& e);               // every SDL event (keys, mouse
 // The pad as the game would see it this tick (NpadButton bits, sticks): the menu's toggle combo and navigation.
 // Returns true when the menu has the input: the game must then see a neutral pad.
 bool ui_pad(uint64_t buttons, int32_t lx, int32_t ly);
+// Hold Plus/Minus briefly so the settings shortcut can consume them before the game sees them.
+uint64_t ui_filter_game_buttons(uint64_t buttons, bool captured);
 bool ui_visible();
 // A text field has the keyboard: its keys type there and must not drive the pad (Shift is B, which would close the menu).
 bool ui_text_field();

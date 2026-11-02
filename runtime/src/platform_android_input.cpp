@@ -230,7 +230,9 @@ void read_pad(PadState& p) {
     gear_held = gear;
     p.buttons &= ~kSettingsButton;
     // The settings screen takes the controller while it is open (and watches for its Minus + Plus combo).
-    if (nx::ui::ui_pad(p.buttons, p.lx, p.ly)) p = PadState{};
+    bool ui = nx::ui::ui_pad(p.buttons, p.lx, p.ly);
+    p.buttons = nx::ui::ui_filter_game_buttons(p.buttons, ui);
+    if (ui) p = PadState{};
 }
 
 // A controller connected: the touch controls hide at once (as on its first input); disconnected: they come back.
