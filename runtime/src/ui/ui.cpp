@@ -601,16 +601,17 @@ bool ui_pad(uint64_t buttons, int32_t lx, int32_t ly) {
     return true;
 }
 
-uint64_t ui_game_buttons(uint64_t buttons, bool captured) {
+uint64_t ui_filter_game_buttons(uint64_t buttons, bool captured) {
     using clock = std::chrono::steady_clock;
     constexpr uint64_t plus = 1ull << 10, minus = 1ull << 11, shortcut = plus | minus;
-    constexpr auto grace = std::chrono::milliseconds(200);
-    static uint64_t previous = 0, pending = 0, passed = 0, blocked = 0;
-    static clock::time_point since[2], tap_until[2];
+    constexpr auto shortcut_delay = std::chrono::milliseconds(200);
+    constexpr auto tap_duration = std::chrono::milliseconds(50);
+    static uint64_t previous = 0, pending = 0, forwarded = 0, blocked = 0;
+    static clock::time_point pressed_at[2], tap_until[2];
     const auto now = clock::now();
     if (captured) {
         blocked |= buttons & shortcut;
-        pending = passed = 0;
+        pending = forwarded = 0;
         tap_until[0] = tap_until[1] = clock::time_point{};
         previous = buttons;
         return buttons & ~shortcut;
@@ -619,21 +620,24 @@ uint64_t ui_game_buttons(uint64_t buttons, bool captured) {
     const uint64_t pressed = buttons & ~previous & shortcut & ~blocked;
     const uint64_t released = previous & ~buttons & shortcut;
     uint64_t output = buttons & ~shortcut;
-    const uint64_t bits[] = {plus, minus};
+    const uint64_t shortcut_buttons[] = {plus, minus};
     for (int i = 0; i < 2; ++i) {
-        const uint64_t bit = bits[i];
-        if (pressed & bit) pending |= bit, since[i] = now;
+        const uint64_t bit = shortcut_buttons[i];
+        if (pressed & bit) {
+            pending |= bit;
+            pressed_at[i] = now;
+        }
         if (released & bit) {
-            if (pending & bit) tap_until[i] = now + std::chrono::milliseconds(50);
+            if (pending & bit) tap_until[i] = now + tap_duration;
             pending &= ~bit;
-            passed &= ~bit;
-        } else if ((pending & bit) && now - since[i] >= grace) {
+            forwarded &= ~bit;
+        } else if ((pending & bit) && now - pressed_at[i] >= shortcut_delay) {
             pending &= ~bit;
-            passed |= bit;
+            forwarded |= bit;
         }
         if (now < tap_until[i]) output |= bit;  // Keep a quick tap visible to the game's next poll.
     }
-    output |= buttons & passed & ~blocked;
+    output |= buttons & forwarded & ~blocked;
     previous = buttons;
     return output;
 }

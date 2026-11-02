@@ -11,7 +11,7 @@ void ui_picture_shown() {}
 void ui_shutdown() {}
 void ui_event(const SDL_Event&) {}
 bool ui_pad(uint64_t, int32_t, int32_t) { return false; }
-uint64_t ui_game_buttons(uint64_t buttons, bool) { return buttons; }
+uint64_t ui_filter_game_buttons(uint64_t buttons, bool) { return buttons; }
 bool ui_visible() { return false; }
 void ui_toggle() {}
 bool ui_touch(float, float, bool) { return false; }

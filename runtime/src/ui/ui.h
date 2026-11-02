@@ -29,7 +29,7 @@ void ui_event(const SDL_Event& e);               // every SDL event (keys, mouse
 // Returns true when the menu has the input: the game must then see a neutral pad.
 bool ui_pad(uint64_t buttons, int32_t lx, int32_t ly);
 // Hold Plus/Minus briefly so the settings shortcut can consume them before the game sees them.
-uint64_t ui_game_buttons(uint64_t buttons, bool captured);
+uint64_t ui_filter_game_buttons(uint64_t buttons, bool captured);
 bool ui_visible();
 void ui_toggle();
 // Touch screens (Android): one finger as the mouse, in pixels of the presented image. Returns true when the menu

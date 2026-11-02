@@ -231,7 +231,7 @@ void read_pad(PadState& p) {
     p.buttons &= ~kSettingsButton;
     // The settings screen takes the controller while it is open (and watches for its Minus + Plus combo).
     bool ui = nx::ui::ui_pad(p.buttons, p.lx, p.ly);
-    p.buttons = nx::ui::ui_game_buttons(p.buttons, ui);
+    p.buttons = nx::ui::ui_filter_game_buttons(p.buttons, ui);
     if (ui) p = PadState{};
 }
 

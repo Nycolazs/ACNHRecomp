@@ -316,7 +316,7 @@ static void sample_input() {
     }
     // The settings screen takes the input while it is open (and watches for its Minus + Plus combo).
     bool ui = nx::ui::ui_pad(p.buttons, p.lx, p.ly);
-    p.buttons = nx::ui::ui_game_buttons(p.buttons, ui);
+    p.buttons = nx::ui::ui_filter_game_buttons(p.buttons, ui);
     if (ui) p = PadState{}, std::memset(usb, 0, sizeof usb), mods = 0;
     nx::plat::set_keyboard(mods, usb);
     // The mouse: its left button touches the console's screen where the picture is (the game's own touch support).
