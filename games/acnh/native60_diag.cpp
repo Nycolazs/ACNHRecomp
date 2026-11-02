@@ -13,6 +13,10 @@
 
 namespace nx {
 
+namespace nvn {
+void temporal_lookat_hook(CPU& c);  // nvn_temporal.cpp: 3.0.2's sead::LookAtCamera hook is this one
+}
+
 namespace {
 
 std::string root_file(const char* name) {
@@ -74,6 +78,7 @@ void rescan() {
 
 // sead::LookAtCamera::doUpdateMatrix (main+37e4624): pos at this+0x38, at this+0x44.
 void lookat_update(CPU& c) {
+    nvn::temporal_lookat_hook(c);
     if (!std::getenv("NX_NATIVE60_TRACE")) return;
     uint64_t cam = c.x[0];
     if (cam < kHeapBase || cam >= kHeapBase + kHeapMax) return;

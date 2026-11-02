@@ -41,6 +41,7 @@
 namespace nx::nvn {
 int hdr_ui_params(float& ui_nits, bool& gamma22);  // nvn_present.cpp: 0 SDR, 1 scRGB, 2 HDR10
 void screenshot_request();                         // nvn_screenshot.cpp: F12
+uint64_t ffx_fg_presents();                        // nvn_temporal.cpp: AMD frame generation's presents, 0 when off
 }  // namespace nx::nvn
 
 namespace nx::ui {
@@ -380,30 +381,36 @@ void draw_fps_overlay(float scale) {
     // frames, which made it read 60 while the game ran at 30), and the pictures shown when frame generation adds some.
     using clock = std::chrono::steady_clock;
     static auto last = clock::now();
-    static uint64_t frames0 = plat::game_frames(), shown = 0;
+    static uint64_t frames0 = plat::game_frames(), shown = 0, amd0 = nx::nvn::ffx_fg_presents();
     static float s_fps = 0.0f, s_shown = 0.0f;
     shown++;
     const auto now = clock::now();
     const float dt = std::chrono::duration<float>(now - last).count();
     if (dt >= 1.0f) {  // a second: steadier than the 0.25 s it was
         const uint64_t frames = plat::game_frames();
-        s_fps = float(frames - frames0) / dt, s_shown = float(shown) / dt;
-        frames0 = frames, shown = 0, last = now;
+        // AMD's frame generation presents through its own swapchain: its count (this overlay is drawn once a game
+        // frame there, its UI layer laid over the generated ones too); the built-in one presents through ours.
+        const uint64_t amd = nx::nvn::ffx_fg_presents();
+        s_fps = float(frames - frames0) / dt;
+        s_shown = amd ? float(amd - amd0) / dt : float(shown) / dt;
+        frames0 = frames, shown = 0, amd0 = amd, last = now;
     }
     ImGuiIO& io = ImGui::GetIO();
-    char buf[96];
-    if (config_get("video.frame_gen", "off") == "builtin" && s_shown > s_fps * 1.5f)
-        std::snprintf(buf, sizeof(buf), tr("ui.fps_generated"), s_fps, s_shown);
-    else
-        std::snprintf(buf, sizeof(buf), "%.1f FPS", s_fps);
-    const ImVec2 ts = ImGui::CalcTextSize(buf);
+    // Frame generation: the pictures shown a second after the game's, in light yellow ("60 fps · 120").
+    char fps[48], gen[32] = "";
+    std::snprintf(fps, sizeof(fps), "%.0f fps", s_fps);
+    // Only with frame generation on: a high-refresh screen shows the game's frames more than once (vsync repeats).
+    const bool generating = nx::nvn::ffx_fg_presents() || config_get("video.frame_gen", "off") == "builtin";
+    if (generating && s_shown > s_fps * 1.5f) std::snprintf(gen, sizeof(gen), " · %.0f", s_shown);
+    const ImVec2 fs = ImGui::CalcTextSize(fps), gs = ImGui::CalcTextSize(gen);
     const ImVec2 pad(10.0f * scale, 5.0f * scale);
     const float margin = 12.0f * scale;
-    const ImVec2 p1(io.DisplaySize.x - margin, margin + ts.y + pad.y * 2.0f);
-    const ImVec2 p0(p1.x - ts.x - pad.x * 2.0f, margin);
+    const ImVec2 p1(io.DisplaySize.x - margin, margin + fs.y + pad.y * 2.0f);
+    const ImVec2 p0(p1.x - fs.x - gs.x - pad.x * 2.0f, margin);
     ImDrawList* dl = ImGui::GetForegroundDrawList();
     dl->AddRectFilled(p0, p1, IM_COL32(20, 18, 15, 190), 8.0f * scale);
-    dl->AddText(ImVec2(p0.x + pad.x, p0.y + pad.y), IM_COL32(255, 252, 240, 245), buf);
+    dl->AddText(ImVec2(p0.x + pad.x, p0.y + pad.y), IM_COL32(255, 252, 240, 245), fps);
+    if (gen[0]) dl->AddText(ImVec2(p0.x + pad.x + fs.x, p0.y + pad.y), IM_COL32(255, 236, 140, 245), gen);
 }
 
 }  // namespace

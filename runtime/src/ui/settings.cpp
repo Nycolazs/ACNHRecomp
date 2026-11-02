@@ -39,6 +39,7 @@
 namespace nx::nvn {
 float uw_factor();      // nvn_ultrawide.cpp: the picture's aspect over 16:9
 float uw_resolution();  // and its rows over the game's
+bool gpu_is_nvidia();   // nvn_vk.cpp: the device in use is NVIDIA's (DLSS)
 }  // namespace nx::nvn
 
 namespace nx::ui {
@@ -82,6 +83,12 @@ bool needs_restart(const std::string& key) {
     for (const char* k : {"video.upscaler", "video.fsr_sharpness_pct", "video.antialiasing", "video.frame_gen"})
         if (key == k) return false;
 #endif
+    // Supersampling (ssaa15 / ssaa2) is the screen scale, taken live (nvn_ultrawide.cpp); FXAA is the present pass's,
+    // chosen at start: only a change to or from it waits.
+    if (key == "video.antialiasing") {
+        static const bool fxaa_at_start = config_get("video.antialiasing", "off") == "fxaa";
+        return fxaa_at_start != (config_get("video.antialiasing", "off") == "fxaa");
+    }
     return config_needs_restart(key);
 }
 
@@ -178,6 +185,25 @@ void row(const char* label, const char* desc, const std::function<void(float wid
 }
 
 using Choices = std::vector<std::pair<std::string, std::string>>;  // value, shown text (already translated)
+
+// A combo whose choice is not one key's value: `pick` stores what it means (the anti-aliasing choice writes several).
+// `restart_key`: the key whose restart tag the row shows.
+void choice(const std::string& restart_key, const std::string& cur, const Choices& choices, float width,
+            const std::function<void(const std::string&)>& pick) {
+    g_row_key = restart_key;
+    std::string shown = cur;
+    for (auto& [v, t] : choices)
+        if (v == cur) shown = t;
+    ImGui::SetNextItemWidth(width);
+    if (ImGui::BeginCombo("##c", shown.c_str())) {
+        for (auto& [v, t] : choices) {
+            bool sel = v == cur;
+            if (ImGui::Selectable(t.c_str(), sel) && !sel) pick(v);
+            if (sel) ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+    }
+}
 
 void combo(const std::string& key, const std::string& fallback, const Choices& choices, float width) {
     g_row_key = key;
@@ -444,17 +470,59 @@ void page_video() {
     row("video.mode", nullptr, [&](float w) {
         combo("video.mode", "docked", {{"docked", console("video.render.docked")}, {"handheld", tr("video.render.handheld")}}, w);
     });
-    row("video.upscaler", nullptr, [&](float w) {
-        combo("video.upscaler", plat::kDefaultUpscaler, {{"linear", tr("video.upscaler.linear")}, {"fsr", tr("video.upscaler.fsr")}}, w);
-    });
-    if (config_get("video.upscaler", plat::kDefaultUpscaler) == "fsr")
-        row("video.sharpness", nullptr, [&](float w) { slider("video.fsr_sharpness_pct", 0, 100, 80, "%d%%", w); });
+
+    // Anti-aliasing and upscaling: one choice of method (video.temporal for DLSS and FSR, video.antialiasing for FXAA),
+    // then the picture's size (supersampling: video.antialiasing ssaa15 / ssaa2) and, with DLSS or FSR, the 3D scene's
+    // share of it (video.upscale: nvn_temporal.cpp). Only combinations that work are offered.
+    section("video.section.aa");
+    const std::string temporal = config_get("video.temporal", "off"), aa = config_get("video.antialiasing", "off");
+#if defined(_WIN32)
+    const bool nvidia = nvn::gpu_is_nvidia();
+    const std::string method = temporal != "off" ? temporal : aa == "fxaa" ? "fxaa" : "off";
+#else
+    const bool nvidia = false;
+    const std::string method = aa == "fxaa" ? "fxaa" : "off";
+#endif
     row("video.aa", "video.aa.desc", [&](float w) {
-        combo("video.antialiasing", "off",
-              {{"off", console("video.aa.off")}, {"fxaa", tr("video.aa.fxaa")}, {"ssaa15", tr("video.aa.ssaa15")},
-               {"ssaa2", tr("video.aa.ssaa2")}},
-              w);
+        Choices methods;
+#if defined(_WIN32)
+        if (nvidia || method == "dlaa") methods.push_back({"dlaa", tr("video.aa.dlss")});
+        methods.push_back({"fsr", tr("video.aa.fsr")});
+#endif
+        methods.push_back({"fxaa", tr("video.aa.fxaa")});
+        methods.push_back({"off", console("video.aa.off")});
+        choice("video.temporal", method, methods, w, [&](const std::string& m) {
+            const bool temporal_m = m == "dlaa" || m == "fsr";
+            store("video.temporal", temporal_m ? m : "off");
+            if (m == "fxaa") store("video.antialiasing", "fxaa");
+            else if (aa == "fxaa") store("video.antialiasing", "off");  // supersampling kept otherwise
+            if (!temporal_m && config_get("video.frame_gen", "off") == "fsr") store("video.frame_gen", "off");
+        });
     });
+    if (method != "fxaa")
+        row("video.supersample", "video.supersample.desc", [&](float w) {
+            combo("video.antialiasing", "off",
+                  {{"off", tr("video.supersample.native")}, {"ssaa15", tr("video.supersample.15")}, {"ssaa2", tr("video.supersample.2")}}, w);
+        });
+    if (method == "dlaa" || method == "fsr") {
+        row("video.upscale", "video.upscale.desc", [&](float w) {
+            combo("video.upscale", "native",
+                  {{"native", tr(method == "dlaa" ? "video.upscale.dlaa" : "video.upscale.native")},
+                   {"quality", tr("video.upscale.quality")}, {"balanced", tr("video.upscale.balanced")},
+                   {"performance", tr("video.upscale.performance")}, {"ultra", tr("video.upscale.ultra")}},
+                  w);
+        });
+        if (method == "dlaa")  // nvn_temporal_dlss.cpp
+            row("video.dlss_model", "video.dlss_model.desc", [&](float w) {
+                combo("video.dlss_model", "4.5", {{"4.5", tr("video.dlss_model.45")}, {"4", tr("video.dlss_model.4")}}, w);
+            });
+        if (method == "fsr")
+            row("video.fsr_version", nullptr, [&](float w) {
+                combo("video.fsr_version", "auto", {{"auto", tr("video.fsr_version.auto")}, {"3", tr("video.fsr_version.3")}}, w);
+            });
+        // FSR's own RCAS, or ours after DLSS (nvn_temporal.cpp)
+        row("video.sharpness", nullptr, [&](float w) { slider("video.temporal_sharpness_pct", 0, 100, 60, "%d%%", w); });
+    }
     row("video.hdr", "video.hdr.desc", [&](float w) {
         combo("video.hdr", "off", {{"off", tr("video.hdr.off")}, {"scrgb", "scRGB"}, {"hdr10", "HDR10"}}, w);
     });
@@ -473,6 +541,14 @@ void page_video() {
         combo("video.anisotropy", "game",
               {{"game", console("video.aniso.game")}, {"2", "2x"}, {"4", "4x"}, {"8", "8x"}, {"16", "16x"}}, w);
     });
+
+    // FSR 1: a spatial upscale of the finished picture to a window larger than it (what DLSS and FSR do better).
+    section("video.section.legacy");
+    row("video.upscaler", "video.upscaler.desc", [&](float w) {
+        combo("video.upscaler", plat::kDefaultUpscaler, {{"linear", tr("video.upscaler.linear")}, {"fsr", tr("video.upscaler.fsr")}}, w);
+    });
+    if (config_get("video.upscaler", plat::kDefaultUpscaler) == "fsr")
+        row("video.sharpness", nullptr, [&](float w) { slider("video.fsr_sharpness_pct", 0, 100, 80, "%d%%", w); });
 
     section("video.section.performance");
     row("video.preset", "video.preset.desc", [&](float w) {
@@ -494,7 +570,16 @@ void page_video() {
     std::string fg = config_get("video.frame_gen", fg_default);
     Choices fg_choices = {{"off", console("video.framegen.off")}, {"builtin", tr("video.framegen.builtin")}};
     if (lsfg || fg == "lsfg") fg_choices.push_back({"lsfg", tr("video.framegen.lsfg")});
-    const char* fg_desc = fg == "lsfg" ? (lsfg ? "video.framegen.desc" : "video.framegen.missing") : "video.framegen.builtin.desc";
+#if defined(_WIN32)
+    // AMD FSR 3 (nvn_temporal.cpp): needs DLSS or FSR anti-aliasing (their depth and motion vectors).
+    const bool temporal_on = config_get("video.temporal", "off") != "off";
+    if (temporal_on || fg == "fsr") fg_choices.push_back({"fsr", tr("video.framegen.fsr")});
+#else
+    const bool temporal_on = false;
+#endif
+    const char* fg_desc = fg == "lsfg"  ? (lsfg ? "video.framegen.desc" : "video.framegen.missing")
+                          : fg == "fsr" ? (temporal_on ? "video.framegen.fsr.desc" : "video.framegen.fsr.needs")
+                                        : temporal_on ? "video.framegen.builtin.desc" : "video.framegen.builtin.only";
     row("video.framegen", fg_desc, [&](float w) { combo("video.frame_gen", fg_default, fg_choices, w); });
 #if !defined(__ANDROID__)  // one GPU in a phone
     row("video.gpu", nullptr, [&](float w) {

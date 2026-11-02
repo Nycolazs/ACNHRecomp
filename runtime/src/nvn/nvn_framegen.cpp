@@ -314,7 +314,9 @@ void framegen_update() {
     g_fg_on.store(on, std::memory_order_relaxed);
 }
 
-bool framegen_wanted() { return g_fg_on.load(std::memory_order_relaxed) && (!g.tried || g.ok); }
+bool framegen_wanted() {  // not with AMD's (nvn_temporal.cpp): one frame generation at a time
+    return g_fg_on.load(std::memory_order_relaxed) && (!g.tried || g.ok) && !ffx_fg_wanted();
+}
 
 bool framegen_frame_begin(uint64_t now_ns) {
     uint64_t dt = g.last_ns ? now_ns - g.last_ns : 0;

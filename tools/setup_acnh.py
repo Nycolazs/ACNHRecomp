@@ -46,6 +46,8 @@ SDL3 = "3.4.16"  # Windows only: SDL's VC development package (Linux and macOS: 
 IMGUI = "1.91.9"
 RYUBING = "a82350bb77"
 DOTNET = "10.0.401"
+FFX = "v2.4.0"  # Windows only: AMD FidelityFX SDK (MIT): the API headers and its signed Vulkan DLLs (temporal AA)
+DLSS = "v310.9.16"  # Windows only: NVIDIA DLSS SDK: NGX headers, its static library and nvngx_dlss.dll (DLAA)
 
 
 def say(stage):
@@ -357,6 +359,31 @@ def main():
     if not os.path.exists(os.path.join(T, "ryubing", "Ryujinx.sln")):
         fetch(f"https://codeberg.org/Software_arch/Ryubing/archive/{RYUBING}.tar.gz", os.path.join(T, "ryubing"))
     if WIN:
+        # Temporal AA (runtime/src/nvn/nvn_temporal.cpp): FSR 3.1 / 4 through AMD's loader, and DLAA through NVIDIA's
+        # DLSS SDK (nvn_temporal_dlss.cpp); their DLLs are copied beside the exe.
+        base = f"https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/{FFX}/Kits/FidelityFX"
+        nv = f"https://raw.githubusercontent.com/NVIDIA/DLSS/{DLSS}"
+        # FFX's headers in the SDK's own layout (they include ../../api/include/...).
+        files = [("ffx", h, f"{base}/{h}") for h in ("api/include/ffx_api.h", "api/include/ffx_api_types.h",
+                                                     "api/include/vk/ffx_api_vk.h", "upscalers/include/ffx_upscale.h",
+                                                     "framegeneration/include/ffx_framegeneration.h",
+                                                     "framegeneration/include/ffx_framegeneration_api_types.h")]
+        files += [("ffx", "LICENSE.md", f"{base}/docs/license.md")]
+        files += [("ffx", f"bin/{d}", f"{base}/signedbin/{d}") for d in (
+            "amd_fidelityfx_loader_vk.dll", "amd_fidelityfx_upscaler_vk.dll", "amd_fidelityfx_framegeneration_vk.dll")]
+        files += [("dlss", f"include/{h}", f"{nv}/include/{h}") for h in (
+            "nvsdk_ngx.h", "nvsdk_ngx_defs.h", "nvsdk_ngx_defs_vk.h", "nvsdk_ngx_helpers.h", "nvsdk_ngx_helpers_vk.h",
+            "nvsdk_ngx_params.h", "nvsdk_ngx_vk.h")]
+        files += [("dlss", "LICENSE.txt", f"{nv}/LICENSE.txt"),
+                  ("dlss", "lib/nvsdk_ngx_d.lib", f"{nv}/lib/Windows_x86_64/x64/nvsdk_ngx_d.lib"),
+                  ("dlss", "bin/nvngx_dlss.dll", f"{nv}/lib/Windows_x86_64/rel/nvngx_dlss.dll")]
+        for top, rel, url in files:
+            out = os.path.join(T, top, *rel.split("/"))
+            if not os.path.exists(out):
+                os.makedirs(os.path.dirname(out), exist_ok=True)
+                with urllib.request.urlopen(url) as r, open(out + ".download", "wb") as f:
+                    shutil.copyfileobj(r, f, 1 << 20)
+                os.replace(out + ".download", out)
         llvm = os.path.join(T, f"llvm-{LLVM}")
         if not os.path.exists(os.path.join(llvm, "bin", "clang-cl.exe")):
             print(f"downloading LLVM {LLVM} (about 265 MB)", flush=True)

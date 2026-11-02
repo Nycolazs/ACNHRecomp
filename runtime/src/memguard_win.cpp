@@ -29,10 +29,16 @@ uint64_t memory_footprint() {
     return uint64_t(pmc.PrivateUsage);
 }
 
-// NX_MEM_LIMIT_GB's value in GB: a positive number, else 8.
+// NX_MEM_LIMIT_GB's value in GB: a positive number, else half the machine's RAM, at least 8. The driver's commits for
+// the GPU count too, and supersampling with frame generation (5120x2880 targets and their copies) passed 8 GB
+// without a leak; half the RAM still stops one long before swap.
 double memory_limit_gb(const char* env) {
     double gb = env ? std::atof(env) : 0.0;
-    return gb > 0 ? gb : 8.0;
+    if (gb > 0) return gb;
+    MEMORYSTATUSEX ms{};
+    ms.dwLength = sizeof ms;
+    const double half = GlobalMemoryStatusEx(&ms) ? double(ms.ullTotalPhys) / double(1ull << 30) / 2.0 : 0.0;
+    return half > 8.0 ? half : 8.0;
 }
 
 #ifndef NX_MEMGUARD_STANDALONE
