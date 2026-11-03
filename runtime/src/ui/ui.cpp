@@ -398,8 +398,10 @@ void ui_record(VkCommandBuffer cb, VkImage image, VkFormat format, VkExtent2D ex
     const bool hint = g_first_hint && pic;
     const bool show_fps = config_show_fps();
     static bool was_visible = false;
+    static clock::time_point opened_at;
     const bool visible = g_visible.load();
     const bool opened = visible && !was_visible;
+    if (opened) opened_at = clock::now();
     was_visible = visible;
     if ((!visible && !hint && !show_fps) || !extent.width || !extent.height) return;
     if (!init_imgui(format)) return;
@@ -420,7 +422,8 @@ void ui_record(VkCommandBuffer cb, VkImage image, VkFormat format, VkExtent2D ex
     g_text_field = io.WantTextInput;
     ImGui::PushFont(g_font_body);
     if (g_visible) {
-        if (!settings_draw(scale, g_font_title, opened)) g_visible = false;  // closed from the screen
+        float opening = std::clamp(std::chrono::duration<float>(now - opened_at).count() / 0.22f, 0.0f, 1.0f);
+        if (!settings_draw(scale, g_font_title, opening)) g_visible = false;  // closed from the screen
     } else if (hint) {
         settings_hint(scale, hint_t);
     }
