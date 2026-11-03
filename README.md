@@ -739,6 +739,25 @@ More detail: [docs/ACNH.md](docs/ACNH.md) (the game's modules, RomFS and shader 
 
 ## Credits and references
 
+### Contributors
+
+- [Nycolazs](https://github.com/Nycolazs): project creator and maintainer — recompilation, runtime, launcher, and
+  releases.
+- [erickgodev](https://github.com/erickgodev): controller navigation in the launcher and in-game settings, controller
+  vibration, launcher fullscreen, and related UI fixes.
+- [SirOMGitsYOU](https://github.com/SirOMGitsYOU): Amiibo / NFC support, Time Travel, Auto-start overhaul, Mod Manager,
+  Multi Save system.
+- [vzeol](https://github.com/vzeol): online / local play between computers, Discord Rich Presence, Windows packaging
+  fixes, present pacing, and SpeedFix for 3.0.3.
+- [YaBoi69er](https://github.com/YaBoi69er): HDR output (scRGB / HDR10) and temporal AA / upscaling — NVIDIA DLSS,
+  AMD FSR 3.1–4, and FSR 3 frame generation.
+- [Rafacasari](https://github.com/Rafacasari): GitHub Actions release workflow.
+- [RonyNjr](https://github.com/RonyNjr): Party Play — up to four controllers on macOS and Linux.
+- [cashcon57](https://github.com/cashcon57): recompiler — SADALP / UADALP 64-bit forms clear the destination's upper
+  half.
+
+### Project references
+
 - [SuperMarioWonderRecomp](https://github.com/BelmanteGu/SuperMarioWonderRecomp) (MIT): the base framework:
   recompiler, runtime, NVN to Vulkan and shader translation pipeline.
 - [Ryujinx / Ryubing](https://codeberg.org/Software_arch/Ryubing) (MIT): the Maxwell shader translator, used

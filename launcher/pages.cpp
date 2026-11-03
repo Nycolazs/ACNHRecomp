@@ -55,7 +55,7 @@ const ImU32 kWhite = rgb(255, 255, 255);
 
 ImVec4 col4(ImU32 c) { return ImGui::ColorConvertU32ToFloat4(c); }
 
-enum class Page { Welcome, Files, Install, Build, Done, Home, Settings, Online };
+enum class Page { Welcome, Files, Install, Build, Done, Home, Settings, Online, Credits };
 
 Page g_page = Page::Welcome;
 
@@ -103,7 +103,7 @@ void nav_move(int dx, int dy, int only_section = -1) {
     });
     if (current == g_nav_items.end()) return;
     // Settings form a vertical list even when some rows are outside the scrolling viewport.
-    if (only_section < 0 && (g_page == Page::Settings || g_page == Page::Online) && dy) {
+    if (only_section < 0 && (g_page == Page::Settings || g_page == Page::Online || g_page == Page::Credits) && dy) {
         const int index = int(current - g_nav_items.begin());
         const int target_section = current->section == 1 ? 1 : (dy > 0 ? 1 : (current->section == 2 ? 1 : -1));
         for (int i = index + dy; i >= 0 && i < int(g_nav_items.size()); i += dy) {
@@ -1876,8 +1876,11 @@ void page_home() {
 }
 
 void footer_home() {
-    if (!player_beside().empty()) return;  // a release has no setup to start over
-    if (button(tr("launcher.home.start_over"), kWhite)) g_banner.clear(), g_page = Page::Welcome;
+    if (player_beside().empty()) {  // a release has no setup to start over
+        if (button(tr("launcher.home.start_over"), kWhite)) g_banner.clear(), g_page = Page::Welcome;
+    }
+    align_right({tr("launcher.credits")});
+    if (button(tr("launcher.credits"), kWhite)) g_page = Page::Credits;
 }
 
 // ---- settings: a few of the game's config.ini keys ------------------------------------------------------------
@@ -2098,6 +2101,82 @@ void footer_online() {
     if (button(tr("common.back"), kWhite)) g_page = Page::Home;
 }
 
+// ---- credits: contributors and the project's references -------------------------------------------------------
+
+void credit_entry(const char* name, const char* desc, const char* url = nullptr) {
+    ImGui::PushID(name);
+    ImGui::BeginGroup();
+    if (url && *url) {
+        ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0, 0, 0, 0));
+        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, col4(rgb(255, 240, 196)));
+        ImGui::PushStyleColor(ImGuiCol_HeaderActive, col4(rgb(255, 240, 196)));
+        ImGui::PushStyleColor(ImGuiCol_Text, col4(kBlue));
+        if (ImGui::Selectable(name, false)) SDL_OpenURL(url);
+        ImGui::PopStyleColor(4);
+        if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+        nav_item();
+    } else {
+        ImGui::TextUnformatted(name);
+    }
+    text_small(desc);
+    ImGui::EndGroup();
+    ImGui::PopID();
+    ImGui::Dummy(ImVec2(0, S(2)));
+    ImGui::Separator();
+    ImGui::Dummy(ImVec2(0, S(2)));
+}
+
+void page_credits() {
+    heading(tr("launcher.credits"), tr("launcher.credits.text"));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0, 0, 0, 0));
+    ImGui::BeginChild("##rows", ImVec2(0, 0),
+                      ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_NavFlattened);
+
+    ImGui::PushFont(g_title);
+    ImGui::TextUnformatted(tr("launcher.credits.contributors"));
+    ImGui::PopFont();
+    ImGui::Dummy(ImVec2(0, S(4)));
+    text_small(tr("launcher.credits.contributors.desc"));
+    ImGui::Dummy(ImVec2(0, S(6)));
+    credit_entry("Nycolazs", tr("launcher.credits.contrib.nycolazs"), "https://github.com/Nycolazs");
+    credit_entry("erickgodev", tr("launcher.credits.contrib.erickgodev"), "https://github.com/erickgodev");
+    credit_entry("SirOMGitsYOU", tr("launcher.credits.contrib.siromgitsyou"), "https://github.com/SirOMGitsYOU");
+    credit_entry("vzeol", tr("launcher.credits.contrib.vzeol"), "https://github.com/vzeol");
+    credit_entry("YaBoi69er", tr("launcher.credits.contrib.yaboi69er"), "https://github.com/YaBoi69er");
+    credit_entry("Rafacasari", tr("launcher.credits.contrib.rafacasari"), "https://github.com/Rafacasari");
+    credit_entry("RonyNjr", tr("launcher.credits.contrib.ronynjr"), "https://github.com/RonyNjr");
+    credit_entry("cashcon57", tr("launcher.credits.contrib.cashcon57"), "https://github.com/cashcon57");
+
+    ImGui::Dummy(ImVec2(0, S(10)));
+    ImGui::PushFont(g_title);
+    ImGui::TextUnformatted(tr("launcher.credits.references"));
+    ImGui::PopFont();
+    ImGui::Dummy(ImVec2(0, S(4)));
+    text_small(tr("launcher.credits.references.desc"));
+    ImGui::Dummy(ImVec2(0, S(6)));
+    credit_entry("SuperMarioWonderRecomp", tr("launcher.credits.ref.wonder"),
+                 "https://github.com/BelmanteGu/SuperMarioWonderRecomp");
+    credit_entry("Ryujinx / Ryubing", tr("launcher.credits.ref.ryujinx"),
+                 "https://codeberg.org/Software_arch/Ryubing");
+    credit_entry("Dear ImGui", tr("launcher.credits.ref.imgui"), "https://github.com/ocornut/imgui");
+    credit_entry("MHGURecomp", tr("launcher.credits.ref.mhgu"), "https://github.com/morerokk/MHGURecomp");
+    credit_entry("RenoDX", tr("launcher.credits.ref.renodx"), "https://github.com/clshortfuse/renodx");
+    credit_entry("ACNH 60 FPS + SpeedFix", tr("launcher.credits.ref.speedfix"),
+                 "https://github.com/tmouh/acnh-60fps");
+    credit_entry("SDL3, Capstone, Unicorn, libvpx, libvorbis, FSR 1", tr("launcher.credits.ref.libs"));
+    credit_entry("LASRecomp", tr("launcher.credits.ref.las"), "https://github.com/peiikai/LASRecomp");
+    credit_entry("SwitchRecomp", tr("launcher.credits.ref.switchrecomp"), "https://github.com/bgyss/SwitchRecomp");
+    credit_entry("uDPR", tr("launcher.credits.ref.udpr"), "https://github.com/shatter9652/uDPR");
+    credit_entry(tr("launcher.credits.ref.ptbr.name"), tr("launcher.credits.ref.ptbr"));
+
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
+}
+
+void footer_credits() {
+    if (button(tr("common.back"), kWhite)) g_page = Page::Home;
+}
+
 // ---- popups ---------------------------------------------------------------------------------------------------
 
 void popups() {
@@ -2175,6 +2254,7 @@ void pages_init(SDL_Window* window) {
         if (n == "home") g_page = Page::Home;
         if (n == "addons") g_page = Page::Home, g_addons_open = true, g_addons_since = -1;  // the add-on panel open
         if (n == "settings") g_page = Page::Settings;
+        if (n == "credits") g_page = Page::Credits;
     }
 }
 
@@ -2218,7 +2298,7 @@ bool pages_draw(float scale, ImFont* title) {
     static bool controller_navigation = false, controller_connected = false, popup_last_frame = false;
     static bool nav_page_valid = false;
     static Page nav_page = Page::Welcome;
-    static ImGuiID saved_focus[int(Page::Online) + 1] = {};
+    static ImGuiID saved_focus[int(Page::Credits) + 1] = {};
     const bool connected = (io.BackendFlags & ImGuiBackendFlags_HasGamepad) != 0;
     if (connected && !controller_connected) controller_navigation = true;
     if (!connected) controller_navigation = false;
@@ -2262,7 +2342,7 @@ bool pages_draw(float scale, ImFont* title) {
     apply_picks();
     if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) && !popup_before && ctx.ActiveId == 0) {
         switch (g_page) {
-            case Page::Settings: case Page::Online: case Page::Done: g_page = Page::Home; break;
+            case Page::Settings: case Page::Online: case Page::Credits: case Page::Done: g_page = Page::Home; break;
             case Page::Files: g_page = Page::Welcome; break;
             case Page::Install: g_page = Page::Files; break;
             case Page::Build:
@@ -2293,18 +2373,18 @@ bool pages_draw(float scale, ImFont* title) {
     g_nav_section = 0;
     ribbon();
     float footer = ImGui::GetFrameHeight() + S(20);
-    const bool settings_page = g_page == Page::Settings;
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, settings_page ? col4(kPaper) : ImVec4(0, 0, 0, 0));
+    const bool paper_page = g_page == Page::Settings || g_page == Page::Credits;
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, paper_page ? col4(kPaper) : ImVec4(0, 0, 0, 0));
     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, S(22));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(14), S(12)));
-    ImGui::BeginChild("##page", ImVec2(0, -footer), ((settings_page ? ImGuiChildFlags_AlwaysUseWindowPadding : ImGuiChildFlags_None) | ImGuiChildFlags_NavFlattened));
+    ImGui::BeginChild("##page", ImVec2(0, -footer), ((paper_page ? ImGuiChildFlags_AlwaysUseWindowPadding : ImGuiChildFlags_None) | ImGuiChildFlags_NavFlattened));
     ImGui::PopStyleVar(2);
     ImGui::PopStyleColor();
     g_nav_section = 1;
     // The short pages sit in the middle of the card: their height from the last frame. The offset is whole pixels:
     // ImGui rounds item positions down, so a fractional start changed the measured height and the page bobbed by a
     // pixel every frame.
-    static float content_h[8] = {};
+    static float content_h[int(Page::Credits) + 1] = {};
     const int pi = int(g_page);
     const bool center = g_page == Page::Welcome || g_page == Page::Done || g_page == Page::Home;
     const float avail_h = ImGui::GetContentRegionAvail().y, top = ImGui::GetCursorPosY();
@@ -2320,6 +2400,7 @@ bool pages_draw(float scale, ImFont* title) {
         case Page::Home: page_home(); break;
         case Page::Settings: page_settings(); break;
         case Page::Online: page_online(); break;
+        case Page::Credits: page_credits(); break;
     }
     if (int(g_page) == pi) content_h[pi] = ImGui::GetCursorPosY() - start;
     static const char* scroll = std::getenv("NX_LAUNCHER_SCROLL");  // tests: 0..1 of the page's scroll range
@@ -2341,6 +2422,7 @@ bool pages_draw(float scale, ImFont* title) {
         case Page::Home: footer_home(); break;
         case Page::Settings: footer_settings(); break;
         case Page::Online: footer_online(); break;
+        case Page::Credits: footer_credits(); break;
     }
     g_nav_section = -1;
     popups();
