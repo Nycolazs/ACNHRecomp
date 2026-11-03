@@ -369,16 +369,18 @@ def main():
         cc = ["-DCMAKE_C_COMPILER=clang-cl", "-DCMAKE_CXX_COMPILER=clang-cl"]
         # libvpx and libvorbis decode the game's movies (runtime/src/hle_movie.cpp; the flight to the island is a VP9
         # movie): static libraries built by vcpkg the first time, a few minutes. Without git the movies are black.
+        # zlib compresses the F12 screenshots (runtime/src/nvn/nvn_screenshot.cpp; stored, ~22 MB, without it).
         vcpkg = os.path.join(T, "vcpkg")
-        if not os.path.exists(os.path.join(MOVIE_LIBS, "lib", "vpx.lib")):
+        if not os.path.exists(os.path.join(MOVIE_LIBS, "lib", "vpx.lib")) or \
+                not os.path.exists(os.path.join(MOVIE_LIBS, "lib", "zs.lib")):
             if not os.path.exists(os.path.join(vcpkg, "vcpkg.exe")) and shutil.which("git"):
                 if not os.path.isdir(vcpkg):
                     run(["git", "clone", "-q", "--depth", "1", "https://github.com/microsoft/vcpkg.git", vcpkg])
                 run([os.path.join(vcpkg, "bootstrap-vcpkg.bat"), "-disableMetrics"], log=os.path.join(logs, "vcpkg.log"))
             if os.path.exists(os.path.join(vcpkg, "vcpkg.exe")):
-                print("building libvpx and libvorbis (the game's movies; a few minutes, once)", flush=True)
+                print("building libvpx, libvorbis and zlib (the game's movies, screenshots; a few minutes, once)", flush=True)
                 run([os.path.join(vcpkg, "vcpkg.exe"), "install", f"libvpx:{MOVIE_TRIPLET}",
-                     f"libvorbis:{MOVIE_TRIPLET}", "--disable-metrics"], log=os.path.join(logs, "vcpkg.log"),
+                     f"libvorbis:{MOVIE_TRIPLET}", f"zlib:{MOVIE_TRIPLET}", "--disable-metrics"], log=os.path.join(logs, "vcpkg.log"),
                     env=env, cwd=vcpkg)
             else:
                 print("git not found: no libvpx, the game's movies will be black", flush=True)

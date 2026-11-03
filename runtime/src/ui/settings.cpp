@@ -727,6 +727,20 @@ void page_video() {
                {"ssaa2", tr("video.aa.ssaa2")}},
               w);
     });
+    row("video.hdr", "video.hdr.desc", [&](float w) {
+        combo("video.hdr", "off", {{"off", tr("video.hdr.off")}, {"scrgb", "scRGB"}, {"hdr10", "HDR10"}}, w);
+    });
+    if (config_get("video.hdr", "off") != "off") {  // read live by the present pass (nvn_present.cpp)
+        row("video.hdr_tonemap", "video.hdr_tonemap.desc", [&](float w) {
+            combo("video.hdr_tonemap", "hdr", {{"hdr", tr("video.hdr_tonemap.hdr")}, {"renodrt", tr("video.hdr_tonemap.renodrt")}, {"vanilla", tr("video.hdr_tonemap.vanilla")}}, w);
+        });
+        row("video.hdr_peak", "video.hdr_peak.desc", [&](float w) { slider("video.hdr_peak_nits", 400, 4000, 1000, "%d nits", w); });
+        row("video.hdr_game", "video.hdr_game.desc", [&](float w) { slider("video.hdr_game_nits", 80, 500, 203, "%d nits", w); });
+        row("video.hdr_ui", "video.hdr_ui.desc", [&](float w) { slider("video.hdr_ui_nits", 80, 500, 203, "%d nits", w); });
+        row("video.hdr_gamma", "video.hdr_gamma.desc", [&](float w) {
+            combo("video.hdr_gamma", "2.2", {{"2.2", "2.2"}, {"srgb", "sRGB"}}, w);
+        });
+    }
     row("video.aniso", "video.aniso.desc", [&](float w) {
         combo("video.anisotropy", "game",
               {{"game", console("video.aniso.game")}, {"2", "2x"}, {"4", "4x"}, {"8", "8x"}, {"16", "16x"}}, w);
@@ -799,6 +813,7 @@ const Binding kBindings[] = {
     {"action.zr", "zr", "C"},             {"action.plus", "plus", "Return"},   {"action.minus", "minus", "Escape"},
     {"action.dpad", "dpad_up", "Up"},     {"action.dpad", "dpad_down", "Down"}, {"action.dpad", "dpad_left", "Left"},
     {"action.dpad", "dpad_right", "Right"},
+    {"action.screenshot", "screenshot", "F12"},  // not a game button: ui.cpp (an HDR PNG with HDR on, nvn_screenshot.cpp)
 };
 int g_capturing = -1;
 
@@ -1596,6 +1611,74 @@ void settings_hint(float scale, float t) {
     dl->AddCircleFilled(c, ir, fade(118, 200, 170, 255));
     theme_icon(dl, kIconGear, c, ir * 0.62f, fade(255, 255, 255, 255));
     dl->AddText(ImVec2(c.x + ir + gap, p.y + (h - ts.y) * 0.5f), fade(107, 79, 54, 255), text);
+}
+
+void hdr_panel_draw(float scale) {
+    // A small see-through window in the top left corner with the Picture page's HDR settings (read live by the
+    // present pass and the tonemap), so the picture stays in view while they move. The game keeps its input.
+    g_scale = scale;
+    ImGui::SetNextWindowPos(ImVec2(16.0f * scale, 16.0f * scale), ImGuiCond_Always);
+    ImGui::SetNextWindowBgAlpha(0.72f);
+    const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+                                   ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
+                                   ImGuiWindowFlags_NoNav;
+    if (!ImGui::Begin("##hdr_panel", nullptr, flags)) {
+        ImGui::End();
+        return;
+    }
+    const float label_w = 150.0f * scale, w = 220.0f * scale;
+    auto line = [&](const char* id, const char* label, const std::function<void()>& control) {
+        ImGui::PushID(id);
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(label);
+        ImGui::SameLine(label_w);
+        control();
+        ImGui::PopID();
+    };
+    ImGui::TextUnformatted("HDR (F2)");
+    if (config_get("video.hdr", "off") == "off" && !std::getenv("NX_HDR")) {
+        ImGui::TextUnformatted(tr("video.hdr.off"));
+        ImGui::End();
+        return;
+    }
+    line("tm", tr("video.hdr_tonemap"), [&] {
+        combo("video.hdr_tonemap", "hdr", {{"hdr", tr("video.hdr_tonemap.hdr")}, {"renodrt", tr("video.hdr_tonemap.renodrt")}, {"vanilla", tr("video.hdr_tonemap.vanilla")}}, w);
+    });
+    line("peak", tr("video.hdr_peak"), [&] { slider("video.hdr_peak_nits", 400, 4000, 1000, "%d nits", w); });
+    line("game", tr("video.hdr_game"), [&] { slider("video.hdr_game_nits", 80, 500, 203, "%d nits", w); });
+    line("ui", tr("video.hdr_ui"), [&] { slider("video.hdr_ui_nits", 80, 500, 203, "%d nits", w); });
+    line("gamma", tr("video.hdr_gamma"), [&] { combo("video.hdr_gamma", "2.2", {{"2.2", "2.2"}, {"srgb", "sRGB"}}, w); });
+    line("exp", tr("video.hdr_exposure"), [&] {
+        float v = std::clamp(config_get_float("video.hdr_exposure", 0), -2.0f, 2.0f);
+        ImGui::SetNextItemWidth(w);
+        if (ImGui::SliderFloat("##e", &v, -2.0f, 2.0f, "%+.2f stops")) {
+            char b[16];
+            std::snprintf(b, sizeof b, "%.2f", double(v));
+            config_set("video.hdr_exposure", b);
+        }
+        if (ImGui::IsItemDeactivatedAfterEdit()) config_save();
+    });
+    ImGui::Separator();
+    line("hi", tr("video.hdr_highlights"), [&] { slider("video.hdr_highlights", 0, 100, 50, "%d", w); });
+    line("sh", tr("video.hdr_shadows"), [&] { slider("video.hdr_shadows", 0, 100, 50, "%d", w); });
+    line("co", tr("video.hdr_contrast"), [&] { slider("video.hdr_contrast", 0, 100, 50, "%d", w); });
+    line("sa", tr("video.hdr_saturation"), [&] { slider("video.hdr_saturation", 0, 100, 50, "%d", w); });
+    line("te", tr("video.hdr_temperature"), [&] { slider("video.hdr_temperature", -100, 100, 0, "%d", w); });
+    line("ti", tr("video.hdr_tint"), [&] { slider("video.hdr_tint", -100, 100, 0, "%d", w); });
+    ImGui::Separator();
+    // The defaults: the game's own picture (tonemap HDR, scene and UI at 203 nits, gamma 2.2, no grading). The
+    // display's peak stays: it describes the display, not the look.
+    if (ImGui::Button(tr("video.hdr_reset"))) {
+        static const std::pair<const char*, const char*> kDefaults[] = {
+            {"video.hdr_tonemap", "hdr"},     {"video.hdr_game_nits", "203"},   {"video.hdr_ui_nits", "203"},
+            {"video.hdr_gamma", "2.2"},       {"video.hdr_exposure", "0.00"},   {"video.hdr_highlights", "50"},
+            {"video.hdr_shadows", "50"},      {"video.hdr_contrast", "50"},     {"video.hdr_saturation", "50"},
+            {"video.hdr_temperature", "0"},   {"video.hdr_tint", "0"},
+        };
+        for (const auto& [key, value] : kDefaults) config_set(key, value);
+        config_save();
+    }
+    ImGui::End();
 }
 
 }  // namespace nx::ui

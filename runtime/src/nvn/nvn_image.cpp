@@ -146,6 +146,28 @@ GpuImage* image_of(uint64_t guest) {
     auto img = std::make_shared<GpuImage>();
     img->format = bc_host_decode(t->format) ? bc_decoded_format(t->format) : vk_format(t->format);  // nvn_bc.cpp
     img->nvn_format = t->format;
+    // HDR (video.hdr): the game's screen-sized RGB10A2 colour targets and its window's RGBA8 textures become RGBA16F. Its tonemap
+    // (64ae17e74cc3b846, 3e1bdb382f32d6fe; replaced from spirv_hdr) writes the finished picture into an RGB10A2 one, the
+    // UI is drawn over it and a copy takes it to the window: highlights above 1 survive to the present pass. As
+    // R11G11B10F (nvn_format.cpp): views keep the image's format, copies to and from guest memory are skipped (the
+    // host stores it differently), texture copies become blits.
+    // Bisecting: NX_HDR_NO_UPGRADE (none), NX_HDR_UPGRADE=window|targets (only those).
+    static const bool no_upgrade = std::getenv("NX_HDR_NO_UPGRADE") != nullptr;
+    static const std::string only = std::getenv("NX_HDR_UPGRADE") ? std::getenv("NX_HDR_UPGRADE") : "";
+    // Screen-sized ones only (nvn_ultrawide.cpp's screen targets): the game's small RGB10A2 targets (354x290, 132x60:
+    // effects of the opening and the transitions) are written past 0..1 and relied on the clamp; as floats they flashed.
+    const bool target10 = t->format == 0x3d && (t->flags & 8) && t->uw && only != "window";
+    const bool window8 = t->format == 0x25 && t->window && only != "targets";
+    if ((target10 || window8) && hdr_requested() != HdrOutput::Off && !no_upgrade) {
+        img->format = VK_FORMAT_R16G16B16A16_SFLOAT;
+        // The UI and the transitions' overlays draw over the tonemap's picture with colours past 1 (a white flash
+        // with a gain) that the UNORM target clipped: theirs are clamped (the window's only writer is a copy).
+        img->hdr_clamp = target10;
+        static int logged = 0;
+        if (logged++ < 60)
+            log("nvn/vk: HDR: texture %llx %ux%u fmt %#x flags %#x%s%s as RGBA16F", (unsigned long long)guest, t->width,
+                t->height, t->format, t->flags, t->window ? " (window)" : "", t->uw ? " (screen)" : "");
+    }
     img->uw = t->uw;
     if (t->uw && t->base_w && t->base_h)
         img->sx = float(t->width) / float(t->base_w), img->sy = float(t->height) / float(t->base_h);

@@ -283,6 +283,8 @@ set(NX_RUNTIME_SOURCES
     runtime/src/nvn/nvn_spirv_fragcoord.cpp
     runtime/src/nvn/nvn_spirv_instance.cpp
     runtime/src/nvn/nvn_spirv_alpha.cpp
+    runtime/src/nvn/nvn_spirv_clamp.cpp
+    runtime/src/nvn/nvn_screenshot.cpp
     runtime/src/nvn/nvn_vk_defer.cpp
     runtime/src/nvn/nvn_ultrawide.cpp
     runtime/src/nvn/nvn_present.cpp
@@ -492,6 +494,9 @@ else()
 endif()
 target_sources(${NX_GAME} PRIVATE runtime/src/saves.cpp)
 target_link_libraries(${NX_GAME} PRIVATE nx_save_storage)
+if(WIN32)
+    set(ZLIB_USE_STATIC_LIBS ON)  # vcpkg's static zlib (tools/setup_acnh.py): zs.lib
+endif()
 find_package(ZLIB QUIET)
 if(ZLIB_FOUND)
     target_link_libraries(${NX_GAME} PRIVATE ZLIB::ZLIB)
