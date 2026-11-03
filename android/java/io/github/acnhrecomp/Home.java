@@ -5,7 +5,7 @@
 // right away. The launcher icon's shortcut "Change game folder" (res/xml/shortcuts.xml) asks again.
 package io.github.acnhrecomp;
 
-import android.app.Activity;
+import android.app  .Activity;
 import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.Typeface;

@@ -1,3 +1,6 @@
+#define VK_NN_vi_surface 1
+#define VK_NN_VI_SURFACE_EXTENSION_NAME "VK_NN_vi_surface"
+typedef struct VkViSurfaceCreateInfoNN { VkStructureType sType; const void* pNext; uint32_t flags; void* window; } VkViSurfaceCreateInfoNN;
 // Hand-written Vulkan bridges: loader, proc-address lookups (they hand out guest-callable thunks), instance and
 // device creation (extension filtering), the Switch surface (VK_NN_vi_surface -> VK_KHR_win32_surface), physical
 // device order (discrete GPU first) and debug callbacks (guest function pointers the host must never call).
