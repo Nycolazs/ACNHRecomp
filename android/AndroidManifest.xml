@@ -26,6 +26,10 @@
             </intent-filter>
             <meta-data android:name="android.app.shortcuts" android:resource="@xml/shortcuts"/>
         </activity>
+        <!-- The settings screen's folder picker (Saves: import, export, open folder): platform_android.cpp starts it -->
+        <activity android:name="io.github.acnhrecomp.Picker" android:exported="false"
+                  android:theme="@android:style/Theme.Translucent.NoTitleBar"
+                  android:configChanges="orientation|keyboardHidden|keyboard|screenSize|screenLayout|smallestScreenSize|uiMode|density|navigation"/>
         <activity android:name="android.app.NativeActivity" android:exported="true"
                   android:screenOrientation="sensorLandscape" android:resizeableActivity="false"
                   android:configChanges="orientation|keyboardHidden|keyboard|screenSize|screenLayout|smallestScreenSize|uiMode|density|navigation"

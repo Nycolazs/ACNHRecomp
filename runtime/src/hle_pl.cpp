@@ -7,10 +7,12 @@
 //
 // So any TrueType font works: <data root>/fonts/shared_<type>.ttf (0 standard, 1 simplified Chinese, 2 its
 // extension, 3 traditional Chinese, 4 Korean, 5 extension), else shared.ttf, else the host's own
-// (NX_SHARED_FONT, or a system font on macOS, Android and Windows). The fonts on our own firmware dump can go there once decoded.
+// (NX_SHARED_FONT, or a system font on macOS, Android, Windows and Linux). The fonts on our own firmware dump can go there once decoded.
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -42,6 +44,54 @@ std::vector<uint8_t> read_file(const std::string& path) {
     return v;
 }
 
+#if defined(__linux__) && !defined(__ANDROID__)
+bool is_ttf(const std::string& p) {
+    return p.size() > 4 && (p.compare(p.size() - 4, 4, ".ttf") == 0 || p.compare(p.size() - 4, 4, ".TTF") == 0);
+}
+
+// fontconfig's sans-serif (a .ttf only: the game's font engine reads one font, not a .ttc/.otf collection), then a
+// scan of the font folders (Regular/Sans names first).
+std::vector<std::string> linux_fonts() {
+    std::vector<std::string> out;
+    if (FILE* p = popen("fc-match -s -f '%{file}\\n' 'sans-serif:fontformat=TrueType' 2>/dev/null", "r")) {
+        char line[1024];
+        while (std::fgets(line, sizeof line, p) && out.size() < 8) {
+            std::string f(line);
+            while (!f.empty() && (f.back() == '\n' || f.back() == '\r')) f.pop_back();
+            if (is_ttf(f)) out.push_back(f);
+        }
+        pclose(p);
+    }
+    std::vector<std::string> dirs = {"/usr/share/fonts", "/usr/local/share/fonts"};
+    if (const char* home = std::getenv("HOME")) {
+        dirs.push_back(std::string(home) + "/.local/share/fonts");
+        dirs.push_back(std::string(home) + "/.fonts");
+        dirs.push_back(std::string(home) + "/.local/share/Steam/clientui/fonts");
+        dirs.push_back(std::string(home) + "/.steam/steam/clientui/fonts");
+    }
+    std::vector<std::string> good, other;
+    std::error_code ec;
+    for (const std::string& d : dirs) {
+        std::filesystem::recursive_directory_iterator it(d, std::filesystem::directory_options::skip_permission_denied, ec), end;
+        for (int n = 0; !ec && it != end && n < 20000; it.increment(ec), n++) {
+            const std::string f = it->path().string();
+            if (!is_ttf(f)) continue;
+            const std::string name = it->path().filename().string();
+            const bool regular = name.find("Regular") != std::string::npos || name.find("Sans.ttf") != std::string::npos;
+            const bool styled = name.find("Bold") != std::string::npos || name.find("Italic") != std::string::npos ||
+                                name.find("Mono") != std::string::npos || name.find("Emoji") != std::string::npos;
+            (regular && !styled ? good : other).push_back(f);
+        }
+        ec.clear();
+    }
+    std::sort(good.begin(), good.end());
+    std::sort(other.begin(), other.end());
+    out.insert(out.end(), good.begin(), good.end());
+    out.insert(out.end(), other.begin(), other.end());
+    return out;
+}
+#endif
+
 const Font& font(uint32_t type) {
     static std::mutex lock;
     static Font fonts[6];
@@ -66,6 +116,17 @@ const Font& font(uint32_t type) {
     candidates.push_back("/usr/share/fonts/liberation-sans/LiberationSans-Regular.ttf");
     candidates.push_back("/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf");
     candidates.push_back("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf");
+    // Arch / SteamOS and Fedora put them elsewhere.
+    candidates.push_back("/usr/share/fonts/liberation/LiberationSans-Regular.ttf");
+    candidates.push_back("/usr/share/fonts/noto/NotoSans-Regular.ttf");
+    candidates.push_back("/usr/share/fonts/TTF/LiberationSans-Regular.ttf");
+    candidates.push_back("/usr/share/fonts/TTF/DejaVuSans.ttf");
+    candidates.push_back("/usr/share/fonts/google-noto/NotoSans-Regular.ttf");
+    candidates.push_back("/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf");
+    // Then whatever fontconfig calls sans-serif, and at last any TrueType file in the usual folders (a Steam Deck
+    // in game mode has few fonts): the game crashes on its first dialog without one (#40).
+    static const std::vector<std::string> found = linux_fonts();
+    for (const std::string& path : found) candidates.push_back(path);
 #endif
     std::vector<uint8_t> ttf;
     for (const auto& path : candidates) {
