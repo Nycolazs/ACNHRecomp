@@ -99,7 +99,7 @@ void nav_move(int dx, int dy) {
     auto current = std::find_if(g_nav_items.begin(), g_nav_items.end(), [&](const NavItem& item) { return item.id == ctx.NavId; });
     if (current == g_nav_items.end()) return;
     // Settings form a vertical list even when some rows are outside the scrolling viewport.
-    if (g_page == Page::Settings && dy) {
+    if ((g_page == Page::Settings || g_page == Page::Online) && dy) {
         const int index = int(current - g_nav_items.begin());
         const int target_section = current->section == 1 ? 1 : (dy > 0 ? 1 : (current->section == 2 ? 1 : -1));
         for (int i = index + dy; i >= 0 && i < int(g_nav_items.size()); i += dy) {
@@ -1747,9 +1747,11 @@ void online_check_start() {
 void page_online() {
     heading(tr("tab.online"), tr("online.enabled.desc"));
     ImGui::PushStyleColor(ImGuiCol_ChildBg, col4(kPaper));
-    ImGui::BeginChild("##rows", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::BeginChild("##rows", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_NavFlattened);
     bool on = g_game_ini.get("online.enabled", "0") == "1";
-    if (ImGui::Checkbox(tr("online.enabled"), &on)) {
+    bool enabled_changed = ImGui::Checkbox(tr("online.enabled"), &on);
+    nav_item();
+    if (enabled_changed) {
         g_game_ini.set("online.enabled", on ? "1" : "0");
         if (!g_game_ini.save()) toast(tr("launcher.settings.save_failed"));
         if (on) online_check_start();
@@ -1814,10 +1816,14 @@ void page_online() {
             nx::address_check_start(join);
         }
         ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+        ImGuiContext& ctx = *ImGui::GetCurrentContext();
+        if (ctx.NavActivateId == ImGui::GetID("##join") && ctx.NavInputSource == ImGuiInputSource_Gamepad)
+            ctx.NavActivateFlags |= ImGuiActivateFlags_PreferInput;
         if (ImGui::InputText("##join", join, sizeof join)) {
             g_game_ini.set("online.join", join);
             if (!g_game_ini.save()) toast(tr("launcher.settings.save_failed"));
         }
+        nav_item();
         if (ImGui::IsItemDeactivatedAfterEdit()) nx::address_check_start(join);
         if (join[0] && button(tr("online.join.test"), kWhite)) nx::address_check_start(join);
     }
@@ -1946,7 +1952,7 @@ bool pages_draw(float scale, ImFont* title) {
     static bool controller_navigation = false, controller_connected = false, popup_last_frame = false;
     static bool nav_page_valid = false;
     static Page nav_page = Page::Welcome;
-    static ImGuiID saved_focus[7] = {};
+    static ImGuiID saved_focus[int(Page::Online) + 1] = {};
     const bool connected = (io.BackendFlags & ImGuiBackendFlags_HasGamepad) != 0;
     if (connected && !controller_connected) controller_navigation = true;
     if (!connected) controller_navigation = false;
@@ -1989,7 +1995,7 @@ bool pages_draw(float scale, ImFont* title) {
     apply_picks();
     if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) && !popup_before && ctx.ActiveId == 0) {
         switch (g_page) {
-            case Page::Settings: case Page::Done: g_page = Page::Home; break;
+            case Page::Settings: case Page::Online: case Page::Done: g_page = Page::Home; break;
             case Page::Files: g_page = Page::Welcome; break;
             case Page::Install: g_page = Page::Files; break;
             case Page::Build:
