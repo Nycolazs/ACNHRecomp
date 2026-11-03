@@ -70,6 +70,7 @@ bool g_dynamic_rendering = true;  // vkCmdBeginRendering usable (core 1.3 or VK_
 std::atomic<bool> g_fifo{false};    // the swapchain presents in FIFO (VSync): present_vsync_paced
 bool g_display_timing = false;      // VK_GOOGLE_display_timing enabled
 bool g_integrated = false;
+bool g_nvidia = false;  // the device's vendor is NVIDIA (the settings screen offers DLSS)
 bool g_require_sg32 = false;  // compute pipelines are made with a required subgroup size of 32 (Maxwell's warp)  // the chosen GPU is an integrated one (unified memory, the GPU is the long side)
 VkPhysicalDeviceFeatures g_features{};  // the core features enabled (vk_features())
 VkDescriptorPool g_descriptors = VK_NULL_HANDLE;
@@ -186,6 +187,14 @@ bool init() {
         exts.push_back("VK_KHR_portability_enumeration");
         ici.flags |= 0x00000001;  // VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR
     }
+    // Temporal AA's (video.temporal = dlaa: NGX's), where the loader has them; the device's are added below.
+    static std::vector<std::string> taa_instance, taa_device;
+    temporal_vk_extensions(taa_instance, taa_device);
+    for (const std::string& e : taa_instance)
+        if (has_extension(iext, e.c_str()) && std::find_if(exts.begin(), exts.end(), [&](const char* x) {
+                                                  return e == x;
+                                              }) == exts.end())
+            exts.push_back(e.c_str());
     VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO};
     app.pApplicationName = nx::game::kInfo.title;
     app.apiVersion = VK_API_VERSION_1_3;
@@ -212,6 +221,7 @@ bool init() {
     p_vkGetPhysicalDeviceProperties(g_physical, &props);
     p_vkGetPhysicalDeviceMemoryProperties(g_physical, &g_memory);
     g_integrated = props.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU;
+    g_nvidia = props.vendorID == 0x10de;
     // An integrated GPU shares the package's power budget with the CPU: ask the desktop for its performance profile
     // (NX_POWER_PROFILE=1: also with a discrete GPU; 0: never). frame_stats.cpp.
     if (g_integrated || (std::getenv("NX_POWER_PROFILE") && std::getenv("NX_POWER_PROFILE")[0] == '1'))
@@ -306,6 +316,33 @@ bool init() {
         dexts.push_back("VK_KHR_external_memory_fd");
         dexts.push_back("VK_EXT_external_memory_dma_buf");
     }
+    // Temporal AA (video.temporal = fsr, nvn_temporal.cpp): what AMD's FSR 4 shaders use where the GPU has it (its
+    // sample's list: cooperative matrices and 8-bit floats on RDNA 4, compute derivatives for the INT8 path of RDNA 2
+    // and 3). FSR 3.1 needs only core features; without these the loader offers 3.1 alone.
+    VkPhysicalDeviceCooperativeMatrixFeaturesKHR fcoop{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COOPERATIVE_MATRIX_FEATURES_KHR};
+    VkPhysicalDeviceShaderFloat8FeaturesEXT ff8{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT8_FEATURES_EXT};
+    VkPhysicalDeviceComputeShaderDerivativesFeaturesKHR fderiv{
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COMPUTE_SHADER_DERIVATIVES_FEATURES_KHR};
+    if (temporal_capable()) {  // FSR may be turned on while the game runs
+        if (has_extension(dext, "VK_KHR_cooperative_matrix")) {
+            dexts.push_back("VK_KHR_cooperative_matrix");
+            *tail = &fcoop, tail = &fcoop.pNext;
+        }
+        if (has_extension(dext, "VK_EXT_shader_float8")) {
+            dexts.push_back("VK_EXT_shader_float8");
+            *tail = &ff8, tail = &ff8.pNext;
+        }
+        if (has_extension(dext, "VK_KHR_compute_shader_derivatives")) {
+            dexts.push_back("VK_KHR_compute_shader_derivatives");
+            *tail = &fderiv, tail = &fderiv.pNext;
+        }
+        // DLSS's NGX (VK_NVX_binary_import, VK_NVX_image_view_handle, ...), names only. Not the EXT buffer device
+        // address: core 1.2's is enabled, and the two together are invalid.
+        for (const std::string& e : taa_device)
+            if (has_extension(dext, e.c_str()) && e != "VK_EXT_buffer_device_address" &&
+                std::find_if(dexts.begin(), dexts.end(), [&](const char* x) { return e == x; }) == dexts.end())
+                dexts.push_back(e.c_str());
+    }
     if (has_extension(dext, "VK_KHR_portability_subset")) {
         dexts.push_back("VK_KHR_portability_subset");
         *tail = &fport, tail = &fport.pNext;
@@ -338,20 +375,29 @@ bool init() {
         has_extension(dext, "VK_EXT_depth_clip_control") ? 1u : 0u);
     log("nvn/vk: portability: format reinterpretation %u, format swizzle %u", fport.fields[2], fport.fields[3]);
     log_device_caps(g_physical, dext);  // nvn_caps.cpp
-    float prio = 1.0f;
-    VkDeviceQueueCreateInfo qci{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
-    qci.queueFamilyIndex = g_family;
-    qci.queueCount = 1;
-    qci.pQueuePriorities = &prio;
+    // The game's queue, and AMD frame generation's present, image acquire and async compute queues (nvn_temporal.cpp).
+    std::vector<uint32_t> queue_counts(families.size(), 0);
+    queue_counts[g_family] = 1;
+    ffx_fg_queue_requests(g_physical, g_surface, families, g_family, queue_counts);
+    static const float prios[16] = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
+    std::vector<VkDeviceQueueCreateInfo> qcis;
+    for (uint32_t k = 0; k < queue_counts.size(); k++)
+        if (queue_counts[k]) {
+            VkDeviceQueueCreateInfo qci{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
+            qci.queueFamilyIndex = k, qci.queueCount = std::min(queue_counts[k], 16u), qci.pQueuePriorities = prios;
+            qcis.push_back(qci);
+        }
     VkDeviceCreateInfo dci{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
-    dci.queueCreateInfoCount = 1;
-    dci.pQueueCreateInfos = &qci;
+    dci.queueCreateInfoCount = uint32_t(qcis.size());
+    dci.pQueueCreateInfos = qcis.data();
     dci.enabledExtensionCount = uint32_t(dexts.size());
     dci.ppEnabledExtensionNames = dexts.data();
     dci.pNext = &features;
     if (!check(p_create_device(g_physical, &dci, nullptr, &g_device), "vkCreateDevice")) return false;
     p_vkGetDeviceQueue(g_device, g_family, 0, &g_queue);
+    ffx_fg_device_ready(g_device, g_queue);
     vk_defer_install();  // nvn_vk_defer.cpp
+    temporal_device_ready();
     static const bool ui_off = std::getenv("NX_UI") && std::getenv("NX_UI")[0] == '0';  // NX_UI=0: no settings screen
     if ((!plat::headless() || std::getenv("NX_UI_OPEN")) && !ui_off)  // the settings screen (ui/ui.cpp)
         ui::ui_vulkan_ready(reinterpret_cast<PFN_vkGetInstanceProcAddr>(g_gipa), g_instance, g_physical, g_device, g_family,
@@ -451,6 +497,41 @@ bool make_surface() {
     return true;
 }
 
+// AMD frame generation's HUD-less images: the swapchain's format and size (kept across a re-make of the same).
+std::vector<VkImage> g_hudless;
+std::vector<VkDeviceMemory> g_hudless_mem;
+VkExtent2D g_hudless_extent{};
+VkFormat g_hudless_format = VK_FORMAT_UNDEFINED;
+bool make_hudless_images(VkExtent2D extent) {
+    if (g_hudless.size() == kHudlessImages && g_hudless_extent.width == extent.width &&
+        g_hudless_extent.height == extent.height && g_hudless_format == g_sc_format)
+        return true;
+    for (size_t k = 0; k < g_hudless.size(); k++)
+        p_vkDestroyImage(g_device, g_hudless[k], nullptr), p_vkFreeMemory(g_device, g_hudless_mem[k], nullptr);
+    g_hudless.clear(), g_hudless_mem.clear();
+    for (uint32_t k = 0; k < kHudlessImages; k++) {
+        VkImageCreateInfo ci{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+        ci.imageType = VK_IMAGE_TYPE_2D, ci.format = g_sc_format, ci.extent = {extent.width, extent.height, 1};
+        ci.mipLevels = 1, ci.arrayLayers = 1, ci.samples = VK_SAMPLE_COUNT_1_BIT, ci.tiling = VK_IMAGE_TILING_OPTIMAL;
+        ci.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+        VkImage img = VK_NULL_HANDLE;
+        if (p_vkCreateImage(g_device, &ci, nullptr, &img) != VK_SUCCESS) return false;
+        VkMemoryRequirements req{};
+        p_vkGetImageMemoryRequirements(g_device, img, &req);
+        VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        ai.allocationSize = req.size, ai.memoryTypeIndex = memory_type(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        VkDeviceMemory mem = VK_NULL_HANDLE;
+        if (p_vkAllocateMemory(g_device, &ai, nullptr, &mem) != VK_SUCCESS) {
+            p_vkDestroyImage(g_device, img, nullptr);
+            return false;
+        }
+        p_vkBindImageMemory(g_device, img, mem, 0);
+        g_hudless.push_back(img), g_hudless_mem.push_back(mem);
+    }
+    g_hudless_extent = extent, g_hudless_format = g_sc_format;
+    return true;
+}
+
 bool make_swapchain() {
     presenter_idle();
     ui::ui_swapchain_changed();
@@ -458,8 +539,10 @@ bool make_swapchain() {
         if (async_gpu()) frame_wait_all();
         p_vkDeviceWaitIdle(g_device);
         present_pass_release();
-        p_vkDestroySwapchainKHR(g_device, g_swapchain, nullptr);
-        g_swapchain = VK_NULL_HANDLE;
+        if (!ffx_fg_on()) {  // AMD's frame generation swapchain is made again in place (below)
+            p_vkDestroySwapchainKHR(g_device, g_swapchain, nullptr);
+            g_swapchain = VK_NULL_HANDLE;
+        }
     }
     VkSurfaceCapabilitiesKHR caps{};
     p_vkGetPhysicalDeviceSurfaceCapabilitiesKHR(g_physical, g_surface, &caps);
@@ -476,14 +559,16 @@ bool make_swapchain() {
     // display (~14 ms a frame on a Snapdragon 865), and the replay thread, which presents, could not go on with the
     // next frame meanwhile. Five keep a free image, also for the 30 fps repeat without it, and frame generation can be
     // turned on while the game runs. NX_SWAP_IMAGES: the count.
-    static const unsigned want = [] {
+    const unsigned want = [] {
         const char* e = std::getenv("NX_SWAP_IMAGES");
         if (e && std::atoi(e) > 0) return unsigned(std::atoi(e));
 #if defined(__ANDROID__)
         return 5u;
 #else
         framegen_update();
-        return framegen_wanted() ? 5u : 3u;
+        // AMD's frame generation (nvn_temporal.cpp) too: with three, acquiring waited ~15 ms a game frame for an
+        // image its pacing threads still held (40 fps instead of 60). Asked again each time (turned on and off live).
+        return framegen_wanted() || ffx_fg_should() ? 5u : 3u;
 #endif
     }();
     ci.minImageCount = std::max(caps.minImageCount, want);
@@ -493,6 +578,8 @@ bool make_swapchain() {
     ci.imageExtent = extent;
     ci.imageArrayLayers = 1;
     ci.imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    // AMD frame generation's UI split reads the presented frame back (ffx_fg_ui_split, nvn_temporal.cpp).
+    if (ffx_fg_should() && (caps.supportedUsageFlags & VK_IMAGE_USAGE_SAMPLED_BIT)) ci.imageUsage |= VK_IMAGE_USAGE_SAMPLED_BIT;
     ci.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     ci.preTransform = caps.currentTransform;
     // The present pass (nvn_present.cpp) draws the picture pre-rotated: the images are in the display's own
@@ -542,11 +629,22 @@ bool make_swapchain() {
     log("nvn/vk: present mode %s (%u modes offered), %u images asked", ci.presentMode <= 3 ? mode_names[ci.presentMode] : "?",
         modes_n, ci.minImageCount);
     ci.clipped = VK_TRUE;
-    if (!check(p_vkCreateSwapchainKHR(g_device, &ci, nullptr, &g_swapchain), "vkCreateSwapchainKHR")) return false;
+    // AMD FSR 3 frame generation (nvn_temporal.cpp): its swapchain, made through its context; else ours.
+    if (VkResult fr = VK_SUCCESS; ffx_fg_create_swapchain(ci, &g_swapchain, &fr)) {
+        if (!check(fr, "frame generation swapchain")) return false;
+    } else if (!check(p_vkCreateSwapchainKHR(g_device, &ci, nullptr, &g_swapchain), "vkCreateSwapchainKHR")) {
+        return false;
+    }
     uint32_t n = 0;
-    p_vkGetSwapchainImagesKHR(g_device, g_swapchain, &n, nullptr);
-    g_sc_images.resize(n);
-    p_vkGetSwapchainImagesKHR(g_device, g_swapchain, &n, g_sc_images.data());
+    if (ffx_fg_on()) {
+        ffx_fg_get_images(g_swapchain, &n, nullptr);
+        g_sc_images.resize(n);
+        ffx_fg_get_images(g_swapchain, &n, g_sc_images.data());
+    } else {
+        p_vkGetSwapchainImagesKHR(g_device, g_swapchain, &n, nullptr);
+        g_sc_images.resize(n);
+        p_vkGetSwapchainImagesKHR(g_device, g_swapchain, &n, g_sc_images.data());
+    }
     g_sc_extent = extent;
     g_sc_transform = ci.preTransform;
     ui::ui_set_rotation(ci.preTransform == VK_SURFACE_TRANSFORM_ROTATE_90_BIT_KHR    ? 1
@@ -554,7 +652,16 @@ bool make_swapchain() {
                         : ci.preTransform == VK_SURFACE_TRANSFORM_ROTATE_270_BIT_KHR ? 3
                                                                                      : 0);
     if (n > 8) log("nvn/vk: %u swapchain images: more than the 8 present semaphores (nvn_frames.cpp)", n);
-    bool drawn = pass && present_pass_targets(g_sc_format, g_sc_images, extent, ci.preTransform);
+    // AMD frame generation's HUD-less images (nvn_temporal.cpp): drawn by the present pass as the swapchain's are,
+    // so they are its framebuffers after the swapchain's.
+    std::vector<VkImage> pass_images = g_sc_images;
+    if (ffx_fg_on() && pass && make_hudless_images(extent)) {
+        pass_images.insert(pass_images.end(), g_hudless.begin(), g_hudless.end());
+        ffx_fg_hudless_images(g_hudless.data(), g_sc_format, extent);
+    } else {
+        ffx_fg_hudless_images(nullptr, g_sc_format, extent);
+    }
+    bool drawn = pass && present_pass_targets(g_sc_format, pass_images, extent, ci.preTransform);
     if (pass && !drawn && present_pass_failed()) {  // the pass is out: an upright swapchain for the blit
         log("nvn/vk: present pass failed: swapchain made again for the blit");
         return make_swapchain();
@@ -570,6 +677,7 @@ std::recursive_mutex& gpu_lock() { return g_gpu; }
 VkDevice vk_device() { return g_device; }
 VkPhysicalDevice vk_physical() { return g_physical; }
 VkQueue vk_queue() { return g_queue; }
+VkInstance vk_instance() { return g_instance; }
 std::mutex& vk_queue_mutex() { return g_queue_mx; }
 uint32_t vk_queue_family() { return g_family; }
 bool vk_depth_clip_control() { return g_depth_clip_control; }
@@ -577,6 +685,7 @@ bool vk_fragment_interlock() { return g_fragment_interlock; }
 bool vk_dynamic_rendering() { return g_dynamic_rendering; }
 const VkPhysicalDeviceFeatures& vk_features() { return g_features; }
 bool gpu_is_integrated() { return g_integrated; }
+bool gpu_is_nvidia() { return g_nvidia; }
 bool gpu_require_subgroup32() { return g_require_sg32; }
 
 uint32_t memory_type(uint32_t bits, VkMemoryPropertyFlags want) {
@@ -969,6 +1078,7 @@ VkFence g_gen_fence = VK_NULL_HANDLE;
 bool g_gen_fence_used = false;
 
 bool presenter_wanted() {
+    if (ffx_fg_on()) return false;  // AMD frame generation presents from threads of its own
     static const bool on = [] {
         const char* e = std::getenv("NX_PRESENT_THREAD");
         if (e) return e[0] == '1';
@@ -1078,7 +1188,8 @@ void present_image(const int32_t* crop, Record&& record) {
     uint32_t index = 0;
     VkSemaphore acquired = async_gpu() ? frame_acquire_semaphore() : g_acquired;
     PresentParts parts;
-    VkResult r = p_vkAcquireNextImageKHR(g_device, g_swapchain, UINT64_MAX, acquired, VK_NULL_HANDLE, &index);
+    VkResult r = ffx_fg_on() ? ffx_fg_acquire(g_swapchain, UINT64_MAX, acquired, VK_NULL_HANDLE, &index)
+                             : p_vkAcquireNextImageKHR(g_device, g_swapchain, UINT64_MAX, acquired, VK_NULL_HANDLE, &index);
     if (r == VK_ERROR_OUT_OF_DATE_KHR) {
         make_swapchain();
         return;
@@ -1100,6 +1211,13 @@ void present_image(const int32_t* crop, Record&& record) {
         }
     }
     bool drawn = src && present_pass_record(g_cb, *src, crop, index);  // nvn_present.cpp: leaves dst PRESENT_SRC
+    // AMD frame generation's HUD-less picture of this game frame, drawn the same way into its own image (a
+    // framebuffer after the swapchain's; left PRESENT_SRC too, as AMD is told).
+    uint32_t hudless_slot = 0;
+    bool split = false;
+    if (real && drawn && ffx_fg_on())
+        if (GpuImage* h = ffx_fg_hudless_source(hudless_slot))
+            split = present_pass_record(g_cb, *h, crop, uint32_t(g_sc_images.size()) + hudless_slot);
     if (src && !drawn) transition(g_cb, *src, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
     if (!drawn) transition(g_cb, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
     if (src && !drawn) {
@@ -1130,6 +1248,7 @@ void present_image(const int32_t* crop, Record&& record) {
     if (!drawn) transition(g_cb, dst, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
     screenshot_record(g_cb, dst.image, g_sc_format, g_sc_extent);  // F12 (nvn_screenshot.cpp): before the settings screen
     ui::ui_record(g_cb, dst.image, g_sc_format, g_sc_extent);  // the settings screen over the picture, when open
+    if (split) ffx_fg_ui_split(g_cb, dst.image, hudless_slot);  // AMD frame generation: the UI apart (nvn_temporal.cpp)
     static uint64_t presents = 0;  // the game's frames (not the generated ones)
     if (real) {
         presents++;
@@ -1184,7 +1303,9 @@ void present_image(const int32_t* crop, Record&& record) {
         shown_now = picture;
     }
     VkPresentTimeGOOGLE when{uint32_t(display_timing_next(real)), 0};
-    if (real) vblank_hold();  // on the display's vblank its interval asks for (hle_vi.cpp)
+    // On the display's vblank its interval asks for (hle_vi.cpp). Not with AMD frame generation: its swapchain paces
+    // the game's frames and its own between them; both holding cost a 60 fps game a third of its frames (40 fps).
+    if (real && !ffx_fg_on()) vblank_hold();
     parts.mark(3);
     if (handed) {
         // The fence is for the image after this one (the repeat) when it is this frame's own.
@@ -1199,9 +1320,9 @@ void present_image(const int32_t* crop, Record&& record) {
         pi.pSwapchains = &g_swapchain;
         pi.pImageIndices = &index;
         VkPresentTimesInfoGOOGLE times{VK_STRUCTURE_TYPE_PRESENT_TIMES_INFO_GOOGLE};
-        if (g_display_timing) times.swapchainCount = 1, times.pTimes = &when, pi.pNext = &times;
+        if (g_display_timing && !ffx_fg_on()) times.swapchainCount = 1, times.pTimes = &when, pi.pNext = &times;
         std::lock_guard q(g_queue_mx);
-        r = p_vkQueuePresentKHR(g_queue, &pi);
+        r = ffx_fg_on() ? ffx_fg_present(g_queue, &pi) : p_vkQueuePresentKHR(g_queue, &pi);
     }
     parts.mark(4);
     parts.done(real);
@@ -1269,10 +1390,24 @@ void gpu_present(uint64_t texture, const int32_t* crop, int interval) {
         p_vkDeviceWaitIdle(g_device);
         present_pass_release();
         ui::ui_swapchain_changed();
-        if (g_swapchain) p_vkDestroySwapchainKHR(g_device, g_swapchain, nullptr);
+        if (g_swapchain && ffx_fg_on()) ffx_fg_destroy_swapchain(g_swapchain);
+        else if (g_swapchain) p_vkDestroySwapchainKHR(g_device, g_swapchain, nullptr);
         g_swapchain = VK_NULL_HANDLE;
         log("nvn/vk: new window: surface and swapchain re-made");
         if (!make_surface()) return;
+    }
+    // AMD frame generation turned on or off in the settings: its swapchain stands in for ours, so the swapchain is
+    // made again the other way (as on a new window).
+    if (g_swapchain && ffx_fg_should() != ffx_fg_on()) {
+        presenter_idle();
+        if (async_gpu()) frame_wait_all();
+        p_vkDeviceWaitIdle(g_device);
+        present_pass_release();
+        ui::ui_swapchain_changed();
+        if (ffx_fg_on()) ffx_fg_destroy_swapchain(g_swapchain);
+        else p_vkDestroySwapchainKHR(g_device, g_swapchain, nullptr);
+        g_swapchain = VK_NULL_HANDLE;
+        log("nvn/vk: frame generation turned %s: swapchain made again", ffx_fg_should() ? "on" : "off");
     }
     if (!g_swapchain && !make_swapchain()) return;
     GpuImage* src = image_of(texture);
@@ -1305,7 +1440,9 @@ void gpu_present(uint64_t texture, const int32_t* crop, int interval) {
         return;
     }
     present_image(crop, [&](VkCommandBuffer, bool&) { return src; });
-    if (present_vsync_paced() && interval > 0) {
+    // A display faster than the game: the frame again each refresh between two. Not with AMD frame generation, whose
+    // own frame fills that refresh: a repeat was a game frame to it, and each one waited out its pacing (40 fps).
+    if (present_vsync_paced() && interval > 0 && !ffx_fg_on()) {
         const int repeats = std::max(1, int(std::lround(double(interval) * plat::display_refresh_hz() / 60.0))) - 1;
         for (int k = 0; k < repeats && g_swapchain && !plat::window_minimized(); k++)
             present_image(crop, [&](VkCommandBuffer, bool& real) {

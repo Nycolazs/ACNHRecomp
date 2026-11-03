@@ -11,6 +11,7 @@
 #include <cstring>
 #include <map>
 #include <set>
+#include <unordered_map>
 
 #include "nvn_draw_state.h"
 #include "nvn_ultrawide.h"
@@ -229,6 +230,18 @@ void begin_rendering(VkCommandBuffer cb, const Targets& t) {
                   std::min(extent.height, std::max(1u, img->height >> level))};
     }
     GpuImage* dimg = t.depth ? image_of(t.depth) : nullptr;
+    // Upscaling: the UI drawn into the picture-sized screen target with the smaller scene's depth still bound. The
+    // render area is the smallest attachment's, so the UI was cut to the scene's size: the depth goes when this draw
+    // neither tests nor writes it (a later draw of the pass that does is logged).
+    if (dimg && t.color_count && extent.width != UINT32_MAX && (dimg->width < extent.width || dimg->height < extent.height)) {
+        const DepthStencilInfo& ds = (*g_state).depth;
+        const bool used = ds.depth_test || ds.depth_write || ds.stencil_test;
+        static int n = 0;
+        if (n++ < 8)
+            log("nvn: pass with colour %ux%u over depth %ux%u%s", extent.width, extent.height, dimg->width, dimg->height,
+                used ? " (depth used: kept)" : ": drawn without its depth");
+        if (!used) dimg = nullptr;
+    }
     (*g_pass_images)[8] = dimg;
     if (dimg && dimg->aspect != VK_IMAGE_ASPECT_COLOR_BIT) {
         if ((dimg->layout != VK_IMAGE_LAYOUT_GENERAL || !dimg->rendered) && worker_bail("depth not rendered yet")) return;
@@ -416,6 +429,86 @@ void draw_viewport(float ui_x, VkViewport& vp, VkRect2D& sc) {
 
 // The end of a draw, shared by the full path and the fast path: vertex buffers, viewport and scissor (scaled to a
 // screen target), the draw itself (unless `emit` is false: draw merging records it later), and what it wrote.
+PerThread<VkPipelineLayout> g_draw_layout;  // the layout of the pipeline the next draw_issue draws with
+
+// Temporal AA's object motion (nvn_temporal.cpp): a skinned draw, one whose vertex shader reads an integer attribute
+// (the bone indices). Every draw's pipeline has the patch; skinned draws always keep their history, the others when
+// they are small enough to be an object (temporal_motion_draw).
+// Only depth-tested geometry that is the scene's depth (written, or the EQUAL colour pass over a pre-pass): a
+// full-screen pass (lighting, post effects) is at depth 0 and would win every pixel's nearest fragment with no motion.
+bool motion_geometry(const Targets& t) {
+    const DepthStencilInfo& d = (*g_state).depth;
+    return t.depth && d.depth_test && (d.depth_write || d.depth_func == 3 /* EQUAL */);
+}
+
+// A rigid draw's identity across frames (temporal_motion_draw): its vertex uniform blocks that hold the object's own
+// constants. The island's (NX_TAA_IDENT_LOG, 3.0.3): a mesh drawn as two objects binds block 0 per pass (the scene's
+// constants: many draws), block 1 per object at the same guest address frame after frame (its transform), others
+// rebuilt every frame or a shared placeholder. So the blocks bound at the same address last frame by a few draws
+// only. Most objects' blocks are made again every frame (a ring): none, 0 (matched by draw order then, checked by
+// motion.comp).
+struct BlockUses {
+    uint64_t frame = ~0ull;
+    std::unordered_map<uint64_t, uint32_t> cur, prev;
+};
+PerThread<BlockUses> g_block_uses;
+constexpr uint32_t kObjectBlockUses = 8;  // an object's block: bound by its draws (passes, parts) only
+
+uint64_t motion_ident(uint64_t index_address = 0) {
+    BlockUses& u = *g_block_uses;
+    if (u.frame != g_replay_presents) {
+        u.prev.swap(u.cur), u.cur.clear(), u.frame = g_replay_presents;
+        if (u.prev.size() > 65536) u.prev.clear();
+    }
+    uint64_t h = 0xcbf29ce484222325ull;
+    bool any = false;
+    for (const Range& r : (*g_state).uniforms[0]) {
+        if (!r.address) continue;
+        u.cur[r.address]++;
+        if (auto it = u.prev.find(r.address); it != u.prev.end() && it->second <= kObjectBlockUses)
+            h = (h ^ r.address) * 0x100000001b3ull, any = true;
+    }
+    // NX_TAA_IDENT_LOG: one rigid mesh's vertex uniform blocks, each time it is drawn (every 15 s, the first indexed one).
+    static const bool trace = std::getenv("NX_TAA_IDENT_LOG") != nullptr;
+    static uint64_t watched = 0, next = 0;
+    static int lines = 0;
+    if (trace && plat::monotonic_ns() >= next) next = plat::monotonic_ns() + 15'000'000'000ull, watched = 0, lines = 0;
+    if (trace && index_address && lines < 12) {
+        if (!watched) watched = index_address;
+        if (index_address == watched) {
+            std::string t;
+            for (int k = 0; k < 18; k++)
+                if (const Range& r = (*g_state).uniforms[0][k]; r.address) {
+                    char b[64];
+                    auto it = u.prev.find(r.address);
+                    std::snprintf(b, sizeof b, " %d:%llx+%llx(%u)", k, (unsigned long long)r.address, (unsigned long long)r.size,
+                                  it == u.prev.end() ? 0u : it->second);
+                    t += b;
+                }
+            log("temporal: ident %llx:%s -> %s", (unsigned long long)index_address, t.c_str(), any ? "kept" : "none");
+            lines++;
+        }
+    }
+    return any ? h : 0;
+}
+
+// A draw that is not the scene's geometry: a translucent effect (blended into the colour, depth-tested, not written)
+// marks temporal AA's reactive mask; anything else (a full-screen pass) nothing.
+void motion_other(VkCommandBuffer cb, const Targets& t) {
+    const State& s = *g_state;
+    if (t.depth && s.depth.depth_test && !s.depth.depth_write && t.color_count && s.color.blend_enable[0])
+        return temporal_reactive_draw(cb, *g_draw_layout, s.blend[0].dst_rgb == 2 /* ONE: added */);
+    temporal_motion_none(cb, *g_draw_layout);
+}
+
+bool motion_draw(const ShaderInfo* vs) {
+    if (!vs || !temporal_object_motion_active()) return false;
+    for (const ShaderIo& in : vs->refl.inputs)
+        if (in.location < (*g_state).attribs.size() && in.location < 16 && vertex_int_kind((*g_state).attribs[in.location].format))
+            return true;
+    return false;
+}
+
 void draw_issue(VkCommandBuffer cb, const Targets& t, bool indexed, const Cmd& c, const DrawInputs& in,
                 const ShaderInfo* vs, const ShaderInfo* fs, float ui_x, bool emit = true) {
     // The vertex buffers resolved above, plus the zero stream (binding 15).
@@ -445,10 +538,20 @@ void draw_issue(VkCommandBuffer cb, const Targets& t, bool indexed, const Cmd& c
             (*g_bound).has_index = true, (*g_bound).index = in.index, (*g_bound).index_type = in.index_type, (*g_state_set)++;
         }
         bool q = zero_draws_on() && zero_draws_begin(cb, vs->hash + " " + (fs ? fs->hash : std::string("-")));
+        if (emit && temporal_object_motion_on() && !temporal_object_motion_active()) temporal_motion_none(cb, *g_draw_layout);
+        else if (emit && temporal_object_motion_on() && !motion_geometry(t)) motion_other(cb, t);
+        else if (emit && temporal_object_motion_on())  // its history slots and the frame's jitter (nvn_temporal.cpp)
+            temporal_motion_draw(cb, *g_draw_layout, vs, motion_draw(vs), true, c.i, c.a[0], in.index.ptr, in.index_type,
+                                 motion_ident(motion_draw(vs) ? 0 : c.a[0]));
         if (emit) p_vkCmdDrawIndexed(cb, count, uint32_t(std::max(1, c.i[3])), 0, c.i[1], uint32_t(c.i[2]));
         if (q) zero_draws_end(cb);
     } else {
         bool q = zero_draws_on() && zero_draws_begin(cb, vs->hash + " " + (fs ? fs->hash : std::string("-")));
+        if (emit && temporal_object_motion_on() && !temporal_object_motion_active()) temporal_motion_none(cb, *g_draw_layout);
+        else if (emit && temporal_object_motion_on() && !motion_geometry(t)) motion_other(cb, t);
+        else if (emit && temporal_object_motion_on())
+            temporal_motion_draw(cb, *g_draw_layout, vs, motion_draw(vs), false, c.i, 0, nullptr, in.index_type,
+                                 motion_ident());
         if (emit) p_vkCmdDraw(cb, uint32_t(c.i[1]), uint32_t(std::max(1, c.i[3])), uint32_t(c.i[0]), uint32_t(c.i[2]));
         if (q) zero_draws_end(cb);
     }
@@ -548,6 +651,7 @@ bool merge_on() {
 }
 
 void merge_emit(const Merge& m, uint32_t instances) {
+    if (temporal_object_motion_on()) temporal_motion_none(m.cb, m.prep->layout->layout);  // no object motion when merged
     if (m.indexed) p_vkCmdDrawIndexed(m.cb, uint32_t(m.i[0]), instances, 0, m.i[1], 0);
     else p_vkCmdDraw(m.cb, uint32_t(m.i[1]), instances, uint32_t(m.i[0]), 0);
 }
@@ -824,6 +928,7 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
         sets_bind(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, *prep.layout, rs);
         const bool hold = merging && c.i[2] == 0 && c.i[3] <= 1;  // may start a run: its vkCmdDraw held back
         if (merging && !hold) (*g_merge_why)[18]++;
+        *g_draw_layout = prep.layout->layout;
         draw_issue(cb, t, indexed, c, in, prep.vs, prep.fs, prep.ui_x, !hold);
         if (hold) {
             Merge& m = *g_merge;
@@ -919,6 +1024,21 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
             }
         }
     }
+    // Temporal AA (nvn_temporal.cpp): FSR on the tonemap's input (the largest screen target it samples that it does not
+    // draw into), blitted back in place before the tonemap reads it.
+    if (fs && temporal_is_tonemap(fs->hash)) {
+        if (worker_bail("temporal AA")) return false;
+        GpuImage* out = t.color_count && t.colors[0] ? image_of(t.colors[0]) : nullptr;
+        GpuImage* scene = nullptr;
+        for (const ResolvedTexture& r : (*g_textures).resolved)
+            if (GpuImage* img = r.texture ? image_of(r.texture) : nullptr;
+                img && img != out && img->uw && img->rendered && img->layers == 1 && (!scene || img->width > scene->width))
+                scene = img;
+        if (scene) {
+            draw_end_rendering(cb, 6);
+            temporal_before_tonemap(cb, *scene, out);
+        }
+    }
     // A pass that neither tests nor writes depth but keeps its depth image bound while sampling that same image (the
     // world map's depth-to-colour linearization, fs 0aa56d1b): on Metal the image is then attached and read in one
     // encoder, which is undefined, and the copy came out 0 everywhere; the composite then took the player for
@@ -940,6 +1060,7 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
             }
         return t;
     }();
+    if (tt.depth && (*g_state).depth.depth_write && temporal_on()) temporal_note_depth(image_of(tt.depth));
     vertex_read_barrier(cb, vs);  // G4
     // Is this draw's target a scaled screen target (viewport, scissor, render scale, UI squeeze; nvn_ultrawide.cpp)
     (*g_uw) = UwTarget{};
@@ -1171,7 +1292,17 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
     bind_sets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, layout);
     draw_part(4);
 
+    *g_draw_layout = layout.layout;
     draw_issue(cb, t, indexed, c, in, vs, fs, ui_x);
+    if (fs && temporal_is_tonemap(fs->hash)) temporal_tonemap_done();  // the upscaled picture read (temporal_sample_redirect)
+    // AMD frame generation's HUD-less picture: the tonemap's output before the UI goes over it (nvn_temporal.cpp).
+    if (fs && ffx_fg_on() && temporal_is_tonemap(fs->hash) && t.color_count && t.colors[0])
+        if (GpuImage* screen = image_of(t.colors[0])) {
+            draw_end_rendering(cb, 6);
+            temporal_after_tonemap(cb, *screen);
+            prep.valid = false;  // the pass is not open any more
+            return true;
+        }
     // Prepared for the next draws of the same state (the fast path above). Not when anything here was pending
     // (uploads, layout changes, a sampled target of this pass, pending clears) or debug overrides changed the shaders.
     if (!gathered && !data_dep && swapped.empty() && *g_rendering && !*t_bail && fast_draw_on()) {
@@ -1182,7 +1313,7 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
         prep.set2 = sets_texture_set();
         prep.ui_x = ui_x;
         prep.key = key;
-        prep.merge_ok = true;
+        prep.merge_ok = !motion_draw(vs);  // object motion: push constants of each draw's own
         for (uint32_t s = 0; s < 16; s++) prep.merge_ok &= key.streams[s].divisor == 0;
         prep.textures.clear(), prep.handles.clear();
         const DrawTextures& dt = *g_textures;

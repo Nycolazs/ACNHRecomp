@@ -31,7 +31,8 @@ constexpr double k169 = 16.0 / 9.0;
 
 struct Scale {
     float s = 1, k = 1;
-    bool operator==(const Scale& o) const { return s == o.s && k == o.k; }
+    float r = 1;  // the 3D scene's share of it when temporal AA upscales (temporal_wanted_ratio)
+    bool operator==(const Scale& o) const { return s == o.s && k == o.k && r == o.r; }
     bool operator!=(const Scale& o) const { return !(*this == o); }
 };
 std::mutex g_scale_lock;
@@ -41,6 +42,7 @@ std::map<uint32_t, Scale> g_history;      // wanted generation -> its scale, unt
 std::atomic<uint32_t> g_allowed{1};       // the newest wanted generation the submit being replayed may apply
 std::atomic<uint32_t> g_gen{0};           // the generation of g_current
 std::atomic<float> g_k{1.0f}, g_s{1.0f};  // g_current, read without the lock (draws)
+std::atomic<float> g_r{1.0f};             // g_current.r (temporal_render_ratio)
 std::atomic<float> g_wanted_k{1.0f};      // g_wanted.k (cameras: the frames the game records from now on)
 
 // The environment (scripts, presets) wins over config.ini, which the settings screen changes while the game runs.
@@ -135,15 +137,19 @@ Scale wanted(uint64_t present) {
     else if (aa == "ssaa2") s *= 2.0;
     s = std::min(s, 3.0);
     s = std::round(s * native) / native;
-    return {float(s), float(k)};
+    return {float(s), float(k), temporal_wanted_ratio()};
 }
 
 }  // namespace
 
 float uw_factor() { return g_k.load(std::memory_order_relaxed); }
+float uw_render_ratio() { return g_r.load(std::memory_order_relaxed); }
 float uw_resolution() { return g_s.load(std::memory_order_relaxed); }
 uint32_t uw_generation() { return g_gen.load(std::memory_order_acquire); }
-bool uw_scaling() { return g_k.load(std::memory_order_relaxed) != 1.0f || g_s.load(std::memory_order_relaxed) != 1.0f; }
+bool uw_scaling() {
+    return g_k.load(std::memory_order_relaxed) != 1.0f || g_s.load(std::memory_order_relaxed) != 1.0f ||
+           g_r.load(std::memory_order_relaxed) != 1.0f;
+}
 
 namespace {
 // The scale the first targets are made with (they are made before the first present).
@@ -154,12 +160,18 @@ void init_scale() {
         std::lock_guard lk(g_scale_lock);
         g_wanted = g_current = w;
         g_wanted_gen = 1;
-        g_k = g_wanted_k = w.k, g_s = w.s;
+        g_k = g_wanted_k = w.k, g_s = w.s, g_r = w.r;
         g_gen = 1;
-        log("nvn: screen scale: resolution x%.3f, aspect x%.4f", double(w.s), double(w.k));
+        log("nvn: screen scale: resolution x%.3f, aspect x%.4f, 3D scene x%.3f", double(w.s), double(w.k), double(w.r));
     });
 }
 }  // namespace
+
+float uw_resolution_at_boot() {
+    init_scale();
+    std::lock_guard lk(g_scale_lock);
+    return g_current.s;
+}
 
 void uw_update(uint64_t present) {
     init_scale();
@@ -203,10 +215,11 @@ void uw_apply() {
     g_history.erase(g_history.begin(), std::next(it));
     applied = allowed;
     if (next == g_current) return;
-    log("nvn: screen scale: resolution x%.3f -> x%.3f, aspect x%.4f -> x%.4f (screen targets made again)",
-        double(g_current.s), double(next.s), double(g_current.k), double(next.k));
+    log("nvn: screen scale: resolution x%.3f -> x%.3f, aspect x%.4f -> x%.4f, 3D scene x%.3f -> x%.3f (screen targets "
+        "made again)", double(g_current.s), double(next.s), double(g_current.k), double(next.k), double(g_current.r),
+        double(next.r));
     g_current = next;
-    g_k = g_current.k, g_s = g_current.s;
+    g_k = g_current.k, g_s = g_current.s, g_r = g_current.r;
     g_gen.fetch_add(1, std::memory_order_acq_rel);
 }
 
@@ -238,6 +251,19 @@ bool uw_widen_texture(Texture& t) {
     return true;
 }
 
+// A target at the picture's size when the scene is upscaled. NX_UPSCALE_PICTURE="<w>x<h> f<flags> fmt<format>,...":
+// these shapes too (bisecting).
+bool uw_picture_target(const Texture& t) {
+    if (t.flags & 1) return true;  // the window textures
+    if (t.format == 0x3d && (t.flags & 8) && (t.base_w == 1920 || t.base_w == 1280)) return true;
+    if (const char* ex = std::getenv("NX_UPSCALE_PICTURE")) {
+        char key[64];
+        std::snprintf(key, sizeof key, "%ux%u f%x fmt%x", t.base_w, t.base_h, t.flags, t.format);
+        return std::strstr(ex, key) != nullptr;
+    }
+    return false;
+}
+
 void uw_resize(Texture& t) {
     if (!t.uw) return;
     Scale c;
@@ -260,6 +286,9 @@ void uw_resize(Texture& t) {
         const double f = double(rows) / (double(t.base_h) * sy);
         sx *= f, sy *= f;
     }
+    // Upscaling (temporal_render_ratio): the 3D scene's targets smaller, the picture's own full size: the screen target
+    // the tonemap draws into and the UI goes on (RGB10A2 render target at the chain's top) and the window textures.
+    if (c.r < 1.0f && !uw_picture_target(t)) sx *= c.r, sy *= c.r;
     t.width = std::max(1u, uint32_t(std::lround(t.base_w * sx)));
     t.height = std::max(1u, uint32_t(std::lround(t.base_h * sy)));
     t.uw_gen = gen;
@@ -338,6 +367,8 @@ struct Camera {
     bool skip = false;                     // not widened (see projection_update)
     uint32_t aspect_set = 0, fov_set = 0;  // what was written last
     uint32_t fov_base = 0;                 // the game's own field of view
+    uint32_t offset_set[2] = {};           // the offset written last (temporal AA's jitter)
+    float offset_base[2] = {};             // the game's own
 };
 std::mutex g_cam_lock;
 std::unordered_map<uint64_t, Camera> g_cams;  // the sead::PerspectiveProjection objects the hook has seen
@@ -398,6 +429,26 @@ void rewrite(uint64_t object, Camera& c, float k, bool dirty) {
         }
     }
     c.aspect_set = wide_bits, c.fov_set = fov;
+    // Temporal AA (nvn_temporal.cpp): the world's cameras get this frame's jitter in their offset (+0xB4, +0xB8, a
+    // fraction of the frustum) on top of the game's own, which is followed when the game sets it again. The game copies
+    // projections it has seen jittered (field and room copies of the main one): an offset under a pixel's width is
+    // ours, not the game's, so its own is 0 then (taken as is, the copies were jittered twice).
+    if (world && temporal_on()) {
+        const uint32_t ox = w[0xB4 / 4], oy = w[0xB8 / 4];
+        auto own = [](uint32_t b) { return std::fabs(f32_of(b)) < 0.002f ? 0.0f : f32_of(b); };
+        if (ox != c.offset_set[0] || oy != c.offset_set[1]) c.offset_base[0] = own(ox), c.offset_base[1] = own(oy);
+        float out[2];
+        temporal_projection(object, c.offset_base[0], c.offset_base[1], out);
+        c.offset_set[0] = bits_of(out[0]), c.offset_set[1] = bits_of(out[1]);
+        if (ox != c.offset_set[0] || oy != c.offset_set[1]) {
+            w[0xB4 / 4] = c.offset_set[0];
+            w[0xB8 / 4] = c.offset_set[1];
+            if (dirty) {
+                reinterpret_cast<volatile uint8_t*>(w)[8] = 1;
+                reinterpret_cast<volatile uint8_t*>(w)[9] = 1;
+            }
+        }
+    }
 }
 
 bool camera_off() {
@@ -547,6 +598,18 @@ void uw_cameras(uint64_t present) {
     }
     static float last_k = 1.0f;
     const float k = g_wanted_k.load(std::memory_order_relaxed);  // the frames the game records from now on
+    if (temporal_present(present) && k == last_k && !camera_off()) {  // a new jitter: the world's cameras made again
+        std::lock_guard lk(g_cam_lock);
+        for (auto it = g_cams.begin(); it != g_cams.end();) {
+            if (!is_projection(it->first)) {
+                it = g_cams.erase(it);
+                continue;
+            }
+            rewrite(it->first, it->second, k, true);
+            ++it;
+        }
+        return;
+    }
     if (k == last_k) return;  // the hooks keep every projection the game updates in step
     last_k = k;
     std::lock_guard lk(g_cam_lock);

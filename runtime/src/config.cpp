@@ -96,6 +96,7 @@ std::string interval(const std::string& v) { return (v == "60" && speedfix_insta
 std::string native60(const std::string& v) { return v == "60native" ? "1" : ""; }
 // lsfg-vk is a Vulkan layer of its own. "off" says so: frame generation is on by default on Android.
 std::string framegen(const std::string& v) { return v == "builtin" ? "1" : v.empty() ? "" : "0"; }
+std::string ffx_framegen(const std::string& v) { return v == "fsr" ? "1" : ""; }  // nvn_temporal.cpp
 // The screen's 0..100% sharpness -> FSR's RCAS attenuation in stops (0 sharpest, 2 softest).
 std::string fsr_sharpness(const std::string& v) {
     if (v.empty()) return "";
@@ -114,6 +115,7 @@ const Mapping kMappings[] = {
     {"video.upscaler", "NX_FSR", fsr, true},
     {"video.fsr_sharpness_pct", "NX_FSR_SHARP", fsr_sharpness, true},
     {"video.antialiasing", "NX_AA", off_empty, true},  // fxaa (nvn_present.cpp), ssaa15 / ssaa2 (nvn_ultrawide.cpp)
+    {"video.temporal", "NX_TEMPORAL", off_empty, false},  // fsr / dlaa (nvn_temporal.cpp): read live
     {"video.anisotropy", "NX_ANISOTROPY", game_empty, true},  // 2 .. 16 (nvn_sampler.cpp)
     {"video.gpu", "NX_GPU", auto_empty, true},
     {"video.frame_rate", "NX_PRESENT_INTERVAL", interval, true},
@@ -121,6 +123,7 @@ const Mapping kMappings[] = {
     {"video.frame_rate", "NX_SPEEDFIX", speedfix, true},
     {"video.frame_cap", "NX_FPS_CAP", fps_cap, true},
     {"video.frame_gen", "NX_FRAMEGEN", framegen, true},
+    {"video.frame_gen", "NX_FFX_FRAMEGEN", ffx_framegen, false},  // AMD's: read live (nvn_temporal.cpp)
     {"video.async_shaders", "NX_ASYNC_PIPELINES", on_or_zero, true},  // on by default on Android
     {"video.vsync", "NX_VSYNC", off_is_zero, true},
     {"video.hdr", "NX_HDR", off_empty, true},  // scrgb / hdr10 (nvn_present.cpp); the brightness keys are read live

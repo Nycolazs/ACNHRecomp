@@ -284,11 +284,14 @@ set(NX_RUNTIME_SOURCES
     runtime/src/nvn/nvn_spirv_instance.cpp
     runtime/src/nvn/nvn_spirv_alpha.cpp
     runtime/src/nvn/nvn_spirv_clamp.cpp
+    runtime/src/nvn/nvn_spirv_motion.cpp
     runtime/src/nvn/nvn_screenshot.cpp
     runtime/src/nvn/nvn_vk_defer.cpp
     runtime/src/nvn/nvn_ultrawide.cpp
     runtime/src/nvn/nvn_present.cpp
     runtime/src/nvn/nvn_framegen.cpp
+    runtime/src/nvn/nvn_temporal.cpp
+    runtime/src/nvn/nvn_temporal_dlss.cpp
     runtime/src/nvn/nvn_pipeline_cache.cpp
     runtime/src/nvn/nvn_bc.cpp
     runtime/src/nvn/nvn_draw.cpp
@@ -457,6 +460,30 @@ else()
     # SDL3.dll next to the game, so it starts from a double click.
     add_custom_command(TARGET ${NX_GAME} POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
                        $<TARGET_FILE:SDL3::SDL3> $<TARGET_FILE_DIR:${NX_GAME}>)
+    # Temporal AA (nvn_temporal.cpp): AMD's FidelityFX SDK 2.4 API headers and its signed Vulkan DLLs (loader,
+    # upscaler: FSR 3.1 / 4; frame generation), which tools/setup_acnh.py fetches into private/third_party/ffx. Loaded
+    # at run time from beside the exe; without them the setting does nothing.
+    set(NX_FFX_DIR "${CMAKE_SOURCE_DIR}/private/third_party/ffx")
+    if(EXISTS "${NX_FFX_DIR}/api/include/ffx_api.h")  # the SDK's own layout (its headers include ../../api/include)
+        target_include_directories(${NX_GAME} PRIVATE "${NX_FFX_DIR}/api/include" "${NX_FFX_DIR}/upscalers/include"
+                                   "${NX_FFX_DIR}/framegeneration/include")
+        target_compile_definitions(${NX_GAME} PRIVATE NX_FFX)
+        file(GLOB NX_FFX_DLLS "${NX_FFX_DIR}/bin/*.dll")
+        foreach(dll ${NX_FFX_DLLS})
+            add_custom_command(TARGET ${NX_GAME} POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                               "${dll}" $<TARGET_FILE_DIR:${NX_GAME}>)
+        endforeach()
+    endif()
+    # Temporal AA's DLAA (nvn_temporal_dlss.cpp): NVIDIA's DLSS SDK (NGX headers, its static library for the /MD
+    # runtime, nvngx_dlss.dll beside the exe), which tools/setup_acnh.py fetches into private/third_party/dlss.
+    set(NX_DLSS_DIR "${CMAKE_SOURCE_DIR}/private/third_party/dlss")
+    if(EXISTS "${NX_DLSS_DIR}/include/nvsdk_ngx_vk.h" AND EXISTS "${NX_DLSS_DIR}/lib/nvsdk_ngx_d.lib")
+        target_include_directories(${NX_GAME} PRIVATE "${NX_DLSS_DIR}/include")
+        target_compile_definitions(${NX_GAME} PRIVATE NX_DLSS)
+        target_link_libraries(${NX_GAME} PRIVATE "${NX_DLSS_DIR}/lib/nvsdk_ngx_d.lib")
+        add_custom_command(TARGET ${NX_GAME} POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                           "${NX_DLSS_DIR}/bin/nvngx_dlss.dll" $<TARGET_FILE_DIR:${NX_GAME}>)
+    endif()
     if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
         # No fused multiply-add the guest code did not ask for (its float results must match).
         target_compile_options(${NX_GAME} PRIVATE /clang:-ffp-contract=off)
