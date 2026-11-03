@@ -426,7 +426,10 @@ bool init() {
 #if defined(__ANDROID__)
         // Arm Mali: its dma-buf pools cannot be mapped (no zero copy), so more goes through uploads: one submit
         // entering the Resident Services tent uploaded 144 MB and wrapped the 64 MB ring into a GPU hang (#12).
-        uint64_t ring_mb = props.vendorID == 0x13B5 ? 256 : 64;
+        // Samsung Xclipse (0x144D, RDNA): a scene load (the island, and back out of a building)
+        // uploaded 117-131 MB in one submit (#50's log: ~17,000 "upload buffer full" lines over three loads); the wrap wrote the load's last data over
+        // its first before the GPU had copied it, and the textures staged there stayed garbled (glitched outdoors).
+        uint64_t ring_mb = props.vendorID == 0x13B5 || props.vendorID == 0x144D ? 256 : 64;
 #else
         uint64_t ring_mb = 256;
 #endif
