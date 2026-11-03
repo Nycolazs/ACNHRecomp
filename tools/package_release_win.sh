@@ -50,7 +50,7 @@ for exe in "$R/acnh.exe" "$R/ACNHRecomp Launcher.exe"; do
     for dll in $(MSYS_NO_PATHCONV=1 dumpbin /nologo /dependents "$(cygpath -w "$exe")" | tr -d '\r' |
                  awk '/^ +[^ ]+\.(dll|DLL)$/ {print $1}'); do
         case "${dll,,}" in api-ms-win-*|kernel32.dll|user32.dll|shell32.dll|imm32.dll|winmm.dll|dxgi.dll|ole32.dll|\
-                           psapi.dll|advapi32.dll|gdi32.dll|setupapi.dll|version.dll|oleaut32.dll|ws2_32.dll) continue ;; esac
+                           psapi.dll|advapi32.dll|gdi32.dll|setupapi.dll|version.dll|oleaut32.dll|ws2_32.dll|bcrypt.dll) continue ;; esac
         ls "$R" | grep -qix "$dll" || { echo "$exe imports $dll, which is not in the package"; exit 1; }
     done
 done
