@@ -1,0 +1,28 @@
+# The Discord server's spam guard (tools/discord_guard.py): bans whoever posted in the spam-trap channel and keeps
+# the AutoMod rules as written there. AutoMod itself blocks and times out at once; this only finishes the job.
+name: Discord guard
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: discord-guard
+  cancel-in-progress: false
+
+jobs:
+  guard:
+    if: github.repository == 'Nycolazs/ACNHRecomp'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: tools/discord_guard.py
+          sparse-checkout-cone-mode: false
+      - run: python3 tools/discord_guard.py
+        env:
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
