@@ -17,3 +17,5 @@
 2216938  # DIAG entry (temporary)
 226af00  # DIAG entry (temporary)
 7c6430  # DIAG entry (temporary)
+33f51f8  # amiibo scan gate entry (main_033F51F8): patch host NFC state (acnh_amiibo_hook.cpp)
+33f5330  # amiibo scan gate exit (main_033F51F8): virtual tag / NFC readiness (acnh_amiibo_hook.cpp)

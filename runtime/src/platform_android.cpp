@@ -637,6 +637,12 @@ bool start_picker(const char* key, const std::string& value) {
     }
     return true;
 }
+
+void empty_answer() {
+    std::remove(pick_answer_file().c_str());
+    if (FILE* f = std::fopen(pick_answer_file().c_str(), "w")) std::fputs("\n", f), std::fclose(f);
+    g_picking = true;
+}
 }  // namespace
 
 void open_path(const std::string& path) { start_picker("open", path); }
@@ -644,10 +650,11 @@ void open_path(const std::string& path) { start_picker("open", path); }
 void pick_path(bool, const std::string&) {
     std::remove(pick_answer_file().c_str());
     g_picking = start_picker("out", pick_answer_file());
-    if (!g_picking) {  // no picker: an empty answer, so the screen does not wait forever
-        if (FILE* f = std::fopen(pick_answer_file().c_str(), "w")) std::fputs("\n", f), std::fclose(f), g_picking = true;
-    }
+    if (!g_picking) empty_answer();  // no picker: an empty answer, so the screen does not wait forever
 }
+
+// Android's picker activity chooses a folder. A file pick (Amiibo .bin) has no dialog here: answer empty.
+void pick_file(const std::string&, const char*) { empty_answer(); }
 
 bool pick_result(std::string& path) {
     path.clear();

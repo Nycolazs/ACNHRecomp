@@ -35,6 +35,7 @@
 #include "game_clock.h"
 #include "platform.h"
 #include "saves.h"
+#include "ui/amiibo_importer.h"
 #include "ui/i18n.h"
 #include "ui/theme.h"
 #include "ui/ui_internal.h"
@@ -60,7 +61,8 @@ struct Page {
 };
 const Page kPages[] = {
     {"tab.game", rgb(124, 194, 103), 0},  {"tab.video", rgb(79, 179, 217), 1},   {"tab.audio", rgb(245, 166, 35), 2},
-    {"tab.controls", rgb(155, 125, 212), 3}, {"tab.saves", rgb(232, 115, 122), 4}, {"tab.online", rgb(72, 190, 170), kIconBox}, {"tab.about", rgb(176, 140, 100), 5},
+    {"tab.controls", rgb(155, 125, 212), 3}, {"tab.saves", rgb(232, 115, 122), 4}, {"tab.online", rgb(72, 190, 170), kIconBox},
+    {"tab.amiibo", rgb(255, 180, 80), kIconKey}, {"tab.about", rgb(176, 140, 100), 5},
 };
 constexpr int kPageCount = int(sizeof(kPages) / sizeof(kPages[0]));
 
@@ -1248,6 +1250,13 @@ bool g_quit_confirm = false;
 
 }  // namespace
 
+void settings_nav_item() {
+    page_nav_item();
+    if (!ImGui::IsItemFocused()) return;
+    ImGui::GetWindowDrawList()->AddRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), rgb(246, 170, 40),
+                                        ImGui::GetStyle().FrameRounding, 0, 2.5f * g_scale);
+}
+
 void settings_show_online() { g_show_online = true; }
 
 bool settings_draw(float scale, ImFont* title, float opening) {
@@ -1571,6 +1580,7 @@ bool settings_draw(float scale, ImFont* title, float opening) {
         case 3: page_controls(); break;
         case 4: page_saves(); break;
         case 5: page_online(); break;
+        case 6: settings_page_amiibo(g_scale); break;
         default: page_about(); break;
     }
     g_page_navigation = false;
