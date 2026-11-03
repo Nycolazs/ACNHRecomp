@@ -175,6 +175,9 @@ std::string setup_log_path();  // the full output, also written to <install>/log
 
 // Starts the game in its own process. Its window opens where `from` is, at its size (or maximized like it), so the
 // launcher's window seems to turn into the game's; keep `from` up until game_window_shown().
+// x86-64: the first x86-64-v3 feature (AVX2, FMA, ...) this CPU lacks, which the game needs; nullptr when none
+// is missing (and on ARM). cpu_check.cpp.
+const char* cpu_missing_feature();
 bool launch_game(const Build& build, std::string& error, SDL_Window* from = nullptr);
 bool game_window_shown();  // the game started by launch_game shows its window, or has exited
 // start.wav next to the launcher, if there is one, played once when the game starts (a sound logo). Optional and

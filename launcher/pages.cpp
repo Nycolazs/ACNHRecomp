@@ -1353,6 +1353,11 @@ double g_opening_since = -1;
 
 void play() {
     if (g_opening_since >= 0) return;  // already starting
+    if (const char* missing = cpu_missing_feature()) {  // the game would stop at once (issue #46)
+        g_banner = trf("launcher.cpu_unsupported", missing);
+        g_autostart_at = -1;
+        return;
+    }
     std::string err;
     std::string profile = settings().get("launcher.save_profile", g_save_profile_active);
     if (profile.empty()) profile = "default";

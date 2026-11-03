@@ -18,6 +18,7 @@ endif()
 
 add_executable(acnhrecomp_launcher WIN32
     launcher/main.cpp launcher/pages.cpp launcher/files.cpp launcher/pipeline.cpp launcher/desktop.cpp
+    launcher/cpu_check.cpp
     runtime/src/ldn_upnp.cpp
     launcher/save_log_stub.cpp
     runtime/src/ui/theme.cpp runtime/src/ui/i18n.cpp runtime/src/app_icon.cpp
@@ -27,6 +28,15 @@ add_executable(acnhrecomp_launcher WIN32
     ${NX_LAUNCHER_IMGUI}/imgui_widgets.cpp ${NX_LAUNCHER_IMGUI}/backends/imgui_impl_sdl3.cpp
     ${NX_LAUNCHER_IMGUI}/backends/imgui_impl_sdlrenderer3.cpp)
 target_include_directories(acnhrecomp_launcher PRIVATE launcher runtime/src ${NX_LAUNCHER_IMGUI})
+# No /arch:AVX2 (the top CMakeLists.txt adds it on Windows) in the launcher and the libraries it links: on a CPU
+# without AVX2 it must start, and tell the player why the game cannot run (cpu_check.cpp), instead of crashing.
+foreach(t acnhrecomp_launcher nx_save_storage nx_mod_manager)
+    get_target_property(opts ${t} COMPILE_OPTIONS)
+    if(opts)
+        list(REMOVE_ITEM opts /arch:AVX2)
+        set_target_properties(${t} PROPERTIES COMPILE_OPTIONS "${opts}")
+    endif()
+endforeach()
 target_link_libraries(acnhrecomp_launcher PRIVATE SDL3::SDL3 Threads::Threads nx_save_storage nx_mod_manager)
 if(WIN32)
     target_link_libraries(acnhrecomp_launcher PRIVATE ole32 shell32 uuid ws2_32)  # desktop.cpp: the shortcuts
