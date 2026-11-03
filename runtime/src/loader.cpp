@@ -329,6 +329,41 @@ struct FastModule {
 FastModule g_fast[4];
 size_t g_fast_count = 0;
 
+// SDK nn::nfc / nn::nfp are reached through vtables (nx::call), not main PLT HLE slots.
+std::unordered_map<uint64_t, Fn>& hle_call_overrides() {
+    static std::unordered_map<uint64_t, Fn> m;
+    return m;
+}
+
+bool hle_vtable_override_name(const char* name) {
+    // Real SDK client must run; do not route through HLE (CreateUserInterface builds IUser vtables).
+    if (std::strncmp(name, "_ZN2nn3nfp6client", 17) == 0 || std::strncmp(name, "_ZN2nn3nfc6client", 17) == 0)
+        return false;
+    if (std::strncmp(name, "_ZN2nn3nfp", 10) == 0 || std::strncmp(name, "_ZN2nn3nfc", 10) == 0) return true;
+    if (std::strncmp(name, "_ZN2nn3hid6system", 17) == 0 && std::strstr(name, "Nfc")) return true;
+    if (std::strncmp(name, "_ZN2nn8settings6system", 22) == 0 && std::strstr(name, "Nfc")) return true;
+    return false;
+}
+
+void register_hle_call_overrides() {
+    auto& ov = hle_call_overrides();
+    ov.clear();
+    size_t n = 0;
+    for (auto& lm : g_modules) {
+        const ModuleInfo* mi = lm.info;
+        for (size_t k = 0; k < mi->symbol_count; k++) {
+            const Symbol& s = mi->symbols[k];
+            if (s.imported || s.type != 2 || !s.name[0]) continue;
+            if (!hle_vtable_override_name(s.name)) continue;
+            HleFn fn = hle_lookup(s.name);
+            if (!fn) continue;
+            ov[lm.base + s.value] = fn;
+            n++;
+        }
+    }
+    if (n) log("loader: %zu NFC-related SDK entry points wired to HLE vtables", n);
+}
+
 Fn fast_lookup(const FastModule& m, uint64_t off) {
     const FuncEntry* f = m.funcs + m.block[off >> 6];
     while (f->offset < off) f++;
@@ -361,6 +396,10 @@ inline uint32_t cache_slot(uint64_t rel) {
 }
 
 [[gnu::noinline]] void call_slow(CPU& c, uint64_t t) {
+    if (auto it = hle_call_overrides().find(t); it != hle_call_overrides().end()) {
+        it->second(c);
+        return;
+    }
     for (size_t k = 0; k < g_fast_count; k++) {
         const FastModule& m = g_fast[k];
         uint64_t off = t - m.base;
@@ -401,6 +440,10 @@ inline uint32_t cache_slot(uint64_t rel) {
 }
 
 NX_GAME_API void call(CPU& c, uint64_t t) {
+    if (auto it = hle_call_overrides().find(t); it != hle_call_overrides().end()) {
+        it->second(c);
+        return;
+    }
     uint64_t rel = t - g_cache_base;
     if (rel < g_cache_span) [[likely]] {
         uint64_t e = g_call_cache[cache_slot(rel)].load(std::memory_order_relaxed);
@@ -596,6 +639,7 @@ void load_modules(const ModuleInfo* const* mods, size_t count, const std::string
         }
     }
     log("linked: %zu to HLE, %zu across modules, %zu unresolved", hle, linked, missing);
+    register_hle_call_overrides();
 }
 
 }  // namespace nx
