@@ -1,0 +1,50 @@
+# Builds the Android app (APK) with the touch-size slider (touch-size-fix.patch, in the repository's root): run from the Actions tab (Android APK > Run workflow),
+# then download the "acnh-apk" artifact of the run. The app only (tools/build_android.sh --no-game): the game's
+# code and data come from the game folder on the phone, as in the releases.
+name: Android APK
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  VK_HEADERS: "1.4.357"
+
+jobs:
+  android:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply touch-size-fix.patch
+        run: patch -p1 < touch-size-fix.patch
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build cmake python3-pil zip unzip
+      - name: Android SDK
+        run: |
+          SDK=${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$HOME/Android/Sdk}}
+          SM=$(find "$SDK" -name sdkmanager -type f | head -1)
+          yes | sudo -E "$SM" --sdk_root="$SDK" --licenses >/dev/null || true
+          sudo -E "$SM" --sdk_root="$SDK" "ndk;28.2.13676358" "build-tools;35.0.0" "platforms;android-35"
+          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+      - name: Vulkan headers
+        run: |
+          mkdir -p private/third_party
+          curl -fsSL "https://github.com/KhronosGroup/Vulkan-Headers/archive/refs/tags/v$VK_HEADERS.tar.gz" |
+            tar -xz -C private/third_party
+      - name: Build
+        run: tools/build_android.sh --no-game
+      - uses: actions/upload-artifact@v4
+        with:
+          name: acnh-apk
+          path: private/acnh/apk-app/acnh.apk
+          if-no-files-found: error
