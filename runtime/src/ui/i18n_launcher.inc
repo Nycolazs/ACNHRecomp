@@ -12,6 +12,7 @@ const Entry kLauncherEn[] = {
     {"launcher.update.available", "A new version of ACNHRecomp is out: {}"},
     {"launcher.update.get", "Download it"},
     {"launcher.update.check", "Look for new versions when the launcher opens"},
+    {"launcher.autostart.setting", "Start the game automatically when the launcher opens"},
     {"launcher.fullscreen", "Show the launcher in fullscreen"},
     {"launcher.update.newer", "{} is available"},
     {"launcher.update.latest", "this is the latest version"},
@@ -114,7 +115,8 @@ const Entry kLauncherEn[] = {
     {"launcher.done.title", "Your island is ready!"},
     {"launcher.done.text", "Installed in {}. Press Play to start; in the game, F1 opens the settings."},
     {"launcher.play", "Play"},
-    {"launcher.autostart", "Starting the game in {}... (click to stay here)"},
+    {"launcher.autostart", "Starting the game in {}..."},
+    {"launcher.autostart.stay", "Click on the launcher to stay"},
     {"launcher.home", "Home"},
     {"launcher.home.title", "Ready to play"},
     {"launcher.home.title_missing", "Build not found"},
@@ -193,6 +195,7 @@ const Entry kLauncherPtBr[] = {
     {"launcher.update.available", "Saiu uma nova versão do ACNHRecomp: {}"},
     {"launcher.update.get", "Baixar"},
     {"launcher.update.check", "Procurar novas versões ao abrir o launcher"},
+    {"launcher.autostart.setting", "Iniciar o jogo automaticamente ao abrir o launcher"},
     {"launcher.fullscreen", "Exibir o launcher em tela cheia"},
     {"launcher.update.newer", "a {} está disponível"},
     {"launcher.update.latest", "esta é a versão mais recente"},
@@ -289,7 +292,8 @@ const Entry kLauncherPtBr[] = {
     {"launcher.done.title", "A sua ilha está pronta!"},
     {"launcher.done.text", "Instalado em {}. Clique em Jogar para começar; no jogo, F1 abre as configurações."},
     {"launcher.play", "Jogar"},
-    {"launcher.autostart", "Iniciando o jogo em {}... (clique para ficar aqui)"},
+    {"launcher.autostart", "Iniciando o jogo em {}..."},
+    {"launcher.autostart.stay", "Clique no launcher para ficar"},
     {"launcher.home", "Início"},
     {"launcher.home.title", "Pronto para jogar"},
     {"launcher.home.title_missing", "Versão não encontrada"},
@@ -373,6 +377,7 @@ const Entry kLauncherEs[] = {
     {"launcher.update.available", "Hay una nueva versión de ACNHRecomp: {}"},
     {"launcher.update.get", "Descargar"},
     {"launcher.update.check", "Buscar nuevas versiones al abrir el launcher"},
+    {"launcher.autostart.setting", "Iniciar el juego automáticamente al abrir el launcher"},
     {"launcher.fullscreen", "Mostrar el launcher en pantalla completa"},
     {"launcher.update.newer", "la {} está disponible"},
     {"launcher.update.latest", "es la versión más reciente"},
@@ -469,7 +474,8 @@ const Entry kLauncherEs[] = {
     {"launcher.done.title", "¡Tu isla está lista!"},
     {"launcher.done.text", "Instalado en {}. Pulsa Jugar para empezar; en el juego, F1 abre los ajustes."},
     {"launcher.play", "Jugar"},
-    {"launcher.autostart", "Iniciando el juego en {}... (haz clic para quedarte aquí)"},
+    {"launcher.autostart", "Iniciando el juego en {}..."},
+    {"launcher.autostart.stay", "Haz clic en el launcher para quedarte"},
     {"launcher.home", "Inicio"},
     {"launcher.home.title", "Listo para jugar"},
     {"launcher.home.title_missing", "No se encuentra la versión"},
@@ -543,6 +549,7 @@ const Entry kLauncherEs[] = {
 };
 
 const Entry kLauncherFr[] = {
+    {"launcher.autostart.setting", "Lancer le jeu automatiquement à l'ouverture du lanceur"},
     {"launcher.fullscreen", "Afficher le lanceur en plein écran"},
     {"launcher.subtitle", "Animal Crossing: New Horizons, recompilé pour PC"},
     {"launcher.welcome.title", "Bienvenue !"},
@@ -636,7 +643,8 @@ const Entry kLauncherFr[] = {
     {"launcher.done.title", "Votre île est prête !"},
     {"launcher.done.text", "Installé dans {}. Appuyez sur Jouer pour commencer ; dans le jeu, F1 ouvre les paramètres."},
     {"launcher.play", "Jouer"},
-    {"launcher.autostart", "Lancement du jeu dans {}... (cliquez pour rester ici)"},
+    {"launcher.autostart", "Lancement du jeu dans {}..."},
+    {"launcher.autostart.stay", "Cliquez sur le lanceur pour rester ici"},
     {"launcher.home", "Accueil"},
     {"launcher.home.title", "Prêt à jouer"},
     {"launcher.home.title_missing", "Version introuvable"},
@@ -710,6 +718,7 @@ const Entry kLauncherFr[] = {
 };
 
 const Entry kLauncherDe[] = {
+    {"launcher.autostart.setting", "Spiel beim Öffnen des Launchers automatisch starten"},
     {"launcher.fullscreen", "Launcher im Vollbild anzeigen"},
     {"launcher.subtitle", "Animal Crossing: New Horizons, für den PC rekompiliert"},
     {"launcher.welcome.title", "Willkommen!"},
@@ -803,7 +812,8 @@ const Entry kLauncherDe[] = {
     {"launcher.done.title", "Deine Insel ist bereit!"},
     {"launcher.done.text", "Installiert in {}. Klicke auf Spielen, um loszulegen; im Spiel öffnet F1 die Einstellungen."},
     {"launcher.play", "Spielen"},
-    {"launcher.autostart", "Das Spiel startet in {}... (klicken, um hier zu bleiben)"},
+    {"launcher.autostart", "Das Spiel startet in {}..."},
+    {"launcher.autostart.stay", "Auf den Launcher klicken, um hier zu bleiben"},
     {"launcher.home", "Start"},
     {"launcher.home.title", "Bereit zum Spielen"},
     {"launcher.home.title_missing", "Build nicht gefunden"},
@@ -877,6 +887,7 @@ const Entry kLauncherDe[] = {
 };
 
 const Entry kLauncherIt[] = {
+    {"launcher.autostart.setting", "Avvia il gioco automaticamente all'apertura del launcher"},
     {"launcher.fullscreen", "Mostra il launcher a schermo intero"},
     {"launcher.subtitle", "Animal Crossing: New Horizons, ricompilato per PC"},
     {"launcher.welcome.title", "Benvenuto!"},
@@ -970,7 +981,8 @@ const Entry kLauncherIt[] = {
     {"launcher.done.title", "La tua isola è pronta!"},
     {"launcher.done.text", "Installato in {}. Premi Gioca per iniziare; nel gioco, F1 apre le impostazioni."},
     {"launcher.play", "Gioca"},
-    {"launcher.autostart", "Avvio del gioco tra {}... (clicca per restare qui)"},
+    {"launcher.autostart", "Avvio del gioco tra {}..."},
+    {"launcher.autostart.stay", "Clicca sul launcher per restare qui"},
     {"launcher.home", "Home"},
     {"launcher.home.title", "Pronto per giocare"},
     {"launcher.home.title_missing", "Versione non trovata"},
@@ -1044,6 +1056,7 @@ const Entry kLauncherIt[] = {
 };
 
 const Entry kLauncherNl[] = {
+    {"launcher.autostart.setting", "Start het spel automatisch wanneer de launcher opent"},
     {"launcher.fullscreen", "Launcher op volledig scherm weergeven"},
     {"launcher.subtitle", "Animal Crossing: New Horizons, gehercompileerd voor pc"},
     {"launcher.welcome.title", "Welkom!"},
@@ -1137,7 +1150,8 @@ const Entry kLauncherNl[] = {
     {"launcher.done.title", "Je eiland is klaar!"},
     {"launcher.done.text", "Geïnstalleerd in {}. Druk op Spelen om te beginnen; in het spel opent F1 de instellingen."},
     {"launcher.play", "Spelen"},
-    {"launcher.autostart", "Het spel start over {}... (klik om hier te blijven)"},
+    {"launcher.autostart", "Het spel start over {}..."},
+    {"launcher.autostart.stay", "Klik op de launcher om hier te blijven"},
     {"launcher.home", "Start"},
     {"launcher.home.title", "Klaar om te spelen"},
     {"launcher.home.title_missing", "Build niet gevonden"},

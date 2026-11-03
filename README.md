@@ -316,7 +316,7 @@ On macOS, double-clicking `Jogar ACNH.command` does the same (and, once the game
 folder, and if this computer has what it needs the setup runs by itself and the game starts when it is done (a
 pt-BR `.zip` in Downloads is taken along). The pages below only show up when something is missing or fails, or when
 the dialog is closed. Later the launcher starts the game after a 3-second countdown; a click or a key keeps it
-open on its home page (`launcher.autostart = 0` in `launcher.ini`: no countdown).
+open on its home page (Settings, or `launcher.autostart = 0` in `launcher.ini`: no countdown).
 
 By hand: `cmake -S . -B build/launcher -DNX_GAME=acnh && cmake --build build/launcher --target acnhrecomp_launcher`,
 then run `build/launcher/acnhrecomp_launcher`.

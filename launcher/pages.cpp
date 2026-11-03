@@ -206,6 +206,10 @@ bool g_rebuild = false;  // started from home: no files page to go back to
 bool g_express = false;
 // Opened with a build: the game starts after a short countdown, which a click or a key stops (-2: from the first frame).
 double g_autostart_at = -1;
+// Snapshot for the frame: countdown was active before click-cancel, so the Play button does not also launch.
+bool g_autostart_ui = false;
+// After cancelling the countdown, keep Play green until the pointer leaves.
+bool g_play_calm = false;
 void start_setup(bool rebuild);
 bool prereqs_block();
 void play();
@@ -1369,23 +1373,42 @@ void opening_overlay() {
     dl->AddText(g_body, fs, ImVec2(c.x - r - S(14) - ts.x, c.y - ts.y * 0.5f), IM_COL32(255, 249, 232, int(170 * a)), text);
 }
 
-bool big_button(const char* label, int icon, ImU32 color, float w, float h) {
+bool big_button(const char* label, int icon, ImU32 color, float w, float h, const char* sub = nullptr) {
     ImVec2 p = ImGui::GetCursorScreenPos();
-    bool clicked = nav_card(label, ImVec2(w, h), true);
-    bool hov = ImGui::IsItemHovered() || ImGui::IsItemFocused();
-    if (ImGui::IsItemActive()) {  // pressed: the button gives a little under the finger (3 %, from its centre)
+    bool clicked = nav_card("##play", ImVec2(w, h), true);
+    if (g_play_calm && !ImGui::IsItemHovered()) g_play_calm = false;
+    // Countdown: yellow. After cancel: green until the pointer leaves. Otherwise: normal hover/focus.
+    bool hov = sub ? true
+                   : (!g_autostart_ui && !g_play_calm && (ImGui::IsItemHovered() || ImGui::IsItemFocused()));
+    if (!sub && !g_autostart_ui && !g_play_calm && ImGui::IsItemActive()) {  // pressed: the button gives a little under the finger (3 %, from its centre)
         float dx = w * 0.015f, dy = h * 0.015f;
         p = ImVec2(p.x + dx, p.y + dy * 2), w -= dx * 2, h -= dy * 2;
     }
     ImDrawList* dl = ImGui::GetWindowDrawList();
     dl->AddRectFilled(ImVec2(p.x, p.y + S(4)), ImVec2(p.x + w, p.y + h + S(4)), rgb(80, 140, 60, 120), h * 0.5f);
     dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), hov ? kYellow : color, h * 0.5f);
+    float ir = h * 0.22f, pad = S(12), avail = w - ir * 2 - pad - S(24);
+    ImU32 ink = hov ? kInk : kWhite;
     float fs = font_size(g_title);
     ImVec2 ts = measure(g_title, fs, label, -1);
-    float ir = h * 0.22f, total = ts.x + ir * 2 + S(12);
+    if (ts.x > avail && avail > 0) fs *= avail / ts.x, ts = measure(g_title, fs, label, -1);
+    float sub_fs = 0, gap = 0;
+    ImVec2 ss(0, 0);
+    if (sub && *sub) {
+        sub_fs = fs * 0.62f;
+        ss = measure(g_body, sub_fs, sub, -1);
+        if (ss.x > avail && avail > 0) sub_fs *= avail / ss.x, ss = measure(g_body, sub_fs, sub, -1);
+        gap = S(2);
+    }
+    float text_h = ts.y + (sub ? gap + ss.y : 0);
+    float total = std::max(ts.x, ss.x) + ir * 2 + pad;
     float x = p.x + (w - total) * 0.5f;
-    theme_icon(dl, icon, ImVec2(x + ir, p.y + h * 0.5f), ir, hov ? kInk : kWhite);
-    dl->AddText(g_title, fs, ImVec2(x + ir * 2 + S(12), p.y + (h - ts.y) * 0.5f), hov ? kInk : kWhite, label);
+    float ty = p.y + (h - text_h) * 0.5f;
+    theme_icon(dl, icon, ImVec2(x + ir, p.y + h * 0.5f), ir, ink);
+    float tx = x + ir * 2 + pad;
+    dl->AddText(g_title, fs, ImVec2(tx + (std::max(ts.x, ss.x) - ts.x) * 0.5f, ty), ink, label);
+    if (sub && *sub)
+        dl->AddText(g_body, sub_fs, ImVec2(tx + (std::max(ts.x, ss.x) - ss.x) * 0.5f, ty + ts.y + gap), ink, sub);
     return clicked;
 }
 
@@ -1436,9 +1459,16 @@ void select_save_profile(const std::string& id) {
 }
 
 void play_block() {
-    float w = std::min(ImGui::GetContentRegionAvail().x, S(360));
+    // Same size for countdown and Play so cancel does not resize/recolor the control.
+    float w = std::min(ImGui::GetContentRegionAvail().x, S(420));
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (ImGui::GetContentRegionAvail().x - w) * 0.5f);
-    if (big_button(tr("launcher.play"), nx::ui::kIconPlay, kGreen, w, S(72))) play();
+    if (g_autostart_at >= 0) {
+        int left = std::max(1, int(std::ceil(g_autostart_at - ImGui::GetTime())));
+        std::string label = trf("launcher.autostart", std::to_string(left));
+        big_button(label.c_str(), nx::ui::kIconPlay, kGreen, w, S(80), tr("launcher.autostart.stay"));
+    } else if (big_button(tr("launcher.play"), nx::ui::kIconPlay, kGreen, w, S(80)) && !g_autostart_ui) {
+        play();
+    }
     ImGui::Dummy(ImVec2(0, S(8)));
 }
 
@@ -1807,19 +1837,6 @@ void page_home() {
     if (valid) {
         hero(nx::ui::kIconHouse, kGreen, S(46));
         centered(tr("launcher.home.title"), g_title, 1.1f, kInk);
-        if (g_autostart_at >= 0) {
-            int left = std::max(1, int(std::ceil(g_autostart_at - ImGui::GetTime())));
-            std::string text = trf("launcher.autostart", std::to_string(left));
-            const float width = ImGui::GetContentRegionAvail().x;
-            const float height = S(6) + ImGui::GetStyle().ItemSpacing.y;
-            float fs = font_size(g_body) * 0.8f;
-            ImVec2 text_size = measure(g_body, fs, text.c_str(), -1);
-            fs *= std::min({1.0f, width / std::max(1.0f, text_size.x), height / std::max(1.0f, text_size.y)});
-            text_size = measure(g_body, fs, text.c_str(), -1);
-            ImVec2 p = ImGui::GetCursorScreenPos();
-            ImGui::GetWindowDrawList()->AddText(g_body, fs,
-                ImVec2(p.x + (width - text_size.x) * 0.5f, p.y + (height - text_size.y) * 0.5f), kInkSoft, text.c_str());
-        }
         ImGui::Dummy(ImVec2(0, S(6)));
         contents_row();
         ImGui::Dummy(ImVec2(0, S(10)));
@@ -1954,6 +1971,14 @@ void page_settings() {
             li.set("launcher.update_check", check ? "1" : "0");
             li.save();
             if (check) update_check_start();
+        }
+        bool autostart = li.get("launcher.autostart", "1") != "0";
+        bool autostart_changed = ImGui::Checkbox(tr("launcher.autostart.setting"), &autostart);
+        nav_item();
+        if (autostart_changed) {
+            li.set("launcher.autostart", autostart ? "1" : "0");
+            if (!li.save()) toast(tr("launcher.settings.save_failed"));
+            if (!autostart) g_autostart_at = -1, g_autostart_ui = false;
         }
         bool fullscreen = li.get("launcher.fullscreen", "0") == "1";
         bool fullscreen_changed = ImGui::Checkbox(tr("launcher.fullscreen"), &fullscreen);
@@ -2245,6 +2270,7 @@ bool pages_draw(float scale, ImFont* title) {
         if (g_autostart_at == -2) g_autostart_at = ImGui::GetTime() + 3;
         update_check_start();
     }
+    g_autostart_ui = g_autostart_at >= 0;
     if (g_autostart_at >= 0) {
         // A new release found stops it too: the notice stays on the home page to be read.
         bool stop = g_page != Page::Home || ImGui::IsMouseClicked(0) || ImGui::IsMouseClicked(1) ||
@@ -2254,8 +2280,15 @@ bool pages_draw(float scale, ImFont* title) {
                 stop = true;
         if (stop) {
             g_autostart_at = -1;
+            g_play_calm = true;
+            // Drop click/nav highlight so Play returns to green instead of staying yellow.
+            ImGui::ClearActiveID();
+            ctx.NavId = 0;
+            ctx.NavIdIsAlive = false;
+            ImGui::SetNavCursorVisible(false);
         } else if (ImGui::GetTime() >= g_autostart_at) {
             g_autostart_at = -1;
+            g_autostart_ui = false;
             play();
         }
     }
