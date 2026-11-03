@@ -176,6 +176,8 @@ bool aes128_ctr(const uint8_t key[16], const uint8_t iv[16], const uint8_t* in, 
 #define NX_AMIIBO_HAVE_CRYPTO 0
 #endif
 
+// Key derivation and the cipher need a platform crypto backend (above); elsewhere decode_tag_dump says so.
+#if NX_AMIIBO_HAVE_CRYPTO
 void calc_seed(const uint8_t* dump, uint8_t* key) {
     memcpy(key + 0x00, dump + 0x029, 0x02);
     memset(key + 0x02, 0x00, 0x0E);
@@ -233,6 +235,7 @@ void cipher(const DerivedKeys& keys, const uint8_t* in, uint8_t* out) {
     memcpy(out + 0x028, in + 0x028, 0x004);
     memcpy(out + 0x1D4, in + 0x1D4, 0x034);
 }
+#endif  // NX_AMIIBO_HAVE_CRYPTO
 
 constexpr size_t kMasterKeysFileBytes = 160;
 
