@@ -96,12 +96,14 @@ void nav_focus(const NavItem& item) {
     ImGui::ScrollToRectEx(item.window, item.rect, ImGuiScrollFlags_KeepVisibleEdgeY);
 }
 
-void nav_move(int dx, int dy) {
+void nav_move(int dx, int dy, int only_section = -1) {
     ImGuiContext& ctx = *ImGui::GetCurrentContext();
-    auto current = std::find_if(g_nav_items.begin(), g_nav_items.end(), [&](const NavItem& item) { return item.id == ctx.NavId; });
+    auto current = std::find_if(g_nav_items.begin(), g_nav_items.end(), [&](const NavItem& item) {
+        return item.id == ctx.NavId && (only_section < 0 || item.section == only_section);
+    });
     if (current == g_nav_items.end()) return;
     // Settings form a vertical list even when some rows are outside the scrolling viewport.
-    if ((g_page == Page::Settings || g_page == Page::Online) && dy) {
+    if (only_section < 0 && (g_page == Page::Settings || g_page == Page::Online) && dy) {
         const int index = int(current - g_nav_items.begin());
         const int target_section = current->section == 1 ? 1 : (dy > 0 ? 1 : (current->section == 2 ? 1 : -1));
         for (int i = index + dy; i >= 0 && i < int(g_nav_items.size()); i += dy) {
@@ -135,7 +137,7 @@ void nav_move(int dx, int dy) {
     const NavItem* best = nullptr;
     float best_score = FLT_MAX;
     for (const NavItem& item : g_nav_items) {
-        if (item.id == current->id) continue;
+        if (item.id == current->id || (only_section >= 0 && item.section != only_section)) continue;
         const ImVec2 to = item.rect.GetCenter();
         const float forward = dx ? (to.x - from.x) * dx : (to.y - from.y) * dy;
         if (forward <= 1.0f) continue;
@@ -1676,9 +1678,13 @@ void saves_popup() {
         ImGui::PushStyleColor(ImGuiCol_Text, col4(kInkSoft));
         ImGui::TextWrapped("%s", tr("launcher.profiles.hint"));
         ImGui::PopStyleColor();
-        ImGui::Dummy(ImVec2(0, S(8)));
+        ImGui::Dummy(ImVec2(0, S(12)));
         float list_h = std::min(S(240), ImGui::GetIO().DisplaySize.y * 0.4f);
-        ImGui::BeginChild("##saves_list", ImVec2(0, list_h), ImGuiChildFlags_Borders);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(10), S(10)));
+        ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, S(16));
+        ImGui::BeginChild("##saves_list", ImVec2(0, list_h),
+                          ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
+        ImGui::PopStyleVar(2);
         const bool only_one = g_save_profiles.size() <= 1;
         if (g_save_profiles.empty()) {
             ImGui::TextDisabled("%s", tr("launcher.profiles.empty"));
@@ -1689,7 +1695,25 @@ void saves_popup() {
                 std::string label =
                     prof.has_save && !prof.island_name.empty() ? prof.island_name : tr("launcher.profiles.empty");
                 if (active) label += std::string(" (") + tr("launcher.profiles.active") + ")";
-                if (ImGui::Selectable(label.c_str(), active)) select_save_profile(prof.id);
+                ImDrawList* list_draw = ImGui::GetWindowDrawList();
+                list_draw->ChannelsSplit(2);
+                list_draw->ChannelsSetCurrent(1);
+                ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0, 0, 0, 0));
+                ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0, 0, 0, 0));
+                ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0, 0, 0, 0));
+                bool selected = ImGui::Selectable(label.c_str(), active);
+                ImGui::PopStyleColor(3);
+                if (active) {
+                    list_draw->ChannelsSetCurrent(0);
+                    list_draw->AddRectFilled(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(),
+                                             rgb(255, 232, 160), S(10));
+                } else {
+                    list_draw->ChannelsSetCurrent(0);
+                    list_draw->AddRectFilled(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(),
+                                             rgb(252, 246, 228), S(10));
+                }
+                list_draw->ChannelsMerge();
+                if (selected) select_save_profile(prof.id);
                 nav_item();
                 if (prof.has_save && !prof.last_modified.empty())
                     ImGui::TextDisabled("%s", trf("launcher.profiles.last_saved", prof.last_modified).c_str());
@@ -1923,6 +1947,7 @@ void page_settings() {
         }
         bool fullscreen = li.get("launcher.fullscreen", "0") == "1";
         bool fullscreen_changed = ImGui::Checkbox(tr("launcher.fullscreen"), &fullscreen);
+        nav_item();
         if (fullscreen_changed) {
             if (SDL_SetWindowFullscreen(g_window, fullscreen)) {
                 li.set("launcher.fullscreen", fullscreen ? "1" : "0");
@@ -2066,6 +2091,7 @@ void footer_online() {
 // ---- popups ---------------------------------------------------------------------------------------------------
 
 void popups() {
+    g_nav_section = 3;
     if (g_confirm_stop) ImGui::OpenPopup("stop");
     if (g_confirm_quit) ImGui::OpenPopup("quit");
     ImGui::SetNextWindowSize(ImVec2(std::min(ImGui::GetIO().DisplaySize.x * 0.9f, S(560)), 0));
@@ -2098,6 +2124,7 @@ void popups() {
     if (g_quit_after_stop && !setup_state().running) g_exit = true;
     addons_popup();
     saves_popup();
+    g_nav_section = -1;
 }
 
 }  // namespace
@@ -2198,7 +2225,8 @@ bool pages_draw(float scale, ImFont* title) {
                    int(direction(ImGuiKey_GamepadDpadLeft, ImGuiKey_GamepadLStickLeft));
     const int dy = int(direction(ImGuiKey_GamepadDpadDown, ImGuiKey_GamepadLStickDown)) -
                    int(direction(ImGuiKey_GamepadDpadUp, ImGuiKey_GamepadLStickUp));
-    const bool move = controller_navigation && !popup_before && ctx.ActiveId == 0 && (dx || dy);
+    const bool popup_requested = g_confirm_stop || g_confirm_quit || g_addons_open || g_saves_open;
+    const bool move = controller_navigation && (!popup_before || popup_requested) && ctx.ActiveId == 0 && (dx || dy);
     if (move) ImGui::NavMoveRequestCancel();
     static bool first = true;
     if (first) {
@@ -2305,7 +2333,23 @@ bool pages_draw(float scale, ImFont* title) {
         case Page::Online: footer_online(); break;
     }
     g_nav_section = -1;
-    if (controller_navigation && !popup_before && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) &&
+    popups();
+    const bool popup_active = g_confirm_stop || g_confirm_quit || g_addons_open || g_saves_open;
+    if (controller_navigation && popup_active && ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) &&
+        drawn_page == g_page && !g_nav_items.empty()) {
+        auto first_popup_item = std::find_if(g_nav_items.begin(), g_nav_items.end(), [](const NavItem& item) {
+            return item.section == 3;
+        });
+        auto focused_popup_item = std::find_if(g_nav_items.begin(), g_nav_items.end(), [&](const NavItem& item) {
+            return item.section == 3 && item.id == ctx.NavId;
+        });
+        if (first_popup_item != g_nav_items.end()) {
+            if (focused_popup_item == g_nav_items.end())
+                nav_focus(*first_popup_item);
+            else if (move)
+                nav_move(dx, dx ? 0 : dy, 3);
+        }
+    } else if (controller_navigation && !popup_before && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) &&
         !g_confirm_stop && !g_confirm_quit && !g_addons_open && !g_saves_open &&
         drawn_page == g_page && !g_nav_items.empty()) {
         const bool page_changed = !nav_page_valid || nav_page != g_page;
@@ -2327,7 +2371,6 @@ bool pages_draw(float scale, ImFont* title) {
         nav_page_valid = true;
         saved_focus[int(g_page)] = ctx.NavId;
     }
-    popups();
     popup_last_frame = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) || g_confirm_stop || g_confirm_quit ||
                        g_addons_open || g_saves_open;
     opening_overlay();
