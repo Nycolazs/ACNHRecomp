@@ -16,6 +16,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 #include <filesystem>
 #include <functional>
 #include <mutex>
@@ -31,6 +32,7 @@
 
 #include "bug_report.h"
 #include "config.h"
+#include "game_clock.h"
 #include "platform.h"
 #include "saves.h"
 #include "ui/i18n.h"
@@ -118,6 +120,7 @@ std::string g_toast;
 double g_toast_until = 0;
 bool g_restart_note = false;
 void drag_scroll(bool horizontal = false);  // below: a finger dragged over a list scrolls it
+void section(const char* key);
 
 void toast(const std::string& text) {
     g_toast = text;
@@ -168,11 +171,14 @@ void apply_live(const std::string& key, const std::string& value) {
     }
     else if (key == "audio.volume") plat::set_master_volume(std::clamp(std::atoi(value.c_str()), 0, 100) / 100.0f);
     else if (key == "ui.language") ui_set_language(value);
+    else if (key == "game.time_travel_enabled") game_clock_apply_config();
     if (needs_restart(key)) g_restart_note = true;
 }
 
 void store(const std::string& key, const std::string& value) {
     if (config_get(key) == value) return;
+    // Leaving real-time sync: start custom time at the computer's clock, not the last offset.
+    if (key == "game.time_travel_enabled" && value == "0") config_set("game.time_travel_offset", "0");
     config_set(key, value);
     if (key == "video.preset") {  // a preset writes its settings
         for (auto& [k, v] : config_preset(value))
@@ -392,6 +398,81 @@ bool ptbr_installed() {
     return fs::is_directory(fs::u8path(plat::data_root() + "/mods/ptbr/romfs"), ec);
 }
 
+std::tm local_tm_from_unix(int64_t t) {
+    time_t tt = time_t(t);
+    std::tm tm{};
+#if defined(_WIN32)
+    localtime_s(&tm, &tt);
+#else
+    localtime_r(&tt, &tm);
+#endif
+    return tm;
+}
+
+int days_in_month(int year, int month) {
+    static const int kDays[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+    month = std::clamp(month, 1, 12);
+    int d = kDays[month - 1];
+    if (month == 2) {
+        const bool leap = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+        if (leap) d = 29;
+    }
+    return d;
+}
+
+// A dropdown of the numbers lo..hi, not tied to config.ini (the time-travel pickers). `fmt` shows each one.
+// Registered like the other controls: d-pad moves between them, A opens the list, left/right on a keyboard changes it.
+bool int_dropdown(const char* id, int& value, int lo, int hi, const char* fmt, float width) {
+    char text[16];
+    std::snprintf(text, sizeof text, fmt, value);
+    ImGui::PushID(id);
+    ImGui::SetNextItemWidth(width);
+    ImGui::PushStyleColor(ImGuiCol_NavCursor, ImVec4(0, 0, 0, 0));
+    const bool open = ImGui::BeginCombo("##pick", text);
+    ImGui::PopStyleColor();
+    bool changed = false;
+    if (open) {
+        for (int v = lo; v <= hi; v++) {
+            std::snprintf(text, sizeof text, fmt, v);
+            if (ImGui::Selectable(text, v == value)) value = v, changed = true;
+            if (v == value) ImGui::SetItemDefaultFocus();
+        }
+        drag_scroll();
+        ImGui::EndCombo();
+    }
+    page_nav_item();
+    if (ImGui::IsItemFocused()) {
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->AddRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), rgb(246, 170, 40), ImGui::GetStyle().FrameRounding, 0,
+                    2.5f * g_scale);
+        if (hi > lo) {
+            if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow, true)) {
+                value = value <= lo ? hi : value - 1;
+                changed = true;
+            } else if (ImGui::IsKeyPressed(ImGuiKey_RightArrow, true)) {
+                value = value >= hi ? lo : value + 1;
+                changed = true;
+            }
+        }
+    }
+    ImGui::PopID();
+    return changed;
+}
+
+// The custom date and time, kept as an offset from the computer's clock so it goes on ticking from there.
+void store_custom_game_time(int year, int month, int day, int hour, int minute) {
+    std::tm tm{};
+    tm.tm_year = year - 1900;
+    tm.tm_mon = month - 1;
+    tm.tm_mday = day;
+    tm.tm_hour = hour;
+    tm.tm_min = minute;
+    tm.tm_isdst = -1;
+    config_set("game.time_travel_offset", std::to_string(int64_t(std::mktime(&tm)) - game_clock_real_unix_seconds()));
+    config_save();
+    game_clock_apply_config();
+}
+
 void page_game() {
     Choices langs = {{"auto", tr("game.language.system")},
                      {"en-US", "English (US)"},     {"en-GB", "English (UK)"},  {"es", "Español (España)"},
@@ -410,6 +491,54 @@ void page_game() {
     Choices ui_langs = {{"auto", tr("common.auto")}};
     for (const UiLanguage& l : ui_languages()) ui_langs.push_back({l.code, l.native_name});
     row("ui.language", "ui.language.desc", [&](float w) { combo("ui.language", "auto", ui_langs, w); });
+
+    section("game.section.time");
+    row("game.time_travel.sync", "game.time_travel.sync.desc", [&](float w) { toggle("game.time_travel_enabled", true, w); });
+    if (!config_get_bool("game.time_travel_enabled", true)) {
+        static int s_year = 2020, s_month = 1, s_day = 1, s_hour = 0, s_minute = 0;
+        static uint64_t s_time_fields_gen = 0;
+        const uint64_t gen = config_generation();
+        if (s_time_fields_gen != gen) {
+            const std::tm tm = local_tm_from_unix(game_clock_unix_seconds());
+            s_year = tm.tm_year + 1900;
+            s_month = tm.tm_mon + 1;
+            s_day = tm.tm_mday;
+            s_hour = tm.tm_hour;
+            s_minute = tm.tm_min;
+            s_time_fields_gen = gen;
+        }
+        const float gap = 8.0f * g_scale;
+        row("game.time_travel.date", nullptr, [&](float w) {
+            const float part = (w - gap * 2.0f) / 3.0f;
+            bool changed = int_dropdown("day", s_day, 1, days_in_month(s_year, s_month), "%02d", part);
+            ImGui::SameLine(0, gap);
+            changed |= int_dropdown("month", s_month, 1, 12, "%02d", part);
+            ImGui::SameLine(0, gap);
+            changed |= int_dropdown("year", s_year, 2000, 2060, "%d", part);
+            if (changed) {
+                s_day = std::min(s_day, days_in_month(s_year, s_month));  // 31 March -> February: its last day
+                store_custom_game_time(s_year, s_month, s_day, s_hour, s_minute);
+            }
+        });
+        row("game.time_travel.time", nullptr, [&](float w) {
+            const float part = (w - gap) / 2.0f;
+            bool changed = int_dropdown("hour", s_hour, 0, 23, "%02d", part);
+            ImGui::SameLine(0, gap);
+            changed |= int_dropdown("minute", s_minute, 0, 59, "%02d", part);
+            if (changed) store_custom_game_time(s_year, s_month, s_day, s_hour, s_minute);
+        });
+        {
+            const std::tm now_tm = local_tm_from_unix(game_clock_unix_seconds());
+            char when[64];
+            std::snprintf(when, sizeof when, "%04d-%02d-%02d %02d:%02d", now_tm.tm_year + 1900, now_tm.tm_mon + 1,
+                          now_tm.tm_mday, now_tm.tm_hour, now_tm.tm_min);
+            ImGui::PushTextWrapPos(0);
+            ImGui::TextColored(ImVec4(0.35f, 0.55f, 0.35f, 1), "%s",
+                               trf("game.time_travel.island_now", when).c_str());
+            ImGui::PopTextWrapPos();
+            ImGui::Dummy(ImVec2(0, 6 * g_scale));
+        }
+    }
 }
 
 bool lsfg_available() {

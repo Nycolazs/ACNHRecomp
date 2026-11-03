@@ -421,6 +421,8 @@ restart are marked on the screen. Environment variables set on the command line 
 |---|---|---|
 | `game.language` | `auto`, `en-US`, `en-GB`, `es`, `es-419`, `fr`, `fr-CA`, `de`, `it`, `nl`, `ru`, `ja`, `ko`, `zh-CN`, `zh-TW`, `pt-BR` | `NX_LANGUAGE` |
 | `game.mods` | Comma-separated mod names | `NX_MODS` |
+| `game.time_travel_enabled` | `0`, `1` (real-time sync with the computer) | |
+| `game.time_travel_offset` | Seconds added to the host clock when sync is off | `NX_TIME_OFFSET` |
 | `ui.language` | `auto` or a menu language code | |
 | `video.preset` | `custom`, `quality`, `balanced`, `low` (see below) | |
 | `video.fullscreen` | `0`, `1` | `NX_FULLSCREEN` |

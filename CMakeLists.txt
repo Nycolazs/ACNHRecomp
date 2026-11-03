@@ -225,6 +225,7 @@ set(NX_RUNTIME_SOURCES
     runtime/src/hle_friends.cpp
     runtime/src/hle_ngc.cpp
     runtime/src/config.cpp
+    runtime/src/game_clock.cpp
     runtime/src/mod_fetch.cpp
     runtime/src/discord_presence.cpp
     runtime/src/glyphs.cpp

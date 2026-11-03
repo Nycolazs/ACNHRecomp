@@ -1,7 +1,8 @@
 // time:u / time:a / time:s: clocks, time zone, and the shared memory the SDK reads the clocks from.
-#include <chrono>
+#include <atomic>
 #include <ctime>
 
+#include "game_clock.h"
 #include "ipc.h"
 
 namespace nx {
@@ -11,9 +12,7 @@ namespace {
 // UUID of the steady clock source (any constant works; the SDK compares system clock time points against it).
 constexpr uint64_t kSourceLo = 0x4E58525443524543ull, kSourceHi = 0x484144455354494Dull;
 
-int64_t unix_now() {
-    return std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-}
+int64_t unix_now() { return game_clock_unix_seconds(); }
 
 int64_t steady_seconds() { return int64_t(system_tick() / 19200000); }
 
@@ -48,6 +47,8 @@ long utc_offset_west() {
     return long(utc_from_tm(gt) - utc_from_tm(lt));
 }
 
+std::atomic<bool> g_time_shm_live{false};  // set on the game's thread, read from the settings screen
+
 std::shared_ptr<KSharedMemory> time_shared_memory() {
     static std::shared_ptr<KSharedMemory> shm = [] {
         auto s = make_shared_memory("time", 0x1000);
@@ -68,6 +69,7 @@ std::shared_ptr<KSharedMemory> time_shared_memory() {
                 st<uint64_t>(v + 16, kSourceLo);
                 st<uint64_t>(v + 24, kSourceHi);
             }
+        g_time_shm_live = true;
         return s;
     }();
     return shm;
@@ -167,5 +169,13 @@ ServiceRegistrar r_time_a("time:a", [] { auto s = std::make_shared<Service>("tim
 ServiceRegistrar r_time_s("time:s", [] { auto s = std::make_shared<Service>("time:s"); time_static(*s); return s; });
 
 }  // namespace
+
+void nx_time_refresh_shared_clocks() {
+    if (!g_time_shm_live) return;
+    const uint64_t p = time_shared_memory()->host;
+    const int64_t offset = unix_now() - steady_seconds();
+    for (uint64_t base : {0x38ull, 0x80ull})
+        for (int k = 0; k < 2; k++) st<int64_t>(p + base + 8 + k * 0x20, offset);
+}
 
 }  // namespace nx
