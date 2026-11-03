@@ -62,6 +62,7 @@ VkExtent2D g_sc_extent{};
 VkExtent2D g_sc_current{};  // the surface's currentExtent when the swapchain was made (SUBOPTIMAL: did it change?)
 VkSurfaceTransformFlagBitsKHR g_sc_transform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
 VkFormat g_sc_format = VK_FORMAT_B8G8R8A8_UNORM;
+VkColorSpaceKHR g_sc_color_space = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
 VkSemaphore g_acquired = VK_NULL_HANDLE, g_rendered = VK_NULL_HANDLE;
 VkBool32 g_depth_clip_control = VK_FALSE;
 VkBool32 g_fragment_interlock = VK_FALSE;  // fragmentShaderPixelInterlock (vk_fragment_interlock)
@@ -87,6 +88,8 @@ PFN_vkEnumeratePhysicalDevices p_enum_physical = nullptr;
 PFN_vkCreateDevice p_create_device = nullptr;
 
 }  // namespace
+
+HdrOutput g_hdr = HdrOutput::Off;
 
 // A lost device means the GPU hung (a shader looping for ever): the process ends at once. Submitting more work, or
 // waiting, keeps the GPU stuck, and on macOS that froze WindowServer and restarted the machine.
@@ -176,6 +179,9 @@ bool init() {
     p_enum_instance_ext(nullptr, &n, iext.data());
     std::vector<const char*> exts = {VK_KHR_SURFACE_EXTENSION_NAME, plat::vulkan_surface_extension()};
     VkInstanceCreateInfo ici{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
+    // HDR colour spaces on the surface (video.hdr): only listed by vkGetPhysicalDeviceSurfaceFormatsKHR with it.
+    if (has_extension(iext, VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME))
+        exts.push_back(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME);
     if (has_extension(iext, "VK_KHR_portability_enumeration")) {
         exts.push_back("VK_KHR_portability_enumeration");
         ici.flags |= 0x00000001;  // VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR
@@ -421,7 +427,27 @@ bool make_surface() {
                   : offered(VK_FORMAT_R8G8B8A8_UNORM) ? VK_FORMAT_R8G8B8A8_UNORM
                   : n                                  ? formats[0].format
                                                        : VK_FORMAT_B8G8R8A8_UNORM;
-    log("nvn/vk: surface: %u formats offered, swapchain format %d", n, int(g_sc_format));
+    g_sc_color_space = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
+    g_hdr = HdrOutput::Off;
+    // HDR (video.hdr): scRGB (RGBA16F, linear, 1.0 = 80 nits) or HDR10 (10-bit PQ, BT.2020), drawn by the present
+    // pass's HDR shader (nvn_present.cpp). A surface without the pair stays SDR.
+    if (const HdrOutput want = hdr_requested(); want != HdrOutput::Off) {
+        auto pair = [&](VkFormat f, VkColorSpaceKHR cs) {
+            for (const VkSurfaceFormatKHR& x : formats)
+                if (x.format == f && x.colorSpace == cs) return true;
+            return false;
+        };
+        if (want == HdrOutput::ScRgb && pair(VK_FORMAT_R16G16B16A16_SFLOAT, VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT))
+            g_sc_format = VK_FORMAT_R16G16B16A16_SFLOAT, g_sc_color_space = VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT,
+            g_hdr = want;
+        for (VkFormat f : {VK_FORMAT_A2B10G10R10_UNORM_PACK32, VK_FORMAT_A2R10G10B10_UNORM_PACK32})
+            if (want == HdrOutput::Hdr10 && g_hdr == HdrOutput::Off && pair(f, VK_COLOR_SPACE_HDR10_ST2084_EXT))
+                g_sc_format = f, g_sc_color_space = VK_COLOR_SPACE_HDR10_ST2084_EXT, g_hdr = want;
+        if (g_hdr == HdrOutput::Off) log("nvn/vk: HDR asked, but the surface offers no %s format: SDR",
+                                         want == HdrOutput::ScRgb ? "scRGB" : "HDR10");
+    }
+    log("nvn/vk: surface: %u formats offered, swapchain format %d, colour space %d%s", n, int(g_sc_format),
+        int(g_sc_color_space), g_hdr == HdrOutput::ScRgb ? " (HDR scRGB)" : g_hdr == HdrOutput::Hdr10 ? " (HDR10)" : "");
     return true;
 }
 
@@ -463,7 +489,7 @@ bool make_swapchain() {
     ci.minImageCount = std::max(caps.minImageCount, want);
     if (caps.maxImageCount) ci.minImageCount = std::min(ci.minImageCount, caps.maxImageCount);
     ci.imageFormat = g_sc_format;
-    ci.imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
+    ci.imageColorSpace = g_sc_color_space;
     ci.imageExtent = extent;
     ci.imageArrayLayers = 1;
     ci.imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
@@ -1102,6 +1128,7 @@ void present_image(const int32_t* crop, Record&& record) {
                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
     }
     if (!drawn) transition(g_cb, dst, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+    screenshot_record(g_cb, dst.image, g_sc_format, g_sc_extent);  // F12 (nvn_screenshot.cpp): before the settings screen
     ui::ui_record(g_cb, dst.image, g_sc_format, g_sc_extent);  // the settings screen over the picture, when open
     static uint64_t presents = 0;  // the game's frames (not the generated ones)
     if (real) {
@@ -1289,14 +1316,3 @@ void gpu_present(uint64_t texture, const int32_t* crop, int interval) {
 }
 
 }  // namespace nx::nvn
-
-// Dear ImGui's Vulkan backend submits font uploads on the same queue as the game (imgui_impl_vulkan.cpp).
-extern "C" VkResult nx_ui_vk_queue_submit(VkQueue queue, const VkSubmitInfo* submit_info, VkFence fence) {
-    std::lock_guard<std::mutex> lk(nx::nvn::vk_queue_mutex());
-    return nx::vk::p_vkQueueSubmit(queue, 1, submit_info, fence);
-}
-
-extern "C" VkResult nx_ui_vk_queue_wait_idle(VkQueue queue) {
-    std::lock_guard<std::mutex> lk(nx::nvn::vk_queue_mutex());
-    return nx::vk::p_vkQueueWaitIdle(queue);
-}

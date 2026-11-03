@@ -190,8 +190,13 @@ struct SupportBuffer {
     float render_scale[73][4];    // 0x0c0 x only: [0] render target, [1..64] textures, [65..72] images
     int32_t tfe_offset[4];        // 0x550 transform feedback emulation (unused: no transform feedback)
     int32_t tfe_vertex_count[4];  // 0x560
+    // Ours, past Ryujinx's 1392 bytes (no translated shader declares it): the HDR settings the tonemap replacements in
+    // spirv_hdr read (hdr/shaders/acnh_tonemap.hlsli). Filled by support_buffer_defaults from hdr_shader_settings.
+    float hdr[4][4];              // 0x570 peak, game, UI nits, gamma (0 sRGB, 1 2.2); tonemap (0 vanilla, 1 HDR),
+                                  //       exposure (stops), highlights, shadows; contrast, saturation, temperature,
+                                  //       tint (grading: 1, 1, 1, 1, 0, 0 neutral); 0, 0, 0, 0
 };
-static_assert(sizeof(SupportBuffer) == 0x570, "Ryujinx SupportBuffer is 1392 bytes");
+static_assert(sizeof(SupportBuffer) == 0x5b0, "Ryujinx SupportBuffer (1392 bytes) and our HDR settings");
 static_assert(offsetof(SupportBuffer, is_bgra) == 0x10 && offsetof(SupportBuffer, viewport_inverse) == 0x90 &&
                   offsetof(SupportBuffer, viewport_size) == 0xa0 && offsetof(SupportBuffer, frag_scale_count) == 0xb0 &&
                   offsetof(SupportBuffer, render_scale) == 0xc0 && offsetof(SupportBuffer, tfe_offset) == 0x550 &&
@@ -199,6 +204,7 @@ static_assert(offsetof(SupportBuffer, is_bgra) == 0x10 && offsetof(SupportBuffer
               "offsets as in the SPIR-V's OpMemberDecorate");
 
 SupportBuffer support_buffer_defaults();  // render scale 1 everywhere, no BGRA, no alpha test, zero viewport
+void hdr_shader_settings(float out[4][4]);  // nvn_present.cpp: SupportBuffer::hdr, read live from the settings
 // What Ryujinx writes for viewport 0 (SetViewportTransformDisable / SetViewportSize), with render scale 1.
 void support_buffer_set_viewport(SupportBuffer& sb, float width, float height, bool transform_disabled = false,
                                  float scale = 1.0f);
@@ -225,6 +231,9 @@ struct ShaderInfo {
     uint32_t uniform_extent[64] = {};
     // writes_depth_pass_yellow (nvn_spirv_patch.cpp): an effect's depth pass; its draws write nothing (nvn_pipeline.cpp).
     bool depth_pass = false;
+    // Its SPIR-V came from spirv_hdr (HDR on): the tonemap, whose output above 1 is the point (nvn_draw.cpp leaves its
+    // colours unclamped on HDR targets).
+    bool hdr_replacement = false;
 };
 
 // Builds a ShaderInfo from a code block, its control section and the SPIR-V words (no I/O). `resources` = the
