@@ -12,6 +12,9 @@
   <a href="https://ko-fi.com/nycolazs">
     <img src="https://img.shields.io/badge/Ko--fi-Support-FF5E5B?style=for-the-badge&logo=kofi&logoColor=white" alt="Ko-fi">
   </a>
+  <a href="https://buymeacoffee.com/nycolazs">
+    <img src="https://img.shields.io/badge/Buy%20Me%20a%20Coffee-Support-FFDD00?style=for-the-badge&logo=buymeacoffee&logoColor=black" alt="Buy Me a Coffee">
+  </a>
 </p>
 
 ACNHRecomp turns the Switch code of *Animal Crossing: New Horizons* (title ID `01006F8002326000`; version 3.0.2
@@ -53,6 +56,7 @@ keep going, you can support it:
 
 - 💖 [GitHub Sponsors](https://github.com/sponsors/Nycolazs): monthly or one-time
 - ☕ [Ko-fi](https://ko-fi.com/nycolazs)
+- 🍵 [Buy Me a Coffee](https://buymeacoffee.com/nycolazs)
 
 Donations are completely optional and unlock nothing: every build, feature and fix stays free for everyone. They
 help pay for the time, the test devices and the hardware the project needs.
