@@ -6,6 +6,12 @@
   <a href="https://discord.gg/VJW9Dtdu7a">
     <img src="https://img.shields.io/badge/Discord-Join%20Community-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Discord Community">
   </a>
+  <a href="https://github.com/sponsors/Nycolazs">
+    <img src="https://img.shields.io/badge/GitHub%20Sponsors-Support-EA4AAA?style=for-the-badge&logo=githubsponsors&logoColor=white" alt="GitHub Sponsors">
+  </a>
+  <a href="https://ko-fi.com/nycolazs">
+    <img src="https://img.shields.io/badge/Ko--fi-Support-FF5E5B?style=for-the-badge&logo=kofi&logoColor=white" alt="Ko-fi">
+  </a>
 </p>
 
 ACNHRecomp turns the Switch code of *Animal Crossing: New Horizons* (title ID `01006F8002326000`; version 3.0.2
@@ -39,9 +45,25 @@ Whether you're playing, helping test builds across different hardware, or follow
 - ⚙️ **Testing & Hardware**: Share logs, test results across different CPUs and GPUs, and report bugs.
 - 📢 **Development Updates**: Get real-time announcements, test builds, and sneak peeks at upcoming features.
 
+## Support the project
+
+ACNHRecomp and ACNHRecomp-Importer are free and open source, and they will stay that way. They are made in our free
+time, and every release, fix and answer on Discord takes many hours. If you enjoy the project and want to help it
+keep going, you can support it:
+
+- 💖 [GitHub Sponsors](https://github.com/sponsors/Nycolazs): monthly or one-time
+- ☕ [Ko-fi](https://ko-fi.com/nycolazs)
+
+Donations are completely optional and unlock nothing: every build, feature and fix stays free for everyone. They
+help pay for the time, the test devices and the hardware the project needs.
+
+Can't donate? Reporting bugs, sending pull requests, helping people on [Discord](https://discord.gg/VJW9Dtdu7a) and
+starring the repository help just as much. Thank you! 💚
+
 ## Contents
 
 - [Community](#community)
+- [Support the project](#support-the-project)
 - [Features](#features)
 - [Status](#status)
 - [Disclaimer](#disclaimer)
