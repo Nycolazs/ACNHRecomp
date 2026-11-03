@@ -13,6 +13,7 @@
 
 #include <nx/runtime.h>
 
+#include "hle_hostnet.h"
 #include "hle_ldn.h"
 #include "kernel.h"
 
@@ -104,6 +105,7 @@ void trace(const char* what, int fd, uint64_t a, uint64_t b) {
 }
 
 void Socket_(CPU& c) {
+    if (hostnet_active()) return hostnet_Socket(c);
     const int type = int(c.x[1]) & 0xFF;
     log("vsock: Socket(family %d, type %d, protocol %d)", int(c.x[0]), int(c.x[1]), int(c.x[2]));
     if (!ldn_enabled()) return ret(c, fail(kENETDOWN));
@@ -119,6 +121,7 @@ void Socket_(CPU& c) {
 }
 
 void Close_(CPU& c) {
+    if (hostnet_owns_fd(int(c.x[0])) || (hostnet_active() && !ldn_enabled())) return hostnet_Close(c);
     trace("Close", int(c.x[0]), 0, 0);
     if (!ldn_enabled()) return ret(c, fail(kENETDOWN));
     std::lock_guard lk(g_mu);
@@ -130,6 +133,7 @@ void Close_(CPU& c) {
 }
 
 void Bind_(CPU& c) {
+    if (hostnet_owns_fd(int(c.x[0])) || (hostnet_active() && !ldn_enabled())) return hostnet_Bind(c);
     if (!ldn_enabled()) return ret(c, fail(kENETDOWN));
     uint32_t ip;
     uint16_t port;
@@ -145,6 +149,7 @@ void Bind_(CPU& c) {
 }
 
 void Connect_(CPU& c) {
+    if (hostnet_owns_fd(int(c.x[0])) || (hostnet_active() && !ldn_enabled())) return hostnet_Connect(c);
     if (!ldn_enabled()) return ret(c, fail(kENETDOWN));
     uint32_t ip;
     uint16_t port;
@@ -207,20 +212,27 @@ int do_recv(int fd, void* buf, uint64_t len, int flags, uint64_t from, uint64_t 
 }
 
 void Send_(CPU& c) {
+    if (hostnet_owns_fd(int(c.x[0]))) return hostnet_Send(c);
     trace("Send", int(c.x[0]), c.x[2], 0);
     ret(c, do_send(int(c.x[0]), reinterpret_cast<const void*>(c.x[1]), c.x[2], 0, 0));
 }
 void SendTo_(CPU& c) {
+    if (hostnet_owns_fd(int(c.x[0]))) return hostnet_SendTo(c);
     trace("SendTo", int(c.x[0]), c.x[2], c.x[4]);
     ret(c, do_send(int(c.x[0]), reinterpret_cast<const void*>(c.x[1]), c.x[2], c.x[4], c.x[5]));
 }
-void Recv_(CPU& c) { ret(c, do_recv(int(c.x[0]), reinterpret_cast<void*>(c.x[1]), c.x[2], int(c.x[3]), 0, 0)); }
+void Recv_(CPU& c) {
+    if (hostnet_owns_fd(int(c.x[0]))) return hostnet_Recv(c);
+    ret(c, do_recv(int(c.x[0]), reinterpret_cast<void*>(c.x[1]), c.x[2], int(c.x[3]), 0, 0));
+}
 void RecvFrom_(CPU& c) {
+    if (hostnet_owns_fd(int(c.x[0]))) return hostnet_RecvFrom(c);
     ret(c, do_recv(int(c.x[0]), reinterpret_cast<void*>(c.x[1]), c.x[2], int(c.x[3]), c.x[4], c.x[5]));
 }
 
 // Poll(PollFd*, count, timeout ms): PollFd is the fd, then the events and the returned events (s16 each).
 void Poll_(CPU& c) {
+    if (hostnet_active() && !ldn_enabled()) return hostnet_Poll(c);
     if (!ldn_enabled()) return ret(c, fail(kENETDOWN));
     auto* fds = reinterpret_cast<uint8_t*>(c.x[0]);
     const uint64_t n = c.x[1];
@@ -256,6 +268,7 @@ void Poll_(CPU& c) {
 }
 
 void Fcntl_(CPU& c) {
+    if (hostnet_owns_fd(int(c.x[0]))) return hostnet_Fcntl(c);
     if (!ldn_enabled()) return ret(c, fail(kENETDOWN));
     std::lock_guard lk(g_mu);
     Sock* s = get(int(c.x[0]));
@@ -270,6 +283,7 @@ void Fcntl_(CPU& c) {
 }
 
 void SetSockOpt_(CPU& c) {
+    if (hostnet_owns_fd(int(c.x[0]))) return hostnet_SetSockOpt(c);
     if (!ldn_enabled()) return ret(c, fail(kENETDOWN));
     const int level = int(c.x[1]), name = int(c.x[2]);
     const uint64_t len = c.x[4];
@@ -335,6 +349,7 @@ void GetPeerName_(CPU& c) {
 }
 
 void Shutdown_(CPU& c) {
+    if (hostnet_owns_fd(int(c.x[0]))) return hostnet_Shutdown(c);
     trace("Shutdown", int(c.x[0]), c.x[1], 0);
     ret(c, ldn_enabled() ? 0 : fail(kENETDOWN));
 }
@@ -346,8 +361,14 @@ void missing(CPU& c) {
     ret(c, fail(ldn_enabled() ? kENOTSOCK : kENETDOWN));
 }
 
-void GetLastError_(CPU& c) { c.x[0] = uint64_t(uint32_t(t_errno ? t_errno : (ldn_enabled() ? 0 : kENETDOWN))); }
-void SetLastError_(CPU& c) { t_errno = int(c.x[0]); }
+void GetLastError_(CPU& c) {
+    if (hostnet_active() && !ldn_enabled()) return hostnet_GetLastErrno(c);
+    c.x[0] = uint64_t(uint32_t(t_errno ? t_errno : (ldn_enabled() ? 0 : kENETDOWN)));
+}
+void SetLastError_(CPU& c) {
+    if (hostnet_active() && !ldn_enabled()) return hostnet_SetLastErrno(c);
+    t_errno = int(c.x[0]);
+}
 
 }  // namespace
 
