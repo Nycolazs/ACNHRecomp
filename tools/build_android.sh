@@ -96,7 +96,14 @@ TURNIP=private/third_party/mesa/build-android/src/freedreno/vulkan/libvulkan_fre
 [ -f "$TURNIP" ] && cp "$TURNIP" "$OUT/lib/arm64-v8a/" || echo "(no Turnip: tools/build_turnip.sh; the phone's driver is used)"
 python3 tools/make_android_icon.py 2>/dev/null || true  # needs Pillow; the PNGs are kept in android/res otherwise
 "$BT/aapt2" compile --dir android/res -o "$OUT/res.zip"
-"$BT/aapt2" link -o "$OUT/base.apk" --manifest android/AndroidManifest.xml -I "$PLATFORM" "$OUT/res.zip"
+# The version comes from the git tag (v0.7.0 -> versionName 0.7.0, versionCode 700), so Android and app stores
+# such as Obtainium see the real release number.
+VNAME=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//'); VNAME=${VNAME:-0.0.0}
+IFS=. read -r VMAJ VMIN VPAT <<<"${VNAME%%-*}"
+VCODE=$(( ${VMAJ:-0} * 10000 + ${VMIN:-0} * 100 + ${VPAT:-0} ))
+echo "APK version $VNAME ($VCODE)"
+"$BT/aapt2" link -o "$OUT/base.apk" --manifest android/AndroidManifest.xml -I "$PLATFORM" "$OUT/res.zip" \
+  --version-name "$VNAME" --version-code "$VCODE" --replace-version
 # The pt-BR translation and the SpeedFix files as assets, which the app copies into the game folder (mod_fetch.cpp).
 rm -rf "${OUT:?}/assets"
 tools/bundle_mods.sh "$OUT/assets"
