@@ -6,7 +6,10 @@
 // store operations), as are the pipelines (graphics_pipeline, the masked clear). Every attachment is stored and stays
 // in GENERAL, as with dynamic rendering; there are no subpass dependencies, the replay's own barriers order passes.
 // A colour slot with no image is VK_ATTACHMENT_UNUSED, so its pipeline format is UNDEFINED (unused_slot_format).
-// NX_RENDER_PASS_OBJECTS=1: on (off by default until measured).
+// NX_RENDER_PASS_OBJECTS=1: on; =0: off where the device has dynamic rendering. Default: off, but on with Intel's
+// legacy Windows driver (101.2xxx, Gen9: Skylake to Comet Lake): on an HD 530 (101.2115) the game crashed in
+// igvk64.dll (a read at 0x298, a null object's field) at its first 3D frame with dynamic rendering, and ran with
+// these (issue #49).
 #include <array>
 #include <cstdlib>
 #include <cstring>
@@ -103,8 +106,10 @@ VkRenderPass pass_for(uint32_t count, const VkFormat* colors, VkFormat depth, co
 bool render_pass_objects() {
     static const bool on = [] {
         const char* e = std::getenv("NX_RENDER_PASS_OBJECTS");
-        bool v = (e && e[0] == '1') || !vk_dynamic_rendering();
-        if (v) log("nvn/vk: render pass and framebuffer objects instead of dynamic rendering");
+        const bool intel = vk_intel_windows_legacy() && !(e && *e);
+        bool v = !vk_dynamic_rendering() || (e && *e ? e[0] == '1' : intel);
+        if (v) log("nvn/vk: render pass and framebuffer objects instead of dynamic rendering%s",
+                   intel ? " (Intel's legacy Windows driver; NX_RENDER_PASS_OBJECTS=0: dynamic rendering)" : "");
         return v;
     }();
     return on;
