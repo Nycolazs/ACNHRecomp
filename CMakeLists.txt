@@ -251,11 +251,15 @@ set(NX_RUNTIME_SOURCES
     runtime/src/hle_hid.cpp
     runtime/src/hle_hid_system_nfc.cpp
     runtime/src/hle_net.cpp
+    runtime/src/hle_hostnet.cpp
     runtime/src/hle_ldn.cpp
     runtime/src/hle_vsock.cpp
     runtime/src/ldn_link.cpp
     runtime/src/ldn_discovery.cpp
     runtime/src/ldn_upnp.cpp
+    runtime/src/nextendo.cpp
+    runtime/src/nextendo_http.cpp
+    runtime/src/nextendo_nat.cpp
     runtime/src/hle_audio.cpp
     runtime/src/hle_pl.cpp
     runtime/src/hle_nfp.cpp

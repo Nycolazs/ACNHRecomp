@@ -5,6 +5,7 @@
 // when the screen is narrow or portrait), each setting a row with its name and a short explanation on the left and
 // the control on the right (under them when narrow). Sizes are in design pixels times `scale` (ui.cpp).
 #include "../hle_ldn.h"
+#include "../nextendo.h"
 #include "ui/settings.h"
 
 #if !defined(__ANDROID__)
@@ -137,7 +138,11 @@ void toast(const std::string& text) {
 // frame generation are read while the game runs (nvn_present.cpp, nvn_framegen.cpp); elsewhere they are not (the
 // desktop's present pass is chosen at start).
 bool needs_restart(const std::string& key) {
-    if (key.rfind("online.", 0) == 0) return false;  // read when the game next starts local play (hle_ldn.cpp)
+    if (key.rfind("online.", 0) == 0) {
+        if (key == "online.mode")
+            ::nx::nextendo::nat_keepalive_stop(), ::nx::nextendo::nat_keepalive_start();
+        return false;  // LDN reads online.enabled at session start; Nextendo reads mode live
+    }
 #if defined(__ANDROID__)
     for (const char* k : {"video.upscaler", "video.fsr_sharpness_pct", "video.antialiasing", "video.frame_gen"})
         if (key == k) return false;
@@ -666,8 +671,43 @@ void section(const char* key) {
 // The choice that matches the console, tagged as such ("1080p (TV mode) · console original").
 std::string console(const char* key) { return std::string(tr(key)) + " · " + tr("common.console_tag"); }
 
-// Direct play over the internet: the switch, what the router allows, the address to share, a friend's address.
+// Nextendo Online (Dodo / Search) or Local peer visits (docs/LOCAL_PLAY.md).
 void page_online() {
+    row("online.mode", tr("online.mode.desc"), [&](float w) {
+        combo("online.mode", "nextendo",
+              {{"nextendo", tr("online.mode.nextendo")}, {"local", tr("online.mode.local")}}, w);
+    });
+    if (config_get("online.mode", "nextendo") == "nextendo") {
+        if (!::nx::nextendo::version_ok_for_nextendo()) {
+            ImGui::TextWrapped("%s", tr("online.nextendo.need_303"));
+            return;
+        }
+        const auto acc = ::nx::nextendo::account();
+        if (acc.signed_in) {
+            ImGui::TextUnformatted(trf("online.nextendo.signed_in", acc.username).c_str());
+            if (!acc.friend_code.empty())
+                ImGui::TextUnformatted(trf("online.nextendo.friend_code", acc.friend_code).c_str());
+            row("online.nextendo.sign_out", nullptr, [&](float w) {
+                if (ImGui::Button(tr("online.nextendo.sign_out"), ImVec2(w, 0))) ::nx::nextendo::sign_out();
+                page_nav_item();
+            });
+        } else {
+            ImGui::TextWrapped("%s", tr("online.nextendo.desc"));
+            if (::nx::nextendo::client_id().empty())
+                ImGui::TextWrapped("%s", tr("online.nextendo.need_client_id"));
+            row("online.nextendo.sign_in", nullptr, [&](float w) {
+                const bool busy = ::nx::nextendo::sign_in_busy();
+                if (ImGui::Button(tr(busy ? "online.nextendo.signing_in" : "online.nextendo.sign_in"),
+                                  ImVec2(w, 0)) &&
+                    !busy)
+                    ::nx::nextendo::sign_in_start();
+                page_nav_item();
+            });
+            if (!::nx::nextendo::last_error().empty())
+                ImGui::TextWrapped("%s", ::nx::nextendo::last_error().c_str());
+        }
+        return;
+    }
     const bool busy = ldn_enabled();  // held until the session ends (hle_ldn.cpp): no switch to touch
     row("online.enabled", tr(busy ? "online.enabled.busy" : "online.enabled.desc"), [&](float w) {
         if (busy) ImGui::TextDisabled("%s", tr("common.on"));

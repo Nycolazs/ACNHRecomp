@@ -1,5 +1,9 @@
 // acc:u0 (accounts) and the storage objects am hands out (launch parameters).
+#include <algorithm>
+#include <string>
+
 #include "ipc.h"
+#include "nextendo.h"
 #include "users.h"
 
 namespace nx {
@@ -105,8 +109,31 @@ std::shared_ptr<Service> profile(UserInfo user) {
 
 std::shared_ptr<Service> manager_for_application() {
     auto s = std::make_shared<Service>("IManagerForApplication");
-    s->cmds[0] = [](IpcCtx& c) { c.push<uint8_t>(0); return 0u; };  // CheckAvailability
-    s->cmds[1] = [](IpcCtx& c) { c.push<uint64_t>(0x1234ABCD5678EF90ull); return 0u; };  // GetAccountId
+    s->cmds[0] = [](IpcCtx& c) {
+        // CheckAvailability: available when Nextendo online services are active.
+        c.push<uint8_t>(nextendo::online_services_active() ? 1 : 0);
+        return 0u;
+    };
+    s->cmds[1] = [](IpcCtx& c) {  // GetAccountId (NetworkServiceAccountId)
+        c.push<uint64_t>(nextendo::network_service_account_id());
+        return 0u;
+    };
+    // EnsureIdTokenCacheAsync / LoadIdTokenCache: hand the game a BAAS / nex token when signed in.
+    s->cmds[130] = [](IpcCtx&) { return nextendo::online_services_active() ? 0u : 0x4E4u; };
+    s->cmds[131] = [](IpcCtx& c) {  // LoadIdTokenCache(Uid) -> size + buffer via out
+        if (!nextendo::online_services_active()) return 0x4E4u;
+        std::string tok =
+            nextendo::sign_baas_id_token(nextendo::network_service_account_id(), 0x01006F8002326000ull, 0x30003);
+        Buffer out = c.out_buf(0);
+        if (out.addr && out.size) {
+            size_t n = std::min(out.size, tok.size());
+            std::memcpy(reinterpret_cast<void*>(out.addr), tok.data(), n);
+            c.push<uint32_t>(uint32_t(n));
+        } else {
+            c.push<uint32_t>(uint32_t(tok.size()));
+        }
+        return 0u;
+    };
     return s;
 }
 
