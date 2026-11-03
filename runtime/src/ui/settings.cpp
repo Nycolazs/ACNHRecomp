@@ -32,6 +32,7 @@
 
 #include "bug_report.h"
 #include "config.h"
+#include "touch_layout.h"
 #include "game_clock.h"
 #include "platform.h"
 #include "saves.h"
@@ -383,6 +384,7 @@ void toggle(const std::string& key, bool fallback, float width = 0) {
 
 bool g_slider_held = false;  // a slider under the finger this frame: it takes the drag, the page does not scroll
 
+
 void slider(const std::string& key, int lo, int hi, int fallback, const char* fmt, float width) {
     g_row_key = key;
     int v = config_get_int(key, fallback);
@@ -418,6 +420,66 @@ bool button(const char* text, float width = 0) {
     }
     return res;
 }
+
+#if defined(__ANDROID__)
+// Settings > Controls > Edit layout (#42): the screen in small, with the on-screen buttons where they are drawn. A
+// finger drags a button, and the group it belongs to (the face buttons and the d-pad move as a whole), to where it
+// should be; input.touch_layout keeps the offsets (touch_layout.cpp). Reset puts every button back.
+bool g_touch_edit = false;
+
+void touch_layout_editor() {
+    ImGuiIO& io = ImGui::GetIO();
+    const float aspect = io.DisplaySize.y > 0 ? io.DisplaySize.x / io.DisplaySize.y : 16.0f / 9.0f;
+    const float w = ImGui::GetContentRegionAvail().x, h = w / aspect;
+    const ImVec2 p0 = ImGui::GetCursorScreenPos();
+    ImGui::InvisibleButton("##touch_layout", ImVec2(w, h));
+    const bool active = ImGui::IsItemActive();
+    g_slider_held |= active;  // the drag moves a button, not the page
+    static int dragging = -1;
+    size_t n = 0;
+    const plat::TouchButton* b = plat::touch_buttons(n, aspect);
+    if (ImGui::IsItemActivated()) {
+        dragging = -1;
+        float best = 1e9f;
+        for (size_t k = 0; k < n; k++) {
+            float d = std::hypot(io.MousePos.x - (p0.x + b[k].x * w), io.MousePos.y - (p0.y + b[k].y * h)) / (b[k].r * h);
+            if (d < 1.35f && d < best) best = d, dragging = int(k);
+        }
+    }
+    if (active && dragging >= 0 && (io.MouseDelta.x != 0 || io.MouseDelta.y != 0)) {
+        plat::touch_layout_move(plat::touch_group(size_t(dragging)), io.MouseDelta.x / h, io.MouseDelta.y / h, aspect);
+        b = plat::touch_buttons(n, aspect);
+    }
+    if (ImGui::IsItemDeactivated()) {
+        if (dragging >= 0) config_save();
+        dragging = -1;
+    }
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(p0, ImVec2(p0.x + w, p0.y + h), rgb(58, 92, 70), 10.0f * g_scale);
+    dl->AddRect(p0, ImVec2(p0.x + w, p0.y + h), rgb(107, 79, 54), 10.0f * g_scale, 0, 2.0f * g_scale);
+    float sx, sy, sr;
+    plat::touch_stick_rest(aspect, plat::touch_mirrored(), sx, sy, sr);
+    dl->AddCircle(ImVec2(p0.x + sx * w, p0.y + sy * h), sr * h, rgb(255, 255, 255, 110), 0, 2.0f * g_scale);
+    const char* held = dragging >= 0 ? plat::touch_group(size_t(dragging)) : nullptr;
+    for (size_t k = 0; k < n; k++) {
+        const ImVec2 c(p0.x + b[k].x * w, p0.y + b[k].y * h);
+        const bool hot = held && std::strcmp(held, plat::touch_group(k)) == 0;
+        dl->AddCircleFilled(c, b[k].r * h, hot ? rgb(246, 170, 40, 230) : rgb(255, 255, 255, 150));
+        const char* label = plat::touch_label(k);
+        if (*label) {
+            ImVec2 ts = ImGui::CalcTextSize(label);
+            dl->AddText(ImVec2(c.x - ts.x * 0.5f, c.y - ts.y * 0.5f), rgb(60, 45, 30), label);
+        }
+    }
+    ImGui::Dummy(ImVec2(0, 4.0f * g_scale));
+    if (button(tr("controls.touch_layout.reset"))) {
+        config_set("input.touch_layout", "");
+        config_save();
+    }
+    ImGui::SameLine();
+    if (button(tr("controls.touch_layout.done"))) g_touch_edit = false;
+}
+#endif
 
 // ---- pages ----------------------------------------------------------------------------------------------------
 
@@ -941,6 +1003,13 @@ void page_controls() {
     row("controls.touch", "controls.touch.desc", [&](float w) { toggle("input.touch_controls", true, w); });
     row("controls.touch_opacity", nullptr, [&](float w) { slider("input.touch_opacity", 10, 100, 60, "%d%%", w); });
     row("controls.touch_size", nullptr, [&](float w) { slider("input.touch_size", 50, 150, 100, "%d%%", w); });
+    if (plat::touch_group(0)) {
+        row("controls.touch_layout", "controls.touch_layout.desc", [&](float w) {
+            if (button(tr(g_touch_edit ? "controls.touch_layout.done" : "controls.touch_layout.edit"), w))
+                g_touch_edit = !g_touch_edit;
+        });
+        if (g_touch_edit) touch_layout_editor();
+    }
 #else
     ImGui::Dummy(ImVec2(0, 6 * g_scale));
     ImGui::PushFont(nullptr);

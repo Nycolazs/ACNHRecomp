@@ -83,23 +83,76 @@ TouchButton fit_acnh(const TouchButton& b, float aspect, float s) {
     return o;
 }
 
-// Two buffers: a new shape or size is written into the one not handed out last (the input and present threads read
-// the layout without a lock; it changes only when the setting does).
+// The layout editor (Settings > Controls > Edit layout, #42) moves groups of buttons: the face buttons and the d-pad
+// as a whole, the others one by one. input.touch_layout = "FACE:dx,dy;DPAD:dx,dy;..." holds each moved group's offset
+// from its place above, in screen heights (so it means the same on any screen shape); empty: the default layout.
+const char* const kAcnhGroups[kAcnhCount] = {"FACE", "FACE", "FACE", "FACE", "R",    "ZR",   "L",    "ZL",
+                                             "PLUS", "MINUS", "GEAR", "DPAD", "DPAD", "DPAD", "DPAD"};
+
+const char* const kAcnhLabels[kAcnhCount] = {"A", "B", "X", "Y", "R", "ZR", "L", "ZL", "+", "-", "", "", "", "", ""};
+
+struct Offset {
+    std::string group;
+    float dx, dy;
+};
+
+std::vector<Offset> parse_layout(const std::string& all) {
+    std::vector<Offset> out;
+    size_t pos = 0;
+    while (pos < all.size()) {
+        size_t end = all.find(';', pos);
+        if (end == std::string::npos) end = all.size();
+        std::string item = all.substr(pos, end - pos);
+        pos = end + 1;
+        size_t colon = item.find(':');
+        float dx, dy;
+        if (colon == std::string::npos || std::sscanf(item.c_str() + colon + 1, "%f,%f", &dx, &dy) != 2) continue;
+        if (!(std::fabs(dx) < 5.0f && std::fabs(dy) < 1.0f)) continue;
+        out.push_back({item.substr(0, colon), dx, dy});
+    }
+    return out;
+}
+
+// A group's offset, limited so that all its buttons stay on the screen whole (the group keeps its shape at an edge).
+void clamp_offset(const char* group, float aspect, float s, float& dx, float& dy) {
+    float lox = -1e9f, hix = 1e9f, loy = -1e9f, hiy = 1e9f;
+    for (size_t k = 0; k < kAcnhCount; k++) {
+        if (std::strcmp(kAcnhGroups[k], group) != 0) continue;
+        const TouchButton b = fit_acnh(kAcnh[k], aspect, s);
+        lox = std::max(lox, (b.r / aspect - b.x) * aspect), hix = std::min(hix, (1.0f - b.r / aspect - b.x) * aspect);
+        loy = std::max(loy, b.r - b.y), hiy = std::min(hiy, 1.0f - b.r - b.y);
+    }
+    if (lox <= hix) dx = std::clamp(dx, lox, hix);
+    if (loy <= hiy) dy = std::clamp(dy, loy, hiy);
+}
+
+// Two buffers: a new shape, size or layout is written into the one not handed out last (the input and present threads
+// read the layout without a lock; it changes only when a setting does).
 const TouchButton* acnh_buttons(float aspect) {
     static TouchButton buf[2][kAcnhCount];
     static std::atomic<int> cur{-1};
     static std::mutex lock;
     static float made_aspect = 0, made_scale = 0;
+    static std::string made_layout;
     if (!(aspect > 0.5f && aspect < 5.0f)) aspect = kAcnhAspect;
     const float s = touch_size_scale();
-    int c = cur.load(std::memory_order_acquire);
-    if (c >= 0 && std::fabs(made_aspect - aspect) < 1e-3f && made_scale == s) return buf[c];
+    const std::string layout = config_get("input.touch_layout", "");
     std::lock_guard lk(lock);
-    c = cur.load(std::memory_order_relaxed);
-    if (c >= 0 && std::fabs(made_aspect - aspect) < 1e-3f && made_scale == s) return buf[c];
+    int c = cur.load(std::memory_order_relaxed);
+    if (c >= 0 && std::fabs(made_aspect - aspect) < 1e-3f && made_scale == s && made_layout == layout) return buf[c];
     const int next = c == 0 ? 1 : 0;
-    for (size_t k = 0; k < kAcnhCount; k++) buf[next][k] = fit_acnh(kAcnh[k], aspect, s);
-    made_aspect = aspect, made_scale = s;
+    const std::vector<Offset> offsets = parse_layout(layout);
+    for (size_t k = 0; k < kAcnhCount; k++) {
+        TouchButton b = fit_acnh(kAcnh[k], aspect, s);
+        for (const Offset& o : offsets)
+            if (o.group == kAcnhGroups[k]) {
+                float dx = o.dx, dy = o.dy;
+                clamp_offset(kAcnhGroups[k], aspect, s, dx, dy);
+                b.x += dx / aspect, b.y += dy;
+            }
+        buf[next][k] = b;
+    }
+    made_aspect = aspect, made_scale = s, made_layout = layout;
     cur.store(next, std::memory_order_release);
     return buf[next];
 }
@@ -183,12 +236,38 @@ void touch_stick_rest(float aspect, bool mirrored, float& x, float& y, float& r)
     float dx = 0.15f * kAcnhAspect, cy = 0.72f;  // in heights from the side edge
     if (acnh) {
         // Beside the d-pad, not over it: its right arrow's outer edge, then the stick's radius and a gap.
-        const TouchButton right = fit_acnh(kAcnh[kAcnhCount - 1], aspect, touch_size_scale());
+        const TouchButton right = acnh_buttons(aspect)[kAcnhCount - 1];
         dx = right.x * aspect + right.r + r + 0.04f;
-        cy = 0.66f;
+        cy = std::clamp(right.y - 0.14f, r, 1.0f - r);
     }
     x = mirrored ? 1.0f - dx / aspect : dx / aspect;
     y = cy;
+}
+
+const char* touch_group(size_t index) {
+    static const bool acnh = std::strcmp(game::kInfo.id, "acnh") == 0;
+    return acnh && index < kAcnhCount ? kAcnhGroups[index] : nullptr;
+}
+
+const char* touch_label(size_t index) { return index < kAcnhCount ? kAcnhLabels[index] : ""; }
+
+void touch_layout_move(const char* group, float dx, float dy, float aspect) {
+    if (!(aspect > 0.5f && aspect < 5.0f)) aspect = kAcnhAspect;
+    std::vector<Offset> offsets = parse_layout(config_get("input.touch_layout", ""));
+    bool found = false;
+    for (Offset& o : offsets)
+        if (o.group == group) o.dx += dx, o.dy += dy, found = true;
+    if (!found) offsets.push_back({group, dx, dy});
+    // Not past the edge: dragging back moves the group at once.
+    for (Offset& o : offsets)
+        if (o.group == group) clamp_offset(group, aspect, touch_size_scale(), o.dx, o.dy);
+    std::string all;
+    char item[64];
+    for (const Offset& o : offsets) {
+        std::snprintf(item, sizeof item, "%s%s:%.4f,%.4f", all.empty() ? "" : ";", o.group.c_str(), o.dx, o.dy);
+        all += item;
+    }
+    config_set("input.touch_layout", all);
 }
 
 uint64_t touch_hit(float x, float y, float aspect) {
