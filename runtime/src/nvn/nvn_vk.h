@@ -70,6 +70,12 @@ bool vk_depth_clip_control();
 bool vk_fragment_interlock();
 // The core features the device was created with (all the GPU has): depthClamp, depthBiasClamp, depthBounds, ...
 const VkPhysicalDeviceFeatures& vk_features();
+// Reads past a uniform/storage binding (Maxwell: 0). robustBufferAccess2 enabled (Intel's Windows driver, NX_ROBUST2):
+// bindings are sized to vk_robust_buffer_align() so the bounds check falls at the zero padding. vk_oob_reads_not_zero:
+// a driver whose robustBufferAccess may return other bytes and no robustBufferAccess2 (nvn_sets.cpp pads uploads).
+bool vk_robust_buffer_access2();
+uint64_t vk_robust_buffer_align();
+bool vk_oob_reads_not_zero();
 bool gpu_require_subgroup32();  // compute pipelines pin the subgroup size to 32 (nvn_pipeline.cpp)
 bool gpu_is_integrated();  // the device in use is an integrated GPU (set when the device is made)
 VkPhysicalDevice vk_physical();
