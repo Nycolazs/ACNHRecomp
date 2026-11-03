@@ -367,7 +367,8 @@ def main():
         files = [("ffx", h, f"{base}/{h}") for h in ("api/include/ffx_api.h", "api/include/ffx_api_types.h",
                                                      "api/include/vk/ffx_api_vk.h", "upscalers/include/ffx_upscale.h",
                                                      "framegeneration/include/ffx_framegeneration.h",
-                                                     "framegeneration/include/ffx_framegeneration_api_types.h")]
+                                                     "framegeneration/include/ffx_framegeneration_api_types.h",
+                                                     "framegeneration/include/vk/ffx_api_framegeneration_vk.h")]
         files += [("ffx", "LICENSE.md", f"{base}/docs/license.md")]
         files += [("ffx", f"bin/{d}", f"{base}/signedbin/{d}") for d in (
             "amd_fidelityfx_loader_vk.dll", "amd_fidelityfx_upscaler_vk.dll", "amd_fidelityfx_framegeneration_vk.dll")]
