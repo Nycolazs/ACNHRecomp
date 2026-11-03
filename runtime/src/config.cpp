@@ -115,6 +115,7 @@ const Mapping kMappings[] = {
     {"video.antialiasing", "NX_AA", off_empty, true},  // fxaa (nvn_present.cpp), ssaa15 / ssaa2 (nvn_ultrawide.cpp)
     {"video.anisotropy", "NX_ANISOTROPY", game_empty, true},  // 2 .. 16 (nvn_sampler.cpp)
     {"video.gpu", "NX_GPU", auto_empty, true},
+    {"video.gpu_driver", "NX_GPU_DRIVER", auto_empty, true},  // Android: turnip | system (platform_android.cpp)
     {"video.frame_rate", "NX_PRESENT_INTERVAL", interval, true},
     {"video.frame_rate", "NX_NATIVE60", native60, true},
     {"video.frame_rate", "NX_SPEEDFIX", speedfix, true},

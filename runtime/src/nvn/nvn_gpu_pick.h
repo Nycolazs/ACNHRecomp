@@ -21,4 +21,9 @@ struct GpuCandidate {
 // A `want` nothing matches falls back to the default, and `matched` is false then (the caller logs it).
 size_t pick_gpu(const std::vector<GpuCandidate>& gpus, const char* want, bool& matched);
 
+// The Vulkan devices found when the renderer started (empty before that), in loader order, and the index of the one in
+// use (-1 before that). The settings screen lists them so the player can switch GPU without NX_GPU.
+std::vector<GpuCandidate> detected_gpus();
+int active_gpu_index();
+
 }  // namespace nx::nvn

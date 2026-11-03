@@ -33,6 +33,7 @@
 #include "config.h"
 #include "platform.h"
 #include "saves.h"
+#include "nvn/nvn_gpu_pick.h"  // detected_gpus(): the Vulkan devices the renderer found
 #include "ui/i18n.h"
 #include "ui/theme.h"
 #include "ui/ui_internal.h"
@@ -626,9 +627,32 @@ void page_video() {
     const char* fg_desc = fg == "lsfg" ? (lsfg ? "video.framegen.desc" : "video.framegen.missing") : "video.framegen.builtin.desc";
     row("video.framegen", fg_desc, [&](float w) { combo("video.frame_gen", fg_default, fg_choices, w); });
 #if !defined(__ANDROID__)  // one GPU in a phone
-    row("video.gpu", nullptr, [&](float w) {
-        combo("video.gpu", "auto",
-              {{"auto", tr("common.auto")}, {"discrete", tr("video.gpu.discrete")}, {"integrated", tr("video.gpu.integrated")}}, w);
+    row("video.gpu", "video.gpu.desc", [&](float w) {
+        Choices gpu_choices = {
+            {"auto", tr("common.auto")}, {"discrete", tr("video.gpu.discrete")}, {"integrated", tr("video.gpu.integrated")}};
+        // Every Vulkan device the renderer found, by name (by index when two have the same name). NX_GPU takes either
+        // (nvn_gpu_pick.cpp). Empty until the renderer has started.
+        const std::vector<nvn::GpuCandidate> gpus = nvn::detected_gpus();
+        for (size_t k = 0; k < gpus.size(); k++) {
+            int same = 0;
+            for (const auto& g : gpus) same += g.name == gpus[k].name;
+            gpu_choices.push_back({same > 1 ? std::to_string(k) : gpus[k].name, gpus[k].name});
+        }
+        // A saved name that is not in the list (another PC's, a removed card) stays visible instead of reading "auto".
+        const std::string cur = config_get("video.gpu", "auto");
+        bool known = false;
+        for (const auto& c : gpu_choices) known = known || c.first == cur;
+        if (!known) gpu_choices.push_back({cur, cur});
+        combo("video.gpu", "auto", gpu_choices, w);
+    });
+#else
+    // The phone's own Vulkan driver, or Turnip (Mesa) loaded from the app, which Snapdragon phones need for this game
+    // (platform_android.cpp). Read when the game starts.
+    row("video.gpu_driver", "video.gpu_driver.desc", [&](float w) {
+        combo("video.gpu_driver", "auto",
+              {{"auto", tr("video.gpu_driver.auto")}, {"turnip", tr("video.gpu_driver.turnip")},
+               {"system", tr("video.gpu_driver.system")}},
+              w);
     });
 #endif
     row("video.shaders", "video.shaders.desc", [&](float w) { toggle("video.shader_prepare", true, w); });

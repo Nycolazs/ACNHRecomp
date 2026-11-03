@@ -53,11 +53,29 @@ size_t pick_gpu(const std::vector<GpuCandidate>& gpus, const char* want, bool& m
 
 #ifndef NX_GPU_PICK_STANDALONE
 
+#include <mutex>
+
 #include "nvn_vk.h"
 
 namespace nx::nvn {
 
 using namespace nx::vk;
+
+namespace {
+std::mutex g_gpus_lock;
+std::vector<GpuCandidate> g_gpus;  // set once by pick_physical_device, read by the settings screen
+int g_active_gpu = -1;
+}  // namespace
+
+std::vector<GpuCandidate> detected_gpus() {
+    std::lock_guard lk(g_gpus_lock);
+    return g_gpus;
+}
+
+int active_gpu_index() {
+    std::lock_guard lk(g_gpus_lock);
+    return g_active_gpu;
+}
 
 VkPhysicalDevice pick_physical_device(const std::vector<VkPhysicalDevice>& devices) {
     static const char* const types[] = {"other", "integrated", "discrete", "virtual", "CPU"};
@@ -76,6 +94,11 @@ VkPhysicalDevice pick_physical_device(const std::vector<VkPhysicalDevice>& devic
     size_t k = pick_gpu(gpus, want, matched);
     if (!matched) log("nvn/vk: NX_GPU=%s matches no GPU: using the default", want);
     log("nvn/vk: using GPU %zu, %s (NX_GPU=discrete|integrated|<index>|<name part>)", k, gpus[k].name.c_str());
+    {
+        std::lock_guard lk(g_gpus_lock);
+        g_gpus = gpus;
+        g_active_gpu = int(k);
+    }
     return devices[k];
 }
 
