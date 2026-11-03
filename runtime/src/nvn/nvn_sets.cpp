@@ -289,13 +289,15 @@ bool all_write_backs() {  // NX_WRITE_BACK_ALL=1: every compute storage binding,
 // because Metal does not bound-check. Where the GPU has robustBufferAccess (Vulkan on Intel, NVIDIA, Adreno: every
 // device but MoltenVK) a read past a binding's range returns 0 by itself, so the padding is pure CPU cost (a memset
 // and a copy of up to 64 KB per unique block: ~6 MB per frame in gameplay on the Intel iGPU, 30% of the replay thread).
-// NX_PAD_BUFFERS=1 brings the padding back (bisecting); Apple always pads.
+// NX_PAD_BUFFERS=1 brings the padding back (bisecting); Apple always pads. robustBufferAccess may also return other
+// bytes of the buffer (the upload ring's next blocks): Intel's Windows driver gets robustBufferAccess2 instead, and
+// the padding where it lacks that (vk_oob_reads_not_zero, issue #49).
 uint64_t pad_min(uint64_t want) {
     static const bool pad = [] {
 #if defined(__APPLE__)
         return true;
 #else
-        return std::getenv("NX_PAD_BUFFERS") != nullptr || !vk_features().robustBufferAccess;
+        return std::getenv("NX_PAD_BUFFERS") != nullptr || !vk_features().robustBufferAccess || vk_oob_reads_not_zero();
 #endif
     }();
     return pad ? want : 16;
@@ -317,7 +319,10 @@ PerThread<uint64_t> g_memo_hits, g_memo_misses;
 
 VkDescriptorBufferInfo buffer_of(VkCommandBuffer cb, const void* bytes, uint64_t size, uint64_t min_size = 16,
                                  bool write_back = false, bool guest = true) {
-    uint64_t n = std::max<uint64_t>((size + 15) & ~15ull, min_size);
+    // robustBufferAccess2 checks bounds at the range rounded up to its alignment: the binding is that size, so the
+    // bytes up to the check are this upload's zeros, not the next one's data (vk_robust_buffer_align, 16 otherwise).
+    const uint64_t a = vk_robust_buffer_align();
+    uint64_t n = (std::max<uint64_t>((size + 15) & ~15ull, min_size) + a - 1) & ~(a - 1);
     const auto* p = static_cast<const uint8_t*>(bytes);
     if (!write_back && guest) {
         static const bool memo = !(std::getenv("NX_UPLOAD_MEMO") && std::getenv("NX_UPLOAD_MEMO")[0] == '0');
@@ -363,7 +368,8 @@ VkDescriptorBufferInfo uniform_info(VkCommandBuffer cb, const ShaderInfo* s, con
     const uint64_t size = p ? std::min<uint64_t>(r.size, 0x10000) : 0;
     const uint64_t min_size = reads ? pad_min((reads + 15) & ~15u) : pad_min(indexed ? 0x10000 : 0x1000);
     // In place (nvn_zero_copy.cpp) when every byte bound is the block's own: past it Maxwell reads 0.
-    const uint64_t n = std::max<uint64_t>((size + 15) & ~15ull, min_size);
+    const uint64_t a = vk_robust_buffer_align();  // as buffer_of sizes the binding
+    const uint64_t n = (std::max<uint64_t>((size + 15) & ~15ull, min_size) + a - 1) & ~(a - 1);
     if (Upload u; p && n <= r.size && zero_copy_range(r.address, n, zero_copy_uniform_align(), u)) return {u.buffer, u.offset, n};
     return buffer_of(cb, p, size, min_size);
 }

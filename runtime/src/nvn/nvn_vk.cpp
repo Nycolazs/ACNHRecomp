@@ -73,6 +73,12 @@ bool g_integrated = false;
 bool g_nvidia = false;  // the device's vendor is NVIDIA (the settings screen offers DLSS)
 bool g_require_sg32 = false;  // compute pipelines are made with a required subgroup size of 32 (Maxwell's warp)  // the chosen GPU is an integrated one (unified memory, the GPU is the long side)
 VkPhysicalDeviceFeatures g_features{};  // the core features enabled (vk_features())
+// Reads past a buffer binding (vk_robust_buffer_access2, vk_robust_buffer_align, vk_oob_reads_not_zero):
+// robustBufferAccess2 enabled and the size its bounds are checked at; a driver whose plain robustBufferAccess may
+// return values other than 0 there.
+bool g_robust2 = false;
+uint64_t g_robust2_align = 16;
+bool g_oob_not_zero = false;
 VkDescriptorPool g_descriptors = VK_NULL_HANDLE;
 
 // The per-submit upload buffer (nvn_vk.h): one host-visible buffer, bump-allocated, reset at every submit.
@@ -347,7 +353,46 @@ bool init() {
         dexts.push_back("VK_KHR_portability_subset");
         *tail = &fport, tail = &fport.pNext;
     }
+    // Reads past a uniform or storage binding: Maxwell returns 0, and the game's shaders do read past (constant reads
+    // beyond a short block, banks indexed with computed values: nvn_sets.cpp, uniform_info). The uploads are no longer
+    // zero-padded where the GPU has robustBufferAccess (nvn_sets.cpp, pad_min), which only promises values from
+    // "within the memory bound to the buffer": NVIDIA, AMD and Mesa return 0 there, but a driver may return other
+    // bytes of the buffer (here the 256 MB upload ring: the next blocks' data). The suspected cause of issue #49 (Intel
+    // HD 530/620/630, Windows only): the Dodo Airlines interior lit pink and green, villagers' clothes far too bright. On Intel's
+    // Windows driver robustBufferAccess2 (VK_EXT_robustness2, what DXVK uses for the same D3D rule) makes every such
+    // read 0; without it the uploads are padded as on the Mac. NX_ROBUST2=1: robustBufferAccess2 on any GPU that has
+    // it; NX_ROBUST2=0: never (Intel's Windows driver then pads).
+    VkPhysicalDeviceRobustness2FeaturesEXT frob2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT};
+    {
+        VkPhysicalDeviceDriverProperties drv{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES};
+        if (api >= VK_API_VERSION_1_2 || has_extension(dext, "VK_KHR_driver_properties")) {
+            VkPhysicalDeviceProperties2 p2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
+            p2.pNext = &drv;
+            p_vkGetPhysicalDeviceProperties2(g_physical, &p2);
+        }
+        g_oob_not_zero = drv.driverID == VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS;
+        const char* e = std::getenv("NX_ROBUST2");
+        const bool want = e ? e[0] == '1' : g_oob_not_zero;
+        if (want && has_extension(dext, "VK_EXT_robustness2")) {
+            dexts.push_back("VK_EXT_robustness2");
+            *tail = &frob2, tail = &frob2.pNext;
+        }
+    }
     p_vkGetPhysicalDeviceFeatures2(g_physical, &features);
+    frob2.robustImageAccess2 = VK_FALSE;  // buffers only: what Maxwell's constant and storage reads need
+    frob2.nullDescriptor = VK_FALSE;
+    if (frob2.robustBufferAccess2 && !features.features.robustBufferAccess) frob2.robustBufferAccess2 = VK_FALSE;  // VUID
+    g_robust2 = frob2.robustBufferAccess2 == VK_TRUE;
+    if (g_robust2) {
+        VkPhysicalDeviceRobustness2PropertiesEXT rp{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_PROPERTIES_EXT};
+        VkPhysicalDeviceProperties2 p2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
+        p2.pNext = &rp;
+        p_vkGetPhysicalDeviceProperties2(g_physical, &p2);
+        // Bounds are checked at the range rounded up to these (powers of two, at most 256): bindings are sized to them.
+        g_robust2_align = std::max<uint64_t>({16, rp.robustUniformBufferAccessSizeAlignment,
+                                              rp.robustStorageBufferAccessSizeAlignment});
+        if (g_robust2_align > 256 || (g_robust2_align & (g_robust2_align - 1))) g_robust2_align = 256;
+    }
     {   // The translated shaders assume Maxwell's warp of 32 (TRANSLATOR.md). Intel runs subgroups of 8, 16 or 32 as its
         // compiler chooses; where the size can be pinned (core 1.3 subgroup size control), compute pipelines pin 32.
         VkPhysicalDeviceSubgroupSizeControlProperties sgc{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_SIZE_CONTROL_PROPERTIES};
@@ -374,6 +419,9 @@ bool init() {
         g_features.depthClamp, g_features.depthBiasClamp, g_features.depthBounds, g_depth_clip_control,
         has_extension(dext, "VK_EXT_depth_clip_control") ? 1u : 0u);
     log("nvn/vk: portability: format reinterpretation %u, format swizzle %u", fport.fields[2], fport.fields[3]);
+    log("nvn/vk: reads past a buffer binding: %s", g_robust2 ? "0 (robustBufferAccess2)"
+                                                   : g_oob_not_zero ? "padded with zeros (driver without robustBufferAccess2)"
+                                                                    : "robustBufferAccess");
     log_device_caps(g_physical, dext);  // nvn_caps.cpp
     // The game's queue, and AMD frame generation's present, image acquire and async compute queues (nvn_temporal.cpp).
     std::vector<uint32_t> queue_counts(families.size(), 0);
@@ -687,6 +735,9 @@ bool vk_depth_clip_control() { return g_depth_clip_control; }
 bool vk_fragment_interlock() { return g_fragment_interlock; }
 bool vk_dynamic_rendering() { return g_dynamic_rendering; }
 const VkPhysicalDeviceFeatures& vk_features() { return g_features; }
+bool vk_robust_buffer_access2() { return g_robust2; }
+uint64_t vk_robust_buffer_align() { return g_robust2 ? g_robust2_align : 16; }
+bool vk_oob_reads_not_zero() { return g_oob_not_zero && !g_robust2; }
 bool gpu_is_integrated() { return g_integrated; }
 bool gpu_is_nvidia() { return g_nvidia; }
 bool gpu_require_subgroup32() { return g_require_sg32; }
