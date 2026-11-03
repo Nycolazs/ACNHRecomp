@@ -7,8 +7,10 @@
 #include "platform.h"
 
 #if defined(__ANDROID__)
+#include <dirent.h>
 #include <dlfcn.h>
 #include <fcntl.h>
+#include <sched.h>
 #include <sys/ioctl.h>
 #include <sys/syscall.h>
 
@@ -16,9 +18,13 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <mutex>
+#include <string>
+#include <thread>
 #include <vector>
 
 #include <nx/runtime.h>
@@ -72,6 +78,72 @@ bool g_dirty = false;
 int64_t g_target = 0;
 uint64_t g_target_at = 0;
 int g_efficiency = -1;  // what the session was told (-1: nothing yet)
+// Clock keeper (NX_CLOCK_KEEPER, off by default). On the Galaxy Tab S10+ (Dimensity 9300+, Mali) a frame is a chain
+// of many guest threads that each keep a core busy for a fraction of the time, so the governor kept every cluster
+// at 0.6-2.2 GHz and the game ran at 17 fps with less than two cores busy; ADPF did not raise them. Busy loops at the
+// lowest priority, one on a core of each cpufreq policy, held the clusters' clocks up and the same scene ran at 30
+// fps (the game's own cap). A keeper thread runs at SCHED_IDLE, so any game thread on its core preempts it, and only
+// while frames are presented (it sleeps when none came for a second: the app paused or loading).
+// NX_CLOCK_KEEPER=1: the first core of each policy; or a list of cores ("4,7"). NX_CLOCK_KEEPER_DUTY: percent of
+// each 2 ms the loop spins (default 100); less costs less power and holds the clocks less high.
+std::atomic<uint64_t> g_last_frame{0};
+
+std::vector<int> keeper_cpus(const char* e) {
+    std::vector<int> cpus;
+    if (std::string(e) == "1") {
+        if (DIR* d = opendir("/sys/devices/system/cpu/cpufreq")) {
+            while (dirent* de = readdir(d))
+                if (std::strncmp(de->d_name, "policy", 6) == 0) cpus.push_back(std::atoi(de->d_name + 6));
+            closedir(d);
+        }
+        std::sort(cpus.begin(), cpus.end());
+        return cpus;
+    }
+    for (const char* p = e; *p;) {
+        char* end = nullptr;
+        long v = std::strtol(p, &end, 10);
+        if (end == p) break;
+        if (v >= 0 && v < CPU_SETSIZE) cpus.push_back(int(v));
+        p = *end == ',' ? end + 1 : end;
+    }
+    return cpus;
+}
+
+void keeper_main(int cpu, int duty) {
+    cpu_set_t set;
+    CPU_ZERO(&set);
+    CPU_SET(cpu, &set);
+    sched_setaffinity(0, sizeof set, &set);
+    sched_param sp{};
+    sched_setscheduler(0, SCHED_IDLE, &sp);
+    char name[16];
+    std::snprintf(name, sizeof name, "keeper cpu%d", cpu);
+    set_thread_name(name);
+    const uint64_t spin = 2'000'000ull * uint64_t(duty) / 100, rest_us = uint64_t(2'000 * (100 - duty) / 100);
+    for (;;) {
+        uint64_t now = monotonic_ns();
+        if (now - g_last_frame.load(std::memory_order_relaxed) > 1'000'000'000ull) {
+            usleep(200'000);
+            continue;
+        }
+        for (uint64_t until = now + spin; monotonic_ns() < until;) {
+        }
+        if (rest_us) usleep(useconds_t(rest_us));
+    }
+}
+
+void clock_keeper_start() {
+    const char* e = std::getenv("NX_CLOCK_KEEPER");
+    if (!e || !*e || std::string(e) == "0") return;
+    const char* d = std::getenv("NX_CLOCK_KEEPER_DUTY");
+    int duty = d ? std::clamp(std::atoi(d), 1, 100) : 100;
+    std::string list;
+    for (int cpu : keeper_cpus(e)) {
+        std::thread(keeper_main, cpu, duty).detach();
+        list += (list.empty() ? "" : ",") + std::to_string(cpu);
+    }
+    log("clock keeper: cores %s, %d%% of each 2 ms (NX_CLOCK_KEEPER)", list.empty() ? "none" : list.c_str(), duty);
+}
 
 }  // namespace
 
@@ -115,6 +187,9 @@ void perf_hint_thread() {
 }
 
 void perf_hint_frame(int64_t ns) {
+    g_last_frame.store(monotonic_ns(), std::memory_order_relaxed);
+    static std::once_flag keeper;
+    std::call_once(keeper, clock_keeper_start);
     const Api& a = api();
     if (!a.ok || ns <= 0) return;
     // Performance: as before: 33.3 ms when NX_FPS_CAP holds the game at 30 fps, else 16.7, and the game thread's work.

@@ -32,6 +32,7 @@
 #include <cerrno>
 #include <cmath>
 #include <cctype>
+#include <cstdio>
 #include <cstring>
 #include <deque>
 #include <filesystem>
@@ -610,11 +611,57 @@ void set_master_volume(float) {}
 std::string controller_name() { return ""; }
 std::string controller_kind() { return ""; }
 void rumble(float, float, uint32_t) {}
-void open_path(const std::string&) {}
-void pick_path(bool, const std::string&) {}
+// The folder picker and "open folder" (the settings screen's Saves page) are android/java Picker: NativeActivity gets
+// no activity results, so the picked path comes back through a file in the app's own folder.
+namespace {
+std::string pick_answer_file() { return std::string(g_app ? g_app->activity->internalDataPath : "") + "/pick_result.txt"; }
+std::atomic<bool> g_picking{false};
+
+bool start_picker(const char* key, const std::string& value) {
+    JNIEnv* env = nullptr;
+    if (!g_app || g_app->activity->vm->AttachCurrentThread(&env, nullptr) != JNI_OK || !env) return false;
+    jobject act = g_app->activity->clazz;
+    jclass actc = env->GetObjectClass(act);
+    jclass ic = env->FindClass("android/content/Intent");
+    jobject intent = env->NewObject(ic, env->GetMethodID(ic, "<init>", "()V"));
+    jobject pkg = env->CallObjectMethod(act, env->GetMethodID(actc, "getPackageName", "()Ljava/lang/String;"));
+    env->CallObjectMethod(intent, env->GetMethodID(ic, "setClassName", "(Ljava/lang/String;Ljava/lang/String;)Landroid/content/Intent;"),
+                          pkg, env->NewStringUTF("io.github.acnhrecomp.Picker"));
+    env->CallObjectMethod(intent, env->GetMethodID(ic, "putExtra", "(Ljava/lang/String;Ljava/lang/String;)Landroid/content/Intent;"),
+                          env->NewStringUTF(key), env->NewStringUTF(value.c_str()));
+    env->CallVoidMethod(act, env->GetMethodID(actc, "startActivity", "(Landroid/content/Intent;)V"), intent);
+    if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+        nx::log("app: the folder picker did not start");
+        return false;
+    }
+    return true;
+}
+}  // namespace
+
+void open_path(const std::string& path) { start_picker("open", path); }
+
+void pick_path(bool, const std::string&) {
+    std::remove(pick_answer_file().c_str());
+    g_picking = start_picker("out", pick_answer_file());
+    if (!g_picking) {  // no picker: an empty answer, so the screen does not wait forever
+        if (FILE* f = std::fopen(pick_answer_file().c_str(), "w")) std::fputs("\n", f), std::fclose(f), g_picking = true;
+    }
+}
+
 bool pick_result(std::string& path) {
     path.clear();
-    return false;
+    if (!g_picking) return false;
+    FILE* f = std::fopen(pick_answer_file().c_str(), "r");
+    if (!f) return false;
+    char buf[4096];
+    size_t n = std::fread(buf, 1, sizeof buf - 1, f);
+    std::fclose(f);
+    std::remove(pick_answer_file().c_str());
+    g_picking = false;
+    path.assign(buf, n);
+    while (!path.empty() && (path.back() == '\n' || path.back() == '\r')) path.pop_back();
+    return true;
 }
 
 }  // namespace nx::plat
