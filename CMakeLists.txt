@@ -116,6 +116,9 @@ endif()
 # Dear ImGui: the settings screen and the launcher. tools/setup_acnh.py downloads it into private/third_party/imgui.
 set(NX_IMGUI_DIR "${CMAKE_SOURCE_DIR}/private/third_party/imgui" CACHE PATH "Dear ImGui sources")
 
+add_library(nx_save_storage STATIC runtime/src/save_storage.cpp runtime/src/save_profiles.cpp)
+target_include_directories(nx_save_storage PUBLIC ${CMAKE_SOURCE_DIR}/runtime/src)
+
 # The launcher (launcher/): the program a player opens first. It has no game code, so it builds from a plain
 # checkout (cmake --build <dir> --target acnhrecomp_launcher) and leaves the game's targets as they are.
 option(NX_LAUNCHER "Build the first-run launcher (acnhrecomp_launcher)" ON)
@@ -488,6 +491,7 @@ else()
     target_sources(${NX_GAME} PRIVATE runtime/src/ui/ui_stub.cpp)
 endif()
 target_sources(${NX_GAME} PRIVATE runtime/src/saves.cpp)
+target_link_libraries(${NX_GAME} PRIVATE nx_save_storage)
 find_package(ZLIB QUIET)
 if(ZLIB_FOUND)
     target_link_libraries(${NX_GAME} PRIVATE ZLIB::ZLIB)
