@@ -3,6 +3,7 @@
 // also uses some of the settings screen's keys (common.*, game.language, video.*).
 
 const Entry kLauncherEn[] = {
+    {"launcher.cpu_unsupported", "This computer's processor lacks {}, which the game needs for now (Intel Core 4th generation, AMD Ryzen or newer). Support for older processors is planned: github.com/Nycolazs/ACNHRecomp/issues/46"},
     {"launcher.home.desktop", "Add to desktop"},
     {"launcher.home.desktop.desc", "A shortcut with the icon on the desktop and in the start menu"},
     {"launcher.home.install_app", "Install in Applications"},
@@ -210,6 +211,7 @@ const Entry kLauncherEn[] = {
 };
 
 const Entry kLauncherPtBr[] = {
+    {"launcher.cpu_unsupported", "O processador deste computador não tem {}, que o jogo precisa por enquanto (Intel Core de 4ª geração, AMD Ryzen ou mais novos). O suporte a processadores mais antigos está planejado: github.com/Nycolazs/ACNHRecomp/issues/46"},
     {"launcher.home.desktop", "Adicionar à área de trabalho"},
     {"launcher.home.desktop.desc", "Um atalho com o ícone na área de trabalho e no menu iniciar"},
     {"launcher.home.install_app", "Instalar em Aplicativos"},
@@ -416,6 +418,7 @@ const Entry kLauncherPtBr[] = {
 };
 
 const Entry kLauncherEs[] = {
+    {"launcher.cpu_unsupported", "El procesador de este ordenador no tiene {}, que el juego necesita por ahora (Intel Core de 4.ª generación, AMD Ryzen o posteriores). El soporte para procesadores más antiguos está previsto: github.com/Nycolazs/ACNHRecomp/issues/46"},
     {"launcher.home.desktop", "Añadir al escritorio"},
     {"launcher.home.desktop.desc", "Un acceso directo con el icono en el escritorio y en el menú de inicio"},
     {"launcher.home.install_app", "Instalar en Aplicaciones"},
@@ -621,6 +624,7 @@ const Entry kLauncherEs[] = {
 };
 
 const Entry kLauncherFr[] = {
+    {"launcher.cpu_unsupported", "Le processeur de cet ordinateur ne prend pas en charge {}, nécessaire au jeu pour l'instant (Intel Core de 4e génération, AMD Ryzen ou plus récent). La prise en charge des processeurs plus anciens est prévue : github.com/Nycolazs/ACNHRecomp/issues/46"},
     {"launcher.autostart.setting", "Lancer le jeu automatiquement à l'ouverture du lanceur"},
     {"launcher.fullscreen", "Afficher le lanceur en plein écran"},
     {"launcher.subtitle", "Animal Crossing: New Horizons, recompilé pour PC"},
@@ -814,6 +818,7 @@ const Entry kLauncherFr[] = {
 };
 
 const Entry kLauncherDe[] = {
+    {"launcher.cpu_unsupported", "Der Prozessor dieses Computers unterstützt kein {}, das das Spiel derzeit benötigt (Intel Core 4. Generation, AMD Ryzen oder neuer). Unterstützung für ältere Prozessoren ist geplant: github.com/Nycolazs/ACNHRecomp/issues/46"},
     {"launcher.autostart.setting", "Spiel beim Öffnen des Launchers automatisch starten"},
     {"launcher.fullscreen", "Launcher im Vollbild anzeigen"},
     {"launcher.subtitle", "Animal Crossing: New Horizons, für den PC rekompiliert"},
@@ -1007,6 +1012,7 @@ const Entry kLauncherDe[] = {
 };
 
 const Entry kLauncherIt[] = {
+    {"launcher.cpu_unsupported", "Il processore di questo computer non supporta {}, necessario al gioco per ora (Intel Core di 4ª generazione, AMD Ryzen o successivi). Il supporto ai processori più vecchi è previsto: github.com/Nycolazs/ACNHRecomp/issues/46"},
     {"launcher.autostart.setting", "Avvia il gioco automaticamente all'apertura del launcher"},
     {"launcher.fullscreen", "Mostra il launcher a schermo intero"},
     {"launcher.subtitle", "Animal Crossing: New Horizons, ricompilato per PC"},
@@ -1200,6 +1206,7 @@ const Entry kLauncherIt[] = {
 };
 
 const Entry kLauncherNl[] = {
+    {"launcher.cpu_unsupported", "De processor van deze computer heeft geen {}, dat het spel voorlopig nodig heeft (Intel Core 4e generatie, AMD Ryzen of nieuwer). Ondersteuning voor oudere processors is gepland: github.com/Nycolazs/ACNHRecomp/issues/46"},
     {"launcher.autostart.setting", "Start het spel automatisch wanneer de launcher opent"},
     {"launcher.fullscreen", "Launcher op volledig scherm weergeven"},
     {"launcher.subtitle", "Animal Crossing: New Horizons, gehercompileerd voor pc"},
@@ -1381,6 +1388,7 @@ const Entry kLauncherNl[] = {
 };
 
 const Entry kLauncherRu[] = {
+    {"launcher.cpu_unsupported", "Процессор этого компьютера не поддерживает {}, необходимый игре (Intel Core 4-го поколения, AMD Ryzen или новее). Поддержка более старых процессоров запланирована: github.com/Nycolazs/ACNHRecomp/issues/46"},
     {"launcher.autostart", "Запуск игры через {}..."},
     {"launcher.autostart.stay", "Нажмите на лаунчер, чтобы остаться"},
     {"launcher.autostart.setting", "Автоматически запускать игру при открытии лаунчера"},
@@ -1562,6 +1570,7 @@ const Entry kLauncherRu[] = {
 };
 
 const Entry kLauncherJa[] = {
+    {"launcher.cpu_unsupported", "このコンピューターのプロセッサーは、現在ゲームに必要な {} に対応していません (第 4 世代 Intel Core、AMD Ryzen 以降)。古いプロセッサーへの対応は予定されています: github.com/Nycolazs/ACNHRecomp/issues/46"},
     {"launcher.autostart", "{} 秒後にゲームを開始します..."},
     {"launcher.autostart.stay", "ランチャーをクリックするとここに留まります"},
     {"launcher.autostart.setting", "ランチャーを開いたときにゲームを自動で開始する"},
@@ -1743,6 +1752,7 @@ const Entry kLauncherJa[] = {
 };
 
 const Entry kLauncherKo[] = {
+    {"launcher.cpu_unsupported", "이 컴퓨터의 프로세서는 현재 게임에 필요한 {}을(를) 지원하지 않습니다 (4세대 Intel Core, AMD Ryzen 이상). 이전 프로세서 지원은 계획되어 있습니다: github.com/Nycolazs/ACNHRecomp/issues/46"},
     {"launcher.autostart", "{}초 후 게임을 시작합니다..."},
     {"launcher.autostart.stay", "런처를 클릭하면 여기에 머무릅니다"},
     {"launcher.autostart.setting", "런처를 열 때 게임을 자동으로 시작"},
@@ -1924,6 +1934,7 @@ const Entry kLauncherKo[] = {
 };
 
 const Entry kLauncherZhCn[] = {
+    {"launcher.cpu_unsupported", "此电脑的处理器不支持游戏目前需要的 {}（第 4 代 Intel Core、AMD Ryzen 或更新）。对旧处理器的支持已在计划中：github.com/Nycolazs/ACNHRecomp/issues/46"},
     {"launcher.autostart", "{} 秒后启动游戏..."},
     {"launcher.autostart.stay", "点击启动器以留在此处"},
     {"launcher.autostart.setting", "打开启动器时自动启动游戏"},
@@ -2105,6 +2116,7 @@ const Entry kLauncherZhCn[] = {
 };
 
 const Entry kLauncherZhTw[] = {
+    {"launcher.cpu_unsupported", "此電腦的處理器不支援遊戲目前需要的 {}（第 4 代 Intel Core、AMD Ryzen 或更新）。對舊處理器的支援已在規劃中：github.com/Nycolazs/ACNHRecomp/issues/46"},
     {"launcher.autostart", "{} 秒後啟動遊戲..."},
     {"launcher.autostart.stay", "點擊啟動器以留在此處"},
     {"launcher.autostart.setting", "開啟啟動器時自動啟動遊戲"},
