@@ -20,6 +20,11 @@ void touch_stick_rest(float aspect, bool mirrored, float& x, float& y, float& r)
 bool touch_enabled();
 bool touch_mirrored();
 float touch_opacity_scale();
+// The layout editor (settings.cpp): the group a button of touch_buttons() moves with ("FACE", "DPAD", "L", ...; nullptr:
+// the game's layout cannot be edited), and moving a group by (dx, dy) screen heights on a screen of that shape (input.touch_layout, not saved).
+const char* touch_group(size_t index);
+const char* touch_label(size_t index);  // "A", "ZR", "+"; "" for the d-pad and the gear
+void touch_layout_move(const char* group, float dx, float dy, float aspect);
 // The button under (x, y) (0..1 across the screen; aspect = width / height), or 0.
 uint64_t touch_hit(float x, float y, float aspect);
 
