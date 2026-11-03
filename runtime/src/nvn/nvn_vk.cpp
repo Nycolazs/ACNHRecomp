@@ -10,6 +10,7 @@
 #endif
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -1412,9 +1413,21 @@ uint64_t g_replay_presents = 0;
 // queue holds the replay, and through the two present slots the game, to that rhythm. Paced by a timer instead
 // (pace_present), frames became ready at times that wandered against the display's refresh: some were shown for three
 // refreshes and the next for one (50 ms then 17 ms), a judder at a steady 30 fps. NX_VSYNC_PACING=0: the timer.
+// Only on a display whose refresh is a whole multiple of 60 Hz (60, 120, 180, 240): on 75, 144 or 165 Hz the frame
+// was shown round(refresh / 60) refreshes, so the game ran at 72 fps on 144 Hz (too fast) or 55 on 165 Hz (too slow),
+// and with VSync on the frame rate was not capped at 60. There the timer paces the game, and FIFO still shows each
+// frame on a refresh, without tearing.
+bool refresh_is_multiple_of_60() {
+    const int hz = plat::display_refresh_hz();
+    if (hz <= 0) return true;  // unknown: as 60 Hz
+    const double r = hz / 60.0;
+    const long k = std::lround(r);
+    return k >= 1 && std::fabs(r - double(k)) <= 0.03 * double(k);
+}
+
 bool present_vsync_paced() {
     static const bool off = std::getenv("NX_VSYNC_PACING") && std::getenv("NX_VSYNC_PACING")[0] == '0';
-    return !off && g_fifo.load() && !framegen_wanted() && !plat::headless();
+    return !off && g_fifo.load() && !framegen_wanted() && !plat::headless() && refresh_is_multiple_of_60();
 }
 
 void gpu_present(uint64_t texture, const int32_t* crop, int interval) {
