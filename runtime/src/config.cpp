@@ -5,6 +5,7 @@
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <map>
 #include <mutex>
@@ -14,6 +15,10 @@
 
 #include "game_clock.h"
 #include "platform.h"
+
+#if !defined(_WIN32)
+extern char** environ;
+#endif
 
 namespace nx {
 
@@ -233,8 +238,32 @@ std::vector<std::pair<std::string, std::string>> config_preset(const std::string
     return out;
 }
 
+namespace {
+
+// The NX_* variables set before the game (a .bat's `set`, a script, the launcher, config.txt on Android), as the
+// player sees them: whether a switch reached it shows in the log (issue #49: one that did not looked tested).
+void log_environment() {
+#if defined(_WIN32)
+    (void)std::getenv("NX_LOG");  // the CRT makes its narrow table on demand (a wide entry point): now
+    char** env = _environ;
+#else
+    char** env = environ;
+#endif
+    std::string list;
+    for (char** e = env; e && *e; e++)
+        if (std::strncmp(*e, "NX_", 3) == 0) {
+            std::string v = *e;
+            if (v.size() > 120) v = v.substr(0, 117) + "...";
+            list += (list.empty() ? "" : " ") + v;
+        }
+    log("config: environment: %s", list.empty() ? "no NX_* variables" : list.c_str());
+}
+
+}  // namespace
+
 void config_apply() {
     if (!g_loaded) config_load();
+    log_environment();  // before set_env_default adds the settings' own
     mods_fetch();  // before the language and the frame rate look for them
     // Game language "auto": from the system, unless a language file or NX_LANGUAGE says otherwise. Only applied:
     // the entry keeps "auto", so the choice stays automatic.

@@ -68,6 +68,9 @@ VkSemaphore g_acquired = VK_NULL_HANDLE, g_rendered = VK_NULL_HANDLE;
 VkBool32 g_depth_clip_control = VK_FALSE;
 VkBool32 g_fragment_interlock = VK_FALSE;  // fragmentShaderPixelInterlock (vk_fragment_interlock)
 bool g_dynamic_rendering = true;  // vkCmdBeginRendering usable (core 1.3 or VK_KHR_dynamic_rendering)
+// Intel's Windows driver of the 101.2xxx branch and older (Gen9, Skylake to Comet Lake: HD 530/620/630): it crashed in
+// its dynamic rendering (vk_intel_windows_legacy, nvn_renderpass.cpp).
+bool g_intel_windows_legacy = false;
 std::atomic<bool> g_fifo{false};    // the swapchain presents in FIFO (VSync): present_vsync_paced
 bool g_display_timing = false;      // VK_GOOGLE_display_timing enabled
 bool g_integrated = false;
@@ -372,6 +375,10 @@ bool init() {
             p_vkGetPhysicalDeviceProperties2(g_physical, &p2);
         }
         g_oob_not_zero = drv.driverID == VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS;
+        // Intel encodes its Windows driver version as major << 14 | minor: 101.2115 is 0x194843. The 101.2xxx branch
+        // is the legacy one (Gen9, Skylake to Comet Lake); Ice Lake, Iris Xe and Arc drivers are 101.4xxx and later.
+        const uint32_t dv = dprops.driverVersion, major = dv >> 14, minor = dv & 0x3fff;
+        g_intel_windows_legacy = g_oob_not_zero && (major < 101 || (major == 101 && minor < 3000));
         const char* e = std::getenv("NX_ROBUST2");
         const bool want = e ? e[0] == '1' : g_oob_not_zero;
         if (want && has_extension(dext, "VK_EXT_robustness2")) {
@@ -735,6 +742,7 @@ uint32_t vk_queue_family() { return g_family; }
 bool vk_depth_clip_control() { return g_depth_clip_control; }
 bool vk_fragment_interlock() { return g_fragment_interlock; }
 bool vk_dynamic_rendering() { return g_dynamic_rendering; }
+bool vk_intel_windows_legacy() { return g_intel_windows_legacy; }
 const VkPhysicalDeviceFeatures& vk_features() { return g_features; }
 bool vk_robust_buffer_access2() { return g_robust2; }
 uint64_t vk_robust_buffer_align() { return g_robust2 ? g_robust2_align : 16; }

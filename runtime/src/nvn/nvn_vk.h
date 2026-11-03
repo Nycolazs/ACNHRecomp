@@ -344,6 +344,7 @@ bool pass_open();  // a render pass is being recorded
 // on a device without dynamic rendering, such as the Adreno 6xx's own Vulkan 1.1 driver).
 bool render_pass_objects();
 bool vk_dynamic_rendering();
+bool vk_intel_windows_legacy();  // Intel's Windows driver, 101.2xxx branch or older (nvn_vk.cpp)
 void hang_note(const ShaderInfo* vs, const ShaderInfo* fs);  // a draw's program, for the GPU hang report
 VkFormat unused_slot_format();  // a pipeline's format for a colour slot with no image
 VkRenderPass compatible_render_pass(uint32_t count, const VkFormat* colors, VkFormat depth);
