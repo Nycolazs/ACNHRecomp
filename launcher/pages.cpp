@@ -29,6 +29,7 @@
 #include <mutex>
 
 #include "imgui.h"
+#include "imgui_internal.h"
 
 #include "ui/i18n.h"
 #include "ui/theme.h"
@@ -55,6 +56,97 @@ ImVec4 col4(ImU32 c) { return ImGui::ColorConvertU32ToFloat4(c); }
 enum class Page { Welcome, Files, Install, Build, Done, Home, Settings, Online };
 
 Page g_page = Page::Welcome;
+
+struct NavItem {
+    ImGuiID id;
+    ImGuiWindow* window;
+    ImGuiID focus_scope;
+    ImRect rect;
+    int section;  // 0: header, 1: page, 2: footer
+    bool primary;
+    bool home_action;
+};
+std::vector<NavItem> g_nav_items;
+int g_nav_section = -1;
+
+void nav_item(bool primary = false, bool home_action = false) {
+    if (g_nav_section < 0) return;
+    ImGuiContext& ctx = *ImGui::GetCurrentContext();
+    const ImGuiLastItemData& item = ctx.LastItemData;
+    if (ctx.CurrentWindow->SkipItems || !item.ID || (item.ItemFlags & ImGuiItemFlags_Disabled)) return;
+    g_nav_items.push_back({item.ID, ctx.CurrentWindow, ctx.CurrentFocusScopeId, item.NavRect, g_nav_section, primary, home_action});
+}
+
+void nav_focus(const NavItem& item) {
+    ImGui::ClearActiveID();
+    ImGui::FocusWindow(item.window);
+    // Discard ImGui's pending default focus, which otherwise selects the header on the next frame.
+    ImGuiContext& ctx = *ImGui::GetCurrentContext();
+    ctx.NavInitRequest = false;
+    ctx.NavInitRequestFromMove = false;
+    ctx.NavInitResult.Clear();
+    ImGui::NavMoveRequestCancel();
+    ImRect relative(ImVec2(item.rect.Min.x - item.window->Pos.x, item.rect.Min.y - item.window->Pos.y),
+                    ImVec2(item.rect.Max.x - item.window->Pos.x, item.rect.Max.y - item.window->Pos.y));
+    ImGui::SetNavID(item.id, ImGuiNavLayer_Main, item.focus_scope, relative);
+    ctx.NavIdIsAlive = true;
+    ImGui::SetNavCursorVisible(true);
+    ImGui::ScrollToRectEx(item.window, item.rect, ImGuiScrollFlags_KeepVisibleEdgeY);
+}
+
+void nav_move(int dx, int dy) {
+    ImGuiContext& ctx = *ImGui::GetCurrentContext();
+    auto current = std::find_if(g_nav_items.begin(), g_nav_items.end(), [&](const NavItem& item) { return item.id == ctx.NavId; });
+    if (current == g_nav_items.end()) return;
+    // Settings form a vertical list even when some rows are outside the scrolling viewport.
+    if ((g_page == Page::Settings || g_page == Page::Online) && dy) {
+        const int index = int(current - g_nav_items.begin());
+        const int target_section = current->section == 1 ? 1 : (dy > 0 ? 1 : (current->section == 2 ? 1 : -1));
+        for (int i = index + dy; i >= 0 && i < int(g_nav_items.size()); i += dy) {
+            if (g_nav_items[i].section == target_section) {
+                nav_focus(g_nav_items[i]);
+                return;
+            }
+        }
+        if (current->section == 1) {
+            const int edge_section = dy < 0 ? 0 : 2;
+            auto edge = std::find_if(g_nav_items.begin(), g_nav_items.end(),
+                                     [edge_section](const NavItem& item) { return item.section == edge_section; });
+            if (edge != g_nav_items.end()) nav_focus(*edge);
+        }
+        return;
+    }
+    // On the home screen Play leads to the first action; every action leads back to Play.
+    if (g_page == Page::Home && dy && (current->primary || current->home_action)) {
+        if (current->primary && dy > 0) {
+            auto first = std::find_if(g_nav_items.begin(), g_nav_items.end(), [](const NavItem& item) { return item.home_action; });
+            if (first != g_nav_items.end()) nav_focus(*first);
+            return;
+        }
+        if (current->home_action && dy < 0) {
+            auto play = std::find_if(g_nav_items.begin(), g_nav_items.end(), [](const NavItem& item) { return item.primary; });
+            if (play != g_nav_items.end()) nav_focus(*play);
+            return;
+        }
+    }
+    const ImVec2 from = current->rect.GetCenter();
+    const NavItem* best = nullptr;
+    float best_score = FLT_MAX;
+    for (const NavItem& item : g_nav_items) {
+        if (item.id == current->id) continue;
+        const ImVec2 to = item.rect.GetCenter();
+        const float forward = dx ? (to.x - from.x) * dx : (to.y - from.y) * dy;
+        if (forward <= 1.0f) continue;
+        const float overlap = std::min(current->rect.Max.y, item.rect.Max.y) - std::max(current->rect.Min.y, item.rect.Min.y);
+        const bool same_row = overlap >= 0.5f * std::min(current->rect.GetHeight(), item.rect.GetHeight());
+        if ((dx && !same_row) || (dy && same_row)) continue;
+        const float side = dx ? std::max(0.0f, std::max(current->rect.Min.y - item.rect.Max.y, item.rect.Min.y - current->rect.Max.y))
+                              : std::max(0.0f, std::max(current->rect.Min.x - item.rect.Max.x, item.rect.Min.x - current->rect.Max.x));
+        const float score = forward + side * 2.0f;
+        if (score < best_score) best = &item, best_score = score;
+    }
+    if (best) nav_focus(*best);
+}
 SDL_Window* g_window = nullptr;
 float g_scale = 1;
 ImFont* g_title = nullptr;
@@ -114,6 +206,15 @@ bool g_quit_after_stop = false;
 Ini g_game_ini;
 
 float S(float v) { return v * g_scale; }
+
+// These controls draw their own focus outline but still use ImGui's gamepad navigation.
+bool nav_card(const char* id, ImVec2 size, bool primary = false, bool home_action = false) {
+    ImGui::PushStyleColor(ImGuiCol_NavCursor, ImVec4(0, 0, 0, 0));
+    bool pressed = ImGui::InvisibleButton(id, size, ImGuiButtonFlags_EnableNav);
+    ImGui::PopStyleColor();
+    nav_item(primary, home_action);
+    return pressed;
+}
 
 void toast(const std::string& t) {
     g_toast = t;
@@ -319,6 +420,7 @@ bool button(const char* label, ImU32 color = kMint, bool enabled = true, float w
     ImGui::PushStyleColor(ImGuiCol_Button, col4(color));
     ImGui::PushStyleColor(ImGuiCol_Text, col4(color == kMint || color == kWhite ? kInk : kWhite));
     bool r = ImGui::Button(label, ImVec2(w > 0 ? w : button_width(label), 0));
+    nav_item();
     ImGui::PopStyleColor(2);
     ImGui::EndDisabled();
     return r;
@@ -407,6 +509,7 @@ void language_combo(float width) {
         for (const nx::ui::UiLanguage& l : nx::ui::ui_languages()) choose(l.code, l.native_name);
         ImGui::EndCombo();
     }
+    nav_item();
     ImGui::PopStyleColor(4);
 }
 
@@ -495,7 +598,7 @@ float card_height(const Card& c, float w) {
 bool card(const char* id, const Card& c, ImVec2 size) {
     ImVec2 p = ImGui::GetCursorScreenPos();
     ImGui::BeginDisabled(!c.enabled);
-    bool clicked = ImGui::InvisibleButton(id, size);
+    bool clicked = nav_card(id, size);
     ImGui::EndDisabled();
     bool hov = c.enabled && (ImGui::IsItemHovered() || ImGui::IsItemFocused());
     ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -605,6 +708,7 @@ bool row_button(const char* label, float size) {
     ImGui::PushStyleColor(ImGuiCol_Button, col4(rgb(240, 228, 196)));
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, 0));
     bool r = ImGui::Button(label, ImVec2(size, size));
+    nav_item();
     ImGui::PopStyleVar();
     ImGui::PopStyleColor();
     return r;
@@ -659,7 +763,7 @@ void found_list(int slot, float w) {
     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, S(14));
     ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0), ImVec2(FLT_MAX, S(290)));
     // A few results fit: no scrollbar (an auto-sized child can show one for its first frames).
-    ImGui::BeginChild("##found", ImVec2(w, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding,
+    ImGui::BeginChild("##found", ImVec2(w, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_NavFlattened,
                       s.found.size() > 3 ? 0 : ImGuiWindowFlags_NoScrollbar);
     ImGui::PopStyleVar(2);
     const float iw = ImGui::GetContentRegionAvail().x, x0 = ImGui::GetCursorPosX();
@@ -721,7 +825,7 @@ struct FileCard {
 void file_card(const FileCard& c, Status st, const std::function<void(float)>& rows) {
     ImGui::PushStyleColor(ImGuiCol_ChildBg, col4(kPaper));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(g_portrait ? 14 : 20), S(16)));
-    ImGui::BeginChild(c.id, ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding,
+    ImGui::BeginChild(c.id, ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_NavFlattened,
                       ImGuiWindowFlags_NoScrollbar);
     ImGui::PopStyleVar();
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(S(10), S(6)));
@@ -1099,14 +1203,18 @@ void page_build() {
         ImGui::SameLine(0, S(16));
         ImGui::BeginGroup();
         ImGui::SetNextItemOpen(true, ImGuiCond_Once);
-        if (ImGui::CollapsingHeader(tr("launcher.build.details")))
+        bool details_open = ImGui::CollapsingHeader(tr("launcher.build.details"));
+        nav_item();
+        if (details_open)
             log_view(std::max(S(160), ImGui::GetContentRegionAvail().y - S(4)));
         ImGui::EndGroup();
     } else {
         stage_list(s, failed);
         ImGui::Dummy(ImVec2(0, S(2)));
         if (failed) ImGui::SetNextItemOpen(true, ImGuiCond_Always);
-        if (ImGui::CollapsingHeader(tr("launcher.build.details")))
+        bool details_open = ImGui::CollapsingHeader(tr("launcher.build.details"));
+        nav_item();
+        if (details_open)
             log_view(std::max(S(200), ImGui::GetContentRegionAvail().y - S(4)));
     }
 }
@@ -1188,7 +1296,7 @@ void opening_overlay() {
 
 bool big_button(const char* label, int icon, ImU32 color, float w, float h) {
     ImVec2 p = ImGui::GetCursorScreenPos();
-    bool clicked = ImGui::InvisibleButton(label, ImVec2(w, h));
+    bool clicked = nav_card(label, ImVec2(w, h), true);
     bool hov = ImGui::IsItemHovered() || ImGui::IsItemFocused();
     if (ImGui::IsItemActive()) {  // pressed: the button gives a little under the finger (3 %, from its centre)
         float dx = w * 0.015f, dy = h * 0.015f;
@@ -1266,7 +1374,7 @@ void footer_done() {
 bool action_card(const char* id, int icon, ImU32 color, const char* title, const char* desc, ImVec2 size, bool enabled) {
     ImVec2 p = ImGui::GetCursorScreenPos();
     ImGui::BeginDisabled(!enabled);
-    bool clicked = ImGui::InvisibleButton(id, size);
+    bool clicked = nav_card(id, size, false, true);
     ImGui::EndDisabled();
     bool hov = enabled && (ImGui::IsItemHovered() || ImGui::IsItemFocused());
     ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -1319,7 +1427,9 @@ bool pill(const char* id, int icon, ImU32 color, const char* text, bool clickabl
     float w = pad + 2 * r + S(10) + ts.x + S(16);
     ImGui::SetCursorScreenPos(ImVec2(x, ImGui::GetCursorScreenPos().y));
     ImVec2 p = ImGui::GetCursorScreenPos();
-    bool clicked = ImGui::InvisibleButton(id, ImVec2(w, h));
+    ImGui::BeginDisabled(!clickable);
+    bool clicked = nav_card(id, ImVec2(w, h));
+    ImGui::EndDisabled();
     bool hov = clickable && (ImGui::IsItemHovered() || ImGui::IsItemFocused());
     if (clickable && ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
     if (clickable && ImGui::IsItemActive()) p = ImVec2(p.x + w * 0.015f, p.y + h * 0.03f), w *= 0.97f, h *= 0.94f;
@@ -1418,7 +1528,8 @@ void addons_popup() {
         }
         ImGui::Dummy(ImVec2(0, S(4)));
         align_right({tr("launcher.addons.close")});
-        if (button(tr("launcher.addons.close"), kWhite) || ImGui::IsKeyPressed(ImGuiKey_Escape))
+        if (button(tr("launcher.addons.close"), kWhite) || ImGui::IsKeyPressed(ImGuiKey_Escape) ||
+            ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false))
             g_addons_open = false, ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
@@ -1538,13 +1649,16 @@ void setting_row(const char* label, const char* desc, const char* key, const cha
         if (v == cur) shown = t;
     ImGui::SetNextItemWidth(ctrl_w);
     if (ImGui::BeginCombo("##c", shown.c_str())) {
-        for (auto& [v, t] : choices)
+        for (auto& [v, t] : choices) {
             if (ImGui::Selectable(t.c_str(), v == cur) && v != cur) {
                 g_game_ini.set(key, v);
                 if (!g_game_ini.save()) toast(tr("launcher.settings.save_failed"));
             }
+            if (v == cur) ImGui::SetItemDefaultFocus();
+        }
         ImGui::EndCombo();
     }
+    nav_item();
     ImGui::PopID();
     ImGui::Dummy(ImVec2(0, S(2)));
     ImGui::Separator();
@@ -1554,7 +1668,7 @@ void setting_row(const char* label, const char* desc, const char* key, const cha
 void page_settings() {
     heading(tr("app.title"), tr("launcher.settings.text"));
     ImGui::PushStyleColor(ImGuiCol_ChildBg, col4(kPaper));
-    ImGui::BeginChild("##rows", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::BeginChild("##rows", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_NavFlattened);
     setting_row("game.language", "game.language.desc", "game.language", "auto",
                 {{"auto", tr("game.language.system")}, {"en-US", "English (US)"}, {"en-GB", "English (UK)"},
                  {"es", "Español (España)"}, {"es-419", "Español (Latinoamérica)"}, {"fr", "Français"},
@@ -1582,7 +1696,9 @@ void page_settings() {
     {
         Ini& li = settings();
         bool check = li.get("launcher.update_check", "1") != "0";
-        if (ImGui::Checkbox(tr("launcher.update.check"), &check)) {
+        bool changed = ImGui::Checkbox(tr("launcher.update.check"), &check);
+        nav_item();
+        if (changed) {
             li.set("launcher.update_check", check ? "1" : "0");
             li.save();
             if (check) update_check_start();
@@ -1631,9 +1747,11 @@ void online_check_start() {
 void page_online() {
     heading(tr("tab.online"), tr("online.enabled.desc"));
     ImGui::PushStyleColor(ImGuiCol_ChildBg, col4(kPaper));
-    ImGui::BeginChild("##rows", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::BeginChild("##rows", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_NavFlattened);
     bool on = g_game_ini.get("online.enabled", "0") == "1";
-    if (ImGui::Checkbox(tr("online.enabled"), &on)) {
+    bool enabled_changed = ImGui::Checkbox(tr("online.enabled"), &on);
+    nav_item();
+    if (enabled_changed) {
         g_game_ini.set("online.enabled", on ? "1" : "0");
         if (!g_game_ini.save()) toast(tr("launcher.settings.save_failed"));
         if (on) online_check_start();
@@ -1698,10 +1816,14 @@ void page_online() {
             nx::address_check_start(join);
         }
         ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+        ImGuiContext& ctx = *ImGui::GetCurrentContext();
+        if (ctx.NavActivateId == ImGui::GetID("##join") && ctx.NavInputSource == ImGuiInputSource_Gamepad)
+            ctx.NavActivateFlags |= ImGuiActivateFlags_PreferInput;
         if (ImGui::InputText("##join", join, sizeof join)) {
             g_game_ini.set("online.join", join);
             if (!g_game_ini.save()) toast(tr("launcher.settings.save_failed"));
         }
+        nav_item();
         if (ImGui::IsItemDeactivatedAfterEdit()) nx::address_check_start(join);
         if (join[0] && button(tr("online.join.test"), kWhite)) nx::address_check_start(join);
     }
@@ -1724,7 +1846,9 @@ void popups() {
         ImGui::Dummy(ImVec2(0, S(6)));
         if (button(tr("launcher.stop"), kRed)) setup_cancel(), g_confirm_stop = false, ImGui::CloseCurrentPopup();
         ImGui::SameLine();
-        if (button(tr("common.no"), kWhite)) g_confirm_stop = false, ImGui::CloseCurrentPopup();
+        bool cancel = button(tr("common.no"), kWhite);
+        ImGui::SetItemDefaultFocus();
+        if (cancel || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) g_confirm_stop = false, ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
     ImGui::SetNextWindowSize(ImVec2(std::min(ImGui::GetIO().DisplaySize.x * 0.9f, S(560)), 0));
@@ -1738,7 +1862,9 @@ void popups() {
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (button(tr("common.no"), kWhite)) g_confirm_quit = false, ImGui::CloseCurrentPopup();
+        bool cancel = button(tr("common.no"), kWhite);
+        ImGui::SetItemDefaultFocus();
+        if (cancel || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) g_confirm_quit = false, ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
     if (g_quit_after_stop && !setup_state().running) g_exit = true;
@@ -1821,6 +1947,30 @@ bool pages_busy() { return setup_state().running || ImGui::GetTime() < g_toast_u
 
 bool pages_draw(float scale, ImFont* title) {
     g_scale = scale, g_title = title, g_body = ImGui::GetFont();
+    ImGuiIO& io = ImGui::GetIO();
+    ImGuiContext& ctx = *ImGui::GetCurrentContext();
+    static bool controller_navigation = false, controller_connected = false, popup_last_frame = false;
+    static bool nav_page_valid = false;
+    static Page nav_page = Page::Welcome;
+    static ImGuiID saved_focus[int(Page::Online) + 1] = {};
+    const bool connected = (io.BackendFlags & ImGuiBackendFlags_HasGamepad) != 0;
+    if (connected && !controller_connected) controller_navigation = true;
+    if (!connected) controller_navigation = false;
+    controller_connected = connected;
+    if (ImGui::IsMouseClicked(0) || ImGui::IsMouseClicked(1)) controller_navigation = false;
+    for (int key = ImGuiKey_GamepadStart; key <= ImGuiKey_GamepadRStickDown; ++key)
+        if (ImGui::IsKeyPressed(ImGuiKey(key), false)) controller_navigation = true;
+    const bool popup_before = popup_last_frame || ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) ||
+                              g_confirm_stop || g_confirm_quit || g_addons_open;
+    auto direction = [](ImGuiKey dpad, ImGuiKey stick) {
+        return ImGui::IsKeyPressed(dpad, true) || ImGui::IsKeyPressed(stick, true);
+    };
+    const int dx = int(direction(ImGuiKey_GamepadDpadRight, ImGuiKey_GamepadLStickRight)) -
+                   int(direction(ImGuiKey_GamepadDpadLeft, ImGuiKey_GamepadLStickLeft));
+    const int dy = int(direction(ImGuiKey_GamepadDpadDown, ImGuiKey_GamepadLStickDown)) -
+                   int(direction(ImGuiKey_GamepadDpadUp, ImGuiKey_GamepadLStickUp));
+    const bool move = controller_navigation && !popup_before && ctx.ActiveId == 0 && (dx || dy);
+    if (move) ImGui::NavMoveRequestCancel();
     static bool first = true;
     if (first) {
         first = false;
@@ -1843,7 +1993,18 @@ bool pages_draw(float scale, ImFont* title) {
         }
     }
     apply_picks();
-    ImGuiIO& io = ImGui::GetIO();
+    if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) && !popup_before && ctx.ActiveId == 0) {
+        switch (g_page) {
+            case Page::Settings: case Page::Online: case Page::Done: g_page = Page::Home; break;
+            case Page::Files: g_page = Page::Welcome; break;
+            case Page::Install: g_page = Page::Files; break;
+            case Page::Build:
+                if (setup_state().running) g_confirm_stop = true;
+                else g_page = g_rebuild ? Page::Home : Page::Install;
+                break;
+            default: break;
+        }
+    }
     ImVec2 ds = io.DisplaySize;
     g_portrait = ds.x < ds.y * 1.2f;
     draw_background(ds);
@@ -1860,11 +2021,15 @@ bool pages_draw(float scale, ImFont* title) {
                      ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollbar |
                      ImGuiWindowFlags_NoBringToFrontOnFocus);
     ImGui::PopStyleVar();
+    const Page drawn_page = g_page;
+    g_nav_items.clear();
+    g_nav_section = 0;
     ribbon();
     float footer = ImGui::GetFrameHeight() + S(20);
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0, 0, 0, 0));
-    ImGui::BeginChild("##page", ImVec2(0, -footer), ImGuiChildFlags_None);
+    ImGui::BeginChild("##page", ImVec2(0, -footer), ImGuiChildFlags_NavFlattened);
     ImGui::PopStyleColor();
+    g_nav_section = 1;
     // The short pages sit in the middle of the card: their height from the last frame. The offset is whole pixels:
     // ImGui rounds item positions down, so a fractional start changed the measured height and the page bobbed by a
     // pixel every frame.
@@ -1889,6 +2054,7 @@ bool pages_draw(float scale, ImFont* title) {
     static const char* scroll = std::getenv("NX_LAUNCHER_SCROLL");  // tests: 0..1 of the page's scroll range
     if (scroll) ImGui::SetScrollY(ImGui::GetScrollMaxY() * float(std::atof(scroll)));
     ImGui::EndChild();
+    g_nav_section = 2;
     ImGui::Dummy(ImVec2(0, S(2)));
     if (ImGui::GetTime() < g_toast_until) {  // a short confirmation, in place of the footer's own text
         ImGui::AlignTextToFramePadding();
@@ -1905,7 +2071,31 @@ bool pages_draw(float scale, ImFont* title) {
         case Page::Settings: footer_settings(); break;
         case Page::Online: footer_online(); break;
     }
+    g_nav_section = -1;
+    if (controller_navigation && !popup_before && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) &&
+        !g_confirm_stop && !g_confirm_quit && !g_addons_open &&
+        drawn_page == g_page && !g_nav_items.empty()) {
+        const bool page_changed = !nav_page_valid || nav_page != g_page;
+        auto focused = std::find_if(g_nav_items.begin(), g_nav_items.end(), [&](const NavItem& item) { return item.id == ctx.NavId; });
+        if (page_changed || focused == g_nav_items.end()) {
+            const ImGuiID saved = saved_focus[int(g_page)];
+            auto first = std::find_if(g_nav_items.begin(), g_nav_items.end(), [saved](const NavItem& item) { return saved && item.id == saved; });
+            if (first == g_nav_items.end())
+                first = std::find_if(g_nav_items.begin(), g_nav_items.end(), [](const NavItem& item) { return item.primary; });
+            if (first == g_nav_items.end())
+                first = std::find_if(g_nav_items.begin(), g_nav_items.end(), [](const NavItem& item) { return item.section == 1; });
+            if (first == g_nav_items.end()) first = g_nav_items.begin();
+            nav_focus(*first);
+        } else if (move) {
+            // Process one axis per press, in the direction the player chose.
+            nav_move(dx, dx ? 0 : dy);
+        }
+        nav_page = g_page;
+        nav_page_valid = true;
+        saved_focus[int(g_page)] = ctx.NavId;
+    }
     popups();
+    popup_last_frame = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) || g_confirm_stop || g_confirm_quit || g_addons_open;
     opening_overlay();
     ImGui::End();
     return !g_exit;
