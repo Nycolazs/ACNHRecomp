@@ -13,6 +13,7 @@
 namespace nx::nvn {
 
 bool vk_depth_clip_control();
+bool vk_fragment_interlock();
 
 // Cache keys that are compared byte for byte (a PipelineKey with its padding, a SamplerInfo and a flag): the bytes,
 // a 64-bit hash of them for an unordered_map, and the exact comparison that confirms a hit. Four lanes: one multiply
