@@ -11,10 +11,15 @@ int main() {
     auto check = [&](bool ok, const char* what) {
         if (!ok) std::printf("FAIL: %s\n", what), failed++;
     };
-    check(memory_limit_gb(nullptr) == 8.0, "unset limit is 8 GB");
-    check(memory_limit_gb("") == 8.0, "empty limit is 8 GB");
-    check(memory_limit_gb("0") == 8.0, "zero limit is 8 GB");
-    check(memory_limit_gb("-2") == 8.0, "negative limit is 8 GB");
+    // Unset: half the RAM, at least 8 GB.
+    MEMORYSTATUSEX ms{};
+    ms.dwLength = sizeof ms;
+    GlobalMemoryStatusEx(&ms);
+    const double half = double(ms.ullTotalPhys) / double(1ull << 30) / 2.0, dflt = half > 8.0 ? half : 8.0;
+    check(memory_limit_gb(nullptr) == dflt, "unset limit is half the RAM, at least 8 GB");
+    check(memory_limit_gb("") == dflt, "empty limit is the default");
+    check(memory_limit_gb("0") == dflt, "zero limit is the default");
+    check(memory_limit_gb("-2") == dflt, "negative limit is the default");
     check(memory_limit_gb("5.5") == 5.5, "5.5 GB");
     check(memory_limit_gb("12") == 12.0, "12 GB");
 

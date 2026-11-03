@@ -23,10 +23,12 @@ struct GpuImage;
 
 float uw_factor();                       // k of the current generation (1: 16:9)
 float uw_resolution();                   // s of the current generation (the internal resolution over the game's)
+float uw_resolution_at_boot();           // s of the first generation (taken now if no target was made yet)
 inline bool uw_on() { return uw_factor() != 1.0f; }
 bool uw_scaling();                       // any resizing at all in the current generation
 bool uw_widen_texture(Texture& t);       // nvnTextureInitialize: a screen target is marked (t.uw) and sized
 void uw_resize(Texture& t);              // a screen target sized for the current generation (image_of)
+float uw_render_ratio();                 // the current generation's 3D scene share (temporal AA upscaling)
 uint32_t uw_generation();
 void uw_update(uint64_t present);        // game thread, each present: settings and window -> the wanted scale
 // A new scale starts with the first frame the game records after it is wanted (its cameras are set at that present):

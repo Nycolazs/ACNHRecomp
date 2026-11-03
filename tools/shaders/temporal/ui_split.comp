@@ -1,0 +1,19 @@
+#version 450
+// AMD frame generation's UI layer (nvn_temporal.cpp): the finished frame where it differs from the same frame without
+// its UI (the HUD-less picture, drawn the same way), opaque; clear elsewhere. Frame generation interpolates the HUD-less
+// picture only and lays this over every frame it presents, the generated ones too: the UI is never interpolated.
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(binding = 0) uniform sampler2D final_tex;    // the frame as presented (UI and the settings screen on it)
+layout(binding = 1) uniform sampler2D hudless_tex;  // the same frame before any UI
+layout(binding = 2, rgba16f) uniform writeonly image2D ui;
+
+void main() {
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(p, imageSize(ui)))) return;
+    vec3 f = texelFetch(final_tex, p, 0).rgb, h = texelFetch(hudless_tex, p, 0).rgb;
+    vec3 d = abs(f - h);
+    // Half a step of 8 bits, or a fraction of the value in HDR (scRGB holds values past 1).
+    float limit = max(1.0 / 512.0, 0.002 * max(max(f.r, max(f.g, f.b)), max(h.r, max(h.g, h.b))));
+    float a = max(d.r, max(d.g, d.b)) > limit ? 1.0 : 0.0;
+    imageStore(ui, p, vec4(f * a, a));
+}

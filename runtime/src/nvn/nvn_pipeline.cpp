@@ -220,16 +220,16 @@ void device_compat_module(const ShaderInfo* s, std::vector<uint32_t>& code) {
 // `alpha_func`, `alpha_ref`: NVN's alpha test in the fragment module (nvn_spirv_alpha.cpp; func 0 none).
 VkShaderModule module_of(const ShaderInfo* s, const uint8_t* kinds = nullptr, uint32_t unwritten = 0, bool scaled = false,
                          uint32_t alpha_func = 0, float alpha_ref = 0, uint32_t inst_binding = 0, uint32_t inst_step = 0,
-                         bool clamp = false) {
+                         bool clamp = false, bool motion = false) {
     std::lock_guard module_lock(g_module_lock);
-    static std::map<std::tuple<const ShaderInfo*, std::string, uint32_t, bool, uint32_t, float, uint64_t, bool>, VkShaderModule> cache;
+    static std::map<std::tuple<const ShaderInfo*, std::string, uint32_t, bool, uint32_t, float, uint64_t, bool, bool>, VkShaderModule> cache;
     // The integer-vertex-input patch (skinned models' bone indices; without it Metal refuses every character's
     // pipeline, DEBUG.md #25/#26). NX_INT_ATTRIBS=0 turns it off.
     static const char* int_env = std::getenv("NX_INT_ATTRIBS");
     static const bool off = int_env && int_env[0] == '0';
     std::string k = kinds && !off ? std::string(reinterpret_cast<const char*>(kinds), 16) : std::string(16, '\0');
     auto& m = cache[{s, k, unwritten, scaled, alpha_func, alpha_func ? alpha_ref : 0.0f, uint64_t(inst_binding) << 32 | inst_step,
-                     clamp}];
+                     clamp, motion}];
     if (!m) {
         const uint64_t module_t0 = plat::monotonic_ns();
         bool is_patched = false;
@@ -262,6 +262,21 @@ VkShaderModule module_of(const ShaderInfo* s, const uint8_t* kinds = nullptr, ui
             else log("nvn/vk: shader %s: instance blocks %x not patched", s->hash.c_str(), inst_binding);
         }
         if (s->stage == ShaderStage::Vertex) clip_z_module(s, code);  // NX_CLIP_Z_PATCH (nvn_spirv_clip.cpp)
+        if (motion) {  // temporal AA's object motion vectors (nvn_spirv_motion.cpp)
+            std::vector<uint32_t> patched;
+            const bool vertex = s->stage == ShaderStage::Vertex;
+            if (vertex ? patch_motion_vertex(code, patched) : patch_motion_fragment(code, patched)) code.swap(patched);
+            else log("nvn/vk: shader %s: object motion not patched", s->hash.c_str());
+        }
+        // Temporal AA: textures finer (NX_TAA_MIP_BIAS, default -1; 0 off). With the motion patch, the bias each draw
+        // pushes (nvn_temporal.cpp: live, the 3D scene's only); else a constant in every fragment shader alike (the UI's
+        // are sampled at their own size, where a negative bias changes nothing), when temporal AA was on at boot.
+        static const float mip_bias = std::getenv("NX_TAA_MIP_BIAS") ? float(std::atof(std::getenv("NX_TAA_MIP_BIAS"))) : -1.0f;
+        if (mip_bias != 0.0f && s->stage == ShaderStage::Fragment) {
+            std::vector<uint32_t> patched;
+            if (motion && patch_mip_bias_push(code, patched)) code.swap(patched);
+            else if (temporal_mip_bias_on() && patch_mip_bias(code, patched, mip_bias)) code.swap(patched);
+        }
         nan_coords_module(code);  // nvn_spirv_nan.cpp
         device_compat_module(s, code);  // Mali: NonWritable vertex buffers, no fragment interlock
         if (const char* opt = std::getenv("NX_SPIRV_OPT"); opt || std::getenv("NX_SPIRV_TOOL")) {  // diagnostic: each module through `spirv-opt <flags>` (NX_SPIRV_OPT) or `<tool> in out` (NX_SPIRV_TOOL) first
@@ -482,6 +497,10 @@ const ProgramLayout& program_layout(const std::vector<const ShaderInfo*>& stages
     VkPipelineLayoutCreateInfo ci{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     ci.setLayoutCount = 4;
     ci.pSetLayouts = pl.sets;
+    // Temporal AA's object motion vectors: the skinned pipelines' push constants (MotionPush; nvn_spirv_motion.cpp).
+    // Skinning is a draw's attribute formats, so every layout has the range (unused by the other pipelines).
+    const VkPushConstantRange motion{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, kMotionPushSize};
+    if (temporal_object_motion_on()) ci.pushConstantRangeCount = 1, ci.pPushConstantRanges = &motion;
     p_vkCreatePipelineLayout(vk_device(), &ci, nullptr, &pl.layout);
     return cache[stages] = pl;
 }
@@ -539,6 +558,7 @@ struct PipeBuild {
         float alpha_ref = 0;
         uint32_t inst_binding = 0, inst_step = 0;
         bool clamp = false;  // colour outputs clamped to 0..1 (an HDR-upgraded UNORM target, nvn_spirv_clamp.cpp)
+        bool motion = false;  // temporal AA's object motion vectors (nvn_spirv_motion.cpp)
     } modules[2];
 };
 
@@ -602,7 +622,7 @@ VkPipeline compile(PipeBuild& b) {
         if (!b.stages[k].module && b.modules[k].s) {
             const auto& mr = b.modules[k];
             b.stages[k].module = module_of(mr.s, mr.has_kinds ? mr.kinds : nullptr, mr.unwritten, mr.scaled, mr.alpha_func, mr.alpha_ref,
-                                         mr.inst_binding, mr.inst_step, mr.clamp);
+                                         mr.inst_binding, mr.inst_step, mr.clamp, mr.motion);
         }
     const bool stats = pipe_stats_wanted(b.fs_hash);
     if (stats)
@@ -1081,6 +1101,9 @@ std::unique_ptr<PipeBuild> prepare_graphics_pipeline(const PipelineKey& key, con
         log("nvn/vk: vs %s inputs (location:format/stream+offset)%s", key.vs->hash.c_str(), line.c_str());
     }
     uint32_t unwritten = unwritten_inputs(key.vs, key.fs);
+    // Temporal AA's object motion: every pipeline (any draw that moves may use it; what a draw does not use is
+    // branched over in the shaders, nvn_spirv_motion.cpp).
+    const bool motion = key.vs && temporal_object_motion_on();
     for (const ShaderInfo* s : {key.vs, key.fs}) {
         if (!s) continue;
         auto& st = stages[nstages++];
@@ -1092,6 +1115,7 @@ std::unique_ptr<PipeBuild> prepare_graphics_pipeline(const PipelineKey& key, con
         if (s == key.fs) mr.alpha_func = key.alpha_func, mr.alpha_ref = key.alpha_ref, mr.clamp = key.clamp_colors != 0;
         if (s == key.vs) mr.inst_binding = key.inst_binding, mr.inst_step = key.inst_step;
         if (s == key.vs && int_kinds) std::memcpy(mr.kinds, int_kinds, sizeof mr.kinds), mr.has_kinds = true;
+        mr.motion = motion;  // both stages: the history goes from one to the other
         st.pName = "main";
         if (scaled) {  // screen scale: constants 0 and 1 of the patched vertex module (nvn_ultrawide.cpp)
             static const VkSpecializationMapEntry entries[2] = {{0, 0, sizeof(float)}, {1, sizeof(float), sizeof(float)}};
@@ -1416,7 +1440,7 @@ GpuImage* ensure_contents(VkCommandBuffer cb, uint64_t texture) {
 VkImageView sampled_view(VkCommandBuffer cb, uint64_t texture, const ImageShape& shape, const ViewInfo* view,
                          VkImageLayout* layout) {
     *layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    GpuImage* img = ensure_contents(cb, texture);
+    GpuImage* img = temporal_sample_redirect(ensure_contents(cb, texture));  // upscaling: the tonemap's input
     static uint64_t no_image = 0, incompatible = 0;
     if (!img) {
         if (++no_image % 100000 == 1) log("nvn/vk: dummy sampled: %llu with no image, %llu with an incompatible view",

@@ -1,0 +1,56 @@
+#version 450
+// Camera motion vectors for temporal anti-aliasing and upscaling (nvn_temporal.cpp). Each pixel's depth is taken back
+// to the game's clip space without this frame's jitter and carried into the last frame's by `reproj` (the last frame's
+// view-projection times the inverse of this one's). Out: the last frame's UV minus this frame's (what FSR and DLSS
+// take; the jitter left out), RG16F. Where a skinned model's own motion was written this frame (nvn_spirv_motion.cpp:
+// its nearest fragment's motion and depth, per pixel) and that depth is the scene's (nothing drawn over it), that
+// motion instead: what moves by itself (a head bob, a walk) has its own.
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(binding = 0) uniform sampler2D depth_tex;  // a depth-aspect view of the scene's depth (0..1, near 0)
+layout(binding = 1, rg16f) uniform writeonly image2D mv_out;
+layout(binding = 2, std430) buffer Objects { uvec2 objects[]; };  // x: packHalf2x16(motion), y: depth bits
+// Temporal AA's reactive mask (FSR) / current-colour bias (DLSS): from the buffer's second half, where translucent
+// effects left how much they cover each pixel (0..255, inverted: x is ~cover, all ones where nothing was drawn).
+layout(binding = 3, r8) uniform writeonly image2D reactive_out;
+layout(push_constant) uniform Push {
+    mat4 reproj;
+    vec4 jitter_size;  // this frame's jitter in NDC (x, y); the picture's size in pixels (z, w)
+    uint objects;      // 1: the object motion buffer is bound and this frame's; 2: NX_TAA_MV_VIEW (what each pixel took)
+    float limit;       // an object's own motion past the camera's at most this, in pixels (more: matched to another)
+    uint reactive;     // the buffer's entry where the reactive half starts (0: none)
+    float reactive_scale;
+} pc;
+
+void main() {
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    vec2 size = pc.jitter_size.zw;
+    if (p.x >= int(size.x) || p.y >= int(size.y)) return;
+    vec2 uv = (vec2(p) + 0.5) / size;
+    float d = texelFetch(depth_tex, p, 0).r;
+    // NVN's NDC: +Y is the top row (the negative-height viewport, nvn_draw.cpp), z in -1..1 (its GL depth mode).
+    vec2 ndc = vec2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0) - pc.jitter_size.xy;
+    vec4 prev = pc.reproj * vec4(ndc, d * 2.0 - 1.0, 1.0);
+    vec2 mv = vec2(0.0);
+    if (prev.w > 1e-6) {
+        vec2 prev_ndc = prev.xy / prev.w;
+        mv = vec2(prev_ndc.x - ndc.x, ndc.y - prev_ndc.y) * 0.5;
+    }
+    vec2 view = vec2(d < 1.0 ? 0.15 : 0.0);  // camera's motion: grey
+    if ((pc.objects & 1u) != 0u) {
+        uvec2 o = objects[uint(p.y) * uint(size.x) + uint(p.x)];
+        // The depth buffer's value is that fragment's own, give or take its 24-bit rounding.
+        // And its motion is its own: an object's history is found by draw order among copies of its mesh where its
+        // uniform blocks do not tell (nvn_temporal.cpp), and the copy it was given may be another (the twin beside
+        // it, the next flower): that one is off by the distance between them, far more than a walk's or a bob's.
+        vec2 own = unpackHalf2x16(o.x);
+        bool near = length((own - mv) * size) <= pc.limit;
+        if (o.y != 0xffffffffu && abs(uintBitsToFloat(o.y) - d) <= 2e-5 && near) mv = own, view = vec2(1.0, 0.0);
+        else if (o.y != 0xffffffffu) view = near ? vec2(0.0, 1.0) : vec2(1.0, 1.0);  // not taken: green; too far: yellow
+        // NX_TAA_MV_VIEW's probe (nvn_temporal.cpp reads a grid of these): the scene's depth beside the object's.
+        if ((pc.objects & 2u) != 0u) objects[uint(p.y) * uint(size.x) + uint(p.x)].x = floatBitsToUint(d);
+    }
+    imageStore(mv_out, p, vec4((pc.objects & 2u) != 0u ? view : mv, 0.0, 0.0));
+    float cover = 0.0;
+    if (pc.reactive != 0u) cover = float(~objects[pc.reactive + uint(p.y) * uint(size.x) + uint(p.x)].x & 0xffu) / 255.0;
+    imageStore(reactive_out, p, vec4(cover * pc.reactive_scale));
+}

@@ -7,6 +7,7 @@
 #include "nvn_per_thread.h"
 
 #include <unordered_set>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -107,6 +108,71 @@ uint64_t framegen_real_delay_ns();           // how long after the in-between fr
 // `src` (window texture `texture`) noted as the last frame; with `generate` and the last frame still there, the frame
 // halfway between that one and `src` is made and returned (else null). *prev (optional): the last frame's image.
 GpuImage* framegen_record(VkCommandBuffer cb, uint64_t texture, GpuImage& src, bool generate, GpuImage** prev);
+// nvn_temporal.cpp: temporal anti-aliasing (video.temporal = fsr): AMD FSR 3.1 / 4 on the scene before the tonemap,
+// with the world's camera jittered (the projection hook, nvn_ultrawide.cpp) and the camera's motion vectors.
+struct TemporalFrame;  // the camera a frame was drawn with, from its submit to its replay
+bool temporal_on();
+bool temporal_present(uint64_t present);  // game thread, each present: the next jitter (true: projections made again)
+void temporal_projection(uint64_t object, float base_x, float base_y, float (&out)[2]);  // its offset fields
+std::shared_ptr<const TemporalFrame> temporal_submit();        // game thread, nvnQueueSubmit
+void temporal_allow(std::shared_ptr<const TemporalFrame> frame);  // replay thread, before gpu_submit
+void temporal_note_depth(GpuImage* depth);                     // a draw writing depth
+bool temporal_is_tonemap(const std::string& fs_hash);
+// No pass open; `scene` is the tonemap's input, `screen` its target (the picture's size when upscaling).
+void temporal_before_tonemap(VkCommandBuffer cb, GpuImage& scene, const GpuImage* screen);
+// Upscaling (video.upscale: quality, balanced, performance, ultra): the 3D scene's targets at this fraction of the
+// picture's size (nvn_ultrawide.cpp), temporal AA's output at the picture's; 1 at native size or without temporal AA.
+float temporal_render_ratio();  // the applied one (nvn_ultrawide.cpp's current scale)
+float temporal_wanted_ratio();  // the settings' (nvn_ultrawide.cpp wants it with the screen's scale)
+bool temporal_capable();         // the device and the pipelines are made so temporal AA can be turned on
+bool temporal_object_motion_active();  // object motion kept by the draws now (temporal AA on)
+bool temporal_mip_bias_on();     // the modules' texture LOD bias (decided at boot)
+void temporal_update();          // each present: the settings screen's anti-aliasing choice
+// The tonemap reads temporal AA's picture-sized output in place of the smaller scene (sampled_view, nvn_sets.cpp's
+// render scales): `img` itself, or what stands in for it this draw; temporal_tonemap_done after the tonemap's draw.
+GpuImage* temporal_sample_redirect(GpuImage* img);
+void temporal_tonemap_done();
+VkInstance vk_instance();
+// Temporal AA's object motion vectors (nvn_temporal.cpp, nvn_spirv_motion.cpp): on with temporal AA; a skinned draw
+// (an integer vertex attribute the vertex shader reads: bone indices) gets the patched pipeline and its push constants
+// (kMotionPushSize bytes; every layout has the range then) set before it is issued.
+constexpr uint32_t kMotionPushSize = 72;
+struct ShaderInfo;
+bool temporal_object_motion_on();
+// `ident`: where the draw's vertex uniform blocks are in guest memory (its transform's among them): what tells one
+// copy of a rigid mesh from another, frame to frame.
+void temporal_motion_draw(VkCommandBuffer cb, VkPipelineLayout layout, const ShaderInfo* vs, bool skinned, bool indexed,
+                          const int32_t* counts, uint64_t index_address, const uint8_t* indices, VkIndexType index_type,
+                          uint64_t ident);
+void temporal_motion_none(VkCommandBuffer cb, VkPipelineLayout layout);  // a draw without: its push constants zero
+void temporal_reactive_draw(VkCommandBuffer cb, VkPipelineLayout layout, bool added);  // a translucent effect's draw
+// nvn_temporal.cpp: AMD FSR 3 frame generation (video.frame_gen = fsr, with temporal AA). Its swapchain stands in for
+// ours: nvn_vk.cpp makes, acquires from and presents through these when it is on (ffx_fg_on).
+bool ffx_fg_wanted();
+void ffx_fg_queue_requests(VkPhysicalDevice pd, VkSurfaceKHR surface, const std::vector<VkQueueFamilyProperties>& families,
+                           uint32_t game_family, std::vector<uint32_t>& counts);  // its queues, added per family
+void ffx_fg_device_ready(VkDevice d, VkQueue game);
+void temporal_device_ready();  // nvn_temporal.cpp: temporal AA's start, at boot
+bool ffx_fg_on();
+bool ffx_fg_should();  // the swapchain should be AMD's now (wanted and possible): made again when it is not
+uint64_t ffx_fg_presents();  // pictures AMD's swapchain has presented (generated ones too), 0 when it is off
+bool ffx_fg_create_swapchain(const VkSwapchainCreateInfoKHR& ci, VkSwapchainKHR* out, VkResult* result);  // false: as usual
+void ffx_fg_destroy_swapchain(VkSwapchainKHR sc);
+VkResult ffx_fg_get_images(VkSwapchainKHR sc, uint32_t* n, VkImage* images);
+VkResult ffx_fg_acquire(VkSwapchainKHR sc, uint64_t timeout, VkSemaphore sem, VkFence fence, uint32_t* index);
+VkResult ffx_fg_present(VkQueue q, const VkPresentInfoKHR* pi);
+// Its HUD-less picture (only the game is generated, never the UI): the scene right after the game's tonemap, before
+// any UI (temporal_after_tonemap, nvn_draw.cpp), drawn by the present pass into one of these images as the frame is
+// (ffx_fg_hudless_images: made with the swapchain, nvn_vk.cpp) and handed to AMD's frame generation.
+constexpr uint32_t kHudlessImages = 3;
+void temporal_after_tonemap(VkCommandBuffer cb, GpuImage& screen);
+void ffx_fg_hudless_images(const VkImage* images, VkFormat format, VkExtent2D extent);  // null: none
+GpuImage* ffx_fg_hudless_source(uint32_t& slot);  // this frame's capture and the image it goes to, or null
+// present_image, a game frame after the settings screen: its UI split off into AMD's UI layer and the HUD-less picture
+// put in the backbuffer (both PRESENT_SRC_KHR before and after).
+void ffx_fg_ui_split(VkCommandBuffer cb, VkImage backbuffer, uint32_t slot);
+// The instance and device extensions the temporal AA backend needs (DLSS's NGX), before they are made (nvn_vk.cpp).
+void temporal_vk_extensions(std::vector<std::string>& instance, std::vector<std::string>& device);
 // nvn_bc.cpp: BC textures decoded on the CPU where the GPU has no textureCompressionBC (NX_FORCE_BC_DECODE=1 anyway).
 bool bc_host_decode(uint32_t nvn_format);         // a BC format this device cannot sample (BC6H excepted)
 VkFormat bc_decoded_format(uint32_t nvn_format);  // what it is stored as instead

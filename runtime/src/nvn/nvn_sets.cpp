@@ -557,7 +557,7 @@ void build_sets(VkCommandBuffer cb, const std::vector<const ShaderInfo*>& shader
         const DrawTextures& tex = (*g_textures);
         for (size_t k = 0; k < tex.bindings.size() && k < tex.resolved.size() && scales.n < 16; k++) {
             auto [s, b] = tex.bindings[k];
-            GpuImage* img = tex.resolved[k].texture ? image_of(tex.resolved[k].texture) : nullptr;
+            GpuImage* img = tex.resolved[k].texture ? temporal_sample_redirect(image_of(tex.resolved[k].texture)) : nullptr;
             if (!img || !img->uw) continue;
             float v = std::min(img->sx, img->sy);
             if (v == 1.0f) continue;

@@ -111,6 +111,11 @@ void pipeline_warm_step();
 bool depth_remap();  // NX_CLIP_Z_PATCH: clip z -w..w mapped in the vertex shaders, not by VK_EXT_depth_clip_control
 bool patch_clip_z(const std::vector<uint32_t>& in, std::vector<uint32_t>& out);  // nvn_spirv_clip.cpp
 void clip_z_module(const ShaderInfo* s, std::vector<uint32_t>& code);
+// nvn_spirv_motion.cpp: temporal AA's object motion vectors (skinned models' history and per-pixel motion).
+bool patch_motion_vertex(const std::vector<uint32_t>& in, std::vector<uint32_t>& out);
+bool patch_motion_fragment(const std::vector<uint32_t>& in, std::vector<uint32_t>& out);
+bool patch_mip_bias(const std::vector<uint32_t>& in, std::vector<uint32_t>& out, float bias);  // temporal AA's LOD bias
+bool patch_mip_bias_push(const std::vector<uint32_t>& in, std::vector<uint32_t>& out);  // the same, the bias pushed per draw
 bool patch_fragcoord_scale(const std::vector<uint32_t>& in, std::vector<uint32_t>& out);  // nvn_spirv_fragcoord.cpp
 bool patch_clamp_outputs(const std::vector<uint32_t>& in, std::vector<uint32_t>& out);   // nvn_spirv_clamp.cpp
 bool fs_reads_fragcoord(const ShaderInfo* fs);
