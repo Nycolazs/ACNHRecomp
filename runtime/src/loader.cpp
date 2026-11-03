@@ -636,6 +636,9 @@ void load_modules(const ModuleInfo* const* mods, size_t count, const std::string
         }
     }
     log("linked: %zu to HLE, %zu across modules, %zu unresolved", hle, linked, missing);
+#if defined(_WIN32) && defined(NX_GAME_DYNAMIC)
+    plat::game_set_variant(nx_variant_on, nx_variant_lo, nx_variant_hi);  // the DLL's own switch (game_abi.cpp)
+#endif
     register_hle_call_overrides();
 }
 

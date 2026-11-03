@@ -2,6 +2,9 @@
 // game folder's game/<platform>/lib<game>_game): the player holds no game code (CMakeLists.txt, docs/ANDROID.md). It
 // loads this library from the game folder and finds the modules' tables (nx_module_<name>) and these functions in it.
 #include <nx/cpu.h>
+#ifdef _WIN32
+#include <nx/runtime.h>
+#endif
 
 #ifdef _WIN32
 #include <cstddef>
@@ -52,4 +55,24 @@ void msr(CPU& c, uint32_t sysreg, uint64_t value) { g_api.msr(c, sysreg, value);
 void trace_sp(CPU& c, uint64_t pc) { g_api.trace_sp(c, pc); }
 }  // namespace nx
 void nx_hook(nx::CPU& c, uint64_t pc) { g_api.hook(c, pc); }
+
+// The native 60 FPS variant (recomp --variant): its words and switch live here, the DLL's own; the player reads the
+// words (nx_game_variant) before it maps the modules and sets the switch after it decides (nx_game_set_variant).
+namespace {
+const char* g_variant_module = nullptr;
+const uint32_t* g_variant_words = nullptr;
+size_t g_variant_count = 0;
+}  // namespace
+extern "C" NX_GAME_EXPORT bool nx_variant_on = false;
+extern "C" NX_GAME_EXPORT uint64_t nx_variant_lo = 0, nx_variant_hi = ~0ull;
+nx::VariantRegistrar::VariantRegistrar(const char* module, const uint32_t* words, size_t count) {
+    g_variant_module = module, g_variant_words = words, g_variant_count = count;
+}
+extern "C" NX_GAME_EXPORT size_t nx_game_variant(const char** module, const uint32_t** words) {
+    *module = g_variant_module, *words = g_variant_words;
+    return g_variant_module ? g_variant_count : 0;
+}
+extern "C" NX_GAME_EXPORT void nx_game_set_variant(bool on, uint64_t lo, uint64_t hi) {
+    nx_variant_on = on, nx_variant_lo = lo, nx_variant_hi = hi;
+}
 #endif

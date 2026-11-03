@@ -832,10 +832,8 @@ void page_video() {
               w);
     });
     row("video.framerate", "video.framerate.desc", [&](float w) {
-        // No choice yet: 60 when the SpeedFix is in the game folder (config.cpp applies the same default).
-        std::error_code ec;
-        const bool sf = fs::is_directory(fs::u8path(plat::data_root() + "/mods/speedfix60/romfs"), ec);
-        combo("video.frame_rate", sf ? "60" : "30",
+        // No choice yet: 30, as config.cpp applies.
+        combo("video.frame_rate", "30",
               {{"30", console("video.framerate.30")}, {"60", tr("video.framerate.60")}}, w);
     });
     // Built-in (nvn_framegen.cpp) always; lsfg-vk when it is installed (or already chosen).
@@ -903,6 +901,8 @@ const Binding kBindings[] = {
     {"action.screenshot", "screenshot", "F12"},  // not a game button: ui.cpp (an HDR PNG with HDR on, nvn_screenshot.cpp)
 };
 int g_capturing = -1;
+bool g_capturing_alt = false;  // the capture is for the action's second key (input.key2.<key>)
+constexpr int kAltKeys = 22;   // the game buttons: the screenshot key has one only
 
 const char* arrow_for(const char* key) {
     if (std::strstr(key, "_up")) return " ↑";
@@ -942,34 +942,49 @@ void page_controls() {
     // A capture in progress: the next key pressed (ui.cpp) becomes the binding; Escape cancels.
     if (g_capturing >= 0) {
         int sc = ui_take_captured_key();
+        const std::string prefix = g_capturing_alt ? "input.key2." : "input.key.";
         if (sc == SDL_SCANCODE_ESCAPE) {
             g_capturing = -1;
+        } else if (sc == SDL_SCANCODE_BACKSPACE && g_capturing_alt) {  // no second key
+            store(prefix + kBindings[g_capturing].key, "");
+            g_capturing = -1;
         } else if (sc > 0) {
-            store(std::string("input.key.") + kBindings[g_capturing].key, SDL_GetScancodeName(SDL_Scancode(sc)));
+            store(prefix + kBindings[g_capturing].key, SDL_GetScancodeName(SDL_Scancode(sc)));
             g_capturing = -1;
         }
     }
-    if (ImGui::BeginTable("keys", 2, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
+    ImGui::TextDisabled("%s", tr("controls.alt_key.desc"));
+    if (ImGui::BeginTable("keys", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
         for (int k = 0; k < int(sizeof(kBindings) / sizeof(kBindings[0])); k++) {
             const Binding& b = kBindings[k];
             ImGui::PushID(k);
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
             ImGui::Text("%s%s", tr(b.action), arrow_for(b.key));
-            ImGui::TableNextColumn();
-            std::string cur = config_get(std::string("input.key.") + b.key, b.def);
-            std::string text = g_capturing == k ? std::string(tr("controls.press_key")) : cur;
-            if (ImGui::Button(text.c_str(), ImVec2(-1, 0))) {
-                g_capturing = k;
-                ui_begin_key_capture();
+            for (int alt = 0; alt < 2; alt++) {
+                ImGui::TableNextColumn();
+                if (alt && k >= kAltKeys) continue;
+                ImGui::PushID(alt);
+                std::string cur = alt ? config_get(std::string("input.key2.") + b.key, "")
+                                      : config_get(std::string("input.key.") + b.key, b.def);
+                if (cur.empty()) cur = "-";
+                const bool capturing = g_capturing == k && g_capturing_alt == bool(alt);
+                std::string text = capturing ? std::string(tr(alt ? "controls.press_key_alt" : "controls.press_key")) : cur;
+                if (ImGui::Button(text.c_str(), ImVec2(-1, 0))) {
+                    g_capturing = k;
+                    g_capturing_alt = alt;
+                    ui_begin_key_capture();
+                }
+                page_nav_item();
+                ImGui::PopID();
             }
-            page_nav_item();
             ImGui::PopID();
         }
         ImGui::EndTable();
     }
     if (button(tr("controls.reset_keys"))) {
         for (const Binding& b : kBindings) config_set(std::string("input.key.") + b.key, b.def);
+        for (int k = 0; k < kAltKeys; k++) config_set(std::string("input.key2.") + kBindings[k].key, "");
         config_save();
         toast(tr("common.saved"));
     }

@@ -251,8 +251,8 @@ void config_apply() {
     for (const Mapping& m : kMappings) {
         ConfigEntry* e = find(m.key);
         std::string value = std::string(m.key) == "game.language" ? game_lang : e ? e->value : std::string();
-        // No frame rate chosen: 60 when the SpeedFix is there (the loader keeps 30 if the game's code lacks it).
-        if (value.empty() && std::string(m.key) == "video.frame_rate" && speedfix_installed()) value = "60";
+        // No frame rate chosen: 30. 60 (the SpeedFix) is asked for in the settings: game folders get its code from
+        // ACNHRecomp-Importer 1.0.6 on, and the loader keeps 30 when a folder's code lacks it.
         if (value.empty()) continue;
         std::string v = m.map(value);
         if (std::string(m.env) == "NX_HANDHELD") {

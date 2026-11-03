@@ -89,9 +89,24 @@ std::string load_game(const std::string& folder) {
     auto bind = reinterpret_cast<void (*)(const void*, size_t)>(sym("nx_game_bind"));
     if (!bind) return "not a game library (no nx_game_bind): " + lib;
     bind(&api, sizeof api);
+    // The 60 FPS variant's words (game_abi.cpp keeps them: the DLL cannot register them in the player itself)
+    if (auto variant = reinterpret_cast<size_t (*)(const char**, const uint32_t**)>(sym("nx_game_variant"))) {
+        const char* module = nullptr;
+        const uint32_t* words = nullptr;
+        if (size_t n = variant(&module, &words); n && module && words) nx::VariantRegistrar(module, words, n);
+    }
 #endif
     g_game_longjmp = jmp;
     return "";
+}
+
+void game_set_variant(bool on, uint64_t lo, uint64_t hi) {
+#ifdef _WIN32
+    if (auto set = reinterpret_cast<void (*)(bool, uint64_t, uint64_t)>(g_game_lib ? sym("nx_game_set_variant") : nullptr))
+        set(on, lo, hi);
+#else
+    (void)on, (void)lo, (void)hi;  // the library uses the player's own nx_variant_on
+#endif
 }
 
 const nx::ModuleInfo* game_module(const char* name) {

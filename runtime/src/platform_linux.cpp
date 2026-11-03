@@ -281,6 +281,7 @@ struct InputOptions {
     int deadzone = 7849;       // of 32767
     bool rumble = true;
     SDL_Scancode keys[22] = {};  // the order of kKeyNames
+    SDL_Scancode keys2[22] = {};  // the second key of each (input.key2.<name>; none by default)
 };
 const char* const kKeyNames[22][2] = {
     {"move_up", "W"},     {"move_down", "S"},  {"move_left", "A"},  {"move_right", "D"},  {"cam_up", "I"},
@@ -301,6 +302,7 @@ const InputOptions& input_options() {
             std::string name = nx::config_get(std::string("input.key.") + kKeyNames[k][0], kKeyNames[k][1]);
             SDL_Scancode sc = SDL_GetScancodeFromName(name.c_str());
             o.keys[k] = sc != SDL_SCANCODE_UNKNOWN ? sc : SDL_GetScancodeFromName(kKeyNames[k][1]);
+            o.keys2[k] = SDL_GetScancodeFromName(nx::config_get(std::string("input.key2.") + kKeyNames[k][0], "").c_str());
         }
     }
     return o;
@@ -443,11 +445,11 @@ static void sample_input() {
     } else if (focused && !nx::ui::ui_text_field()) {
         const bool* k = SDL_GetKeyboardState(nullptr);
         const uint64_t now = SDL_GetTicks();
-        auto key = [&](int i) {
-            int sc = opt.keys[i];
-            return k[sc] && (!nx::plat::key_types(sc) || nx::plat::keyboard_state_known() ||
-                             now - down_since[sc] >= kTypeWaitMs);
+        auto held = [&](int sc) {
+            return sc > 0 && k[sc] && (!nx::plat::key_types(sc) || nx::plat::keyboard_state_known() ||
+                                       now - down_since[sc] >= kTypeWaitMs);
         };
+        auto key = [&](int i) { return held(opt.keys[i]) || held(opt.keys2[i]); };
         if (key(2)) p.lx = -kStickMax;
         if (key(3)) p.lx = kStickMax;
         if (key(0)) p.ly = kStickMax;

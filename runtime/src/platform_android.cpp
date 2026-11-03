@@ -556,7 +556,7 @@ void* load_vulkan();
 // The GPU driver (video.gpu_driver, NX_GPU_DRIVER: auto, turnip or system). On a Snapdragon phone, "auto" loads
 // Turnip (Mesa's Vulkan driver for Adreno, in the APK: tools/build_turnip.sh) through libadrenotools instead of the
 // phone's own driver: the Adreno 6xx ones phones ship are Vulkan 1.1, without dynamic rendering, and drew nothing of
-// the game. "system" keeps the phone's driver.
+// the game. Adreno 8xx keep their own driver (load_vulkan). "system" keeps the phone's driver.
 void* vulkan_get_instance_proc_addr() {
     // Loaded once: a second libadrenotools load is a second copy of the driver, whose functions do not know the first
     // one's objects (the settings screen crashed binding its font texture's memory).
@@ -564,11 +564,49 @@ void* vulkan_get_instance_proc_addr() {
     return once;
 }
 
+// The Adreno model the phone's own driver reports (830 for "Adreno (TM) 830"), 0 when it is not an Adreno.
+int system_adreno_model(void* lib) {
+    auto gipa = lib ? reinterpret_cast<PFN_vkGetInstanceProcAddr>(dlsym(lib, "vkGetInstanceProcAddr")) : nullptr;
+    if (!gipa) return 0;
+    auto create = reinterpret_cast<PFN_vkCreateInstance>(gipa(nullptr, "vkCreateInstance"));
+    VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO};
+    app.apiVersion = VK_API_VERSION_1_1;
+    VkInstanceCreateInfo ci{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
+    ci.pApplicationInfo = &app;
+    VkInstance inst = VK_NULL_HANDLE;
+    if (!create || create(&ci, nullptr, &inst) != VK_SUCCESS) return 0;
+    auto enumerate = reinterpret_cast<PFN_vkEnumeratePhysicalDevices>(gipa(inst, "vkEnumeratePhysicalDevices"));
+    auto props = reinterpret_cast<PFN_vkGetPhysicalDeviceProperties>(gipa(inst, "vkGetPhysicalDeviceProperties"));
+    auto destroy = reinterpret_cast<PFN_vkDestroyInstance>(gipa(inst, "vkDestroyInstance"));
+    int model = 0;
+    uint32_t n = 1;
+    VkPhysicalDevice pd = VK_NULL_HANDLE;
+    if (enumerate && props && enumerate(inst, &n, &pd) >= 0 && n && pd) {
+        VkPhysicalDeviceProperties p{};
+        props(pd, &p);
+        if (const char* a = std::strstr(p.deviceName, "Adreno")) std::sscanf(a, "Adreno (TM) %d", &model);
+    }
+    if (destroy) destroy(inst, nullptr);
+    return model;
+}
+
 void* load_vulkan() {
     std::string pick = std::getenv("NX_GPU_DRIVER") ? std::getenv("NX_GPU_DRIVER") : nx::config_get("video.gpu_driver", "auto");
     char vk[PROP_VALUE_MAX] = {};
     __system_property_get("ro.hardware.vulkan", vk);
     const std::string turnip = g_native_lib_dir + "/libvulkan_freedreno.so";
+    if (pick == "auto" && std::strcmp(vk, "adreno") == 0) {
+        // Adreno 8xx (Snapdragon 8 Elite and newer): the Turnip in the APK draws only coloured noise there (Adreno 830
+        // and 840 players), while the phone's own driver is Vulkan 1.4 and draws the game, with framebuffer
+        // compression and zero copy off (what those players found working; config.txt can still turn them on).
+        int model = system_adreno_model(dlopen("libvulkan.so", RTLD_NOW | RTLD_LOCAL));
+        if (model >= 800) {
+            nx::log("vulkan: Adreno %d: the phone's driver (Turnip is for Adreno 6xx/7xx)", model);
+            pick = "system";
+            setenv("NX_UBWC_FLAGS", "0", 0);
+            setenv("NX_ZERO_COPY", "0", 0);
+        }
+    }
     if (pick != "system" && std::strcmp(vk, "adreno") == 0 && !g_native_lib_dir.empty() && access(turnip.c_str(), R_OK) == 0) {
         // Binning on (Turnip's default): the main pass and the whole frame took much less GPU time with it on the S20
         // FE's Adreno 650 (the intro 27 -> ~18 ms a frame) and it ran without a fault through every test on 2026-10-26.

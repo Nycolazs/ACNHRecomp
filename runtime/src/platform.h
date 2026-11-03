@@ -34,6 +34,7 @@ const nx::ModuleInfo* game_module(const char* name);
 #ifndef __ANDROID__
 std::string load_game(const std::string& folder);  // "" when loaded, else why not
 bool load_game_or_explain();  // the data root's; false after showing why it is not playable
+void game_set_variant(bool on, uint64_t lo, uint64_t hi);  // Windows: the game DLL's 60 FPS switch (game_abi.cpp)
 #endif
 #endif
 
