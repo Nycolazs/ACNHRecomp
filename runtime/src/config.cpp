@@ -12,6 +12,7 @@
 
 #include <nx/runtime.h>
 
+#include "game_clock.h"
 #include "platform.h"
 
 namespace nx {
@@ -242,7 +243,7 @@ void config_apply() {
             log("config: game language from the system: %s", game_lang.c_str());
         }
     }
-    std::lock_guard lk(g_lock);
+    std::unique_lock lk(g_lock);
     for (const Mapping& m : kMappings) {
         ConfigEntry* e = find(m.key);
         std::string value = std::string(m.key) == "game.language" ? game_lang : e ? e->value : std::string();
@@ -268,7 +269,10 @@ void config_apply() {
     if (const char* sf = std::getenv("NX_SPEEDFIX"); sf && sf[0] == '1')  // its parameter files go with its code
         mods = mods.empty() ? "speedfix60" : mods + ",speedfix60";
     if (!mods.empty()) set_env_default("NX_MODS", mods);
-    log("config: %zu settings from %s", g_entries.size(), path().c_str());
+    const size_t count = g_entries.size();
+    lk.unlock();  // the clock reads the settings itself
+    game_clock_apply_config();
+    log("config: %zu settings from %s", count, path().c_str());
 }
 
 bool config_save() {
@@ -308,6 +312,11 @@ std::string config_get(const std::string& key, const std::string& fallback) {
 int config_get_int(const std::string& key, int fallback) {
     std::string v = config_get(key);
     return v.empty() ? fallback : std::atoi(v.c_str());
+}
+
+int64_t config_get_int64(const std::string& key, int64_t fallback) {
+    std::string v = config_get(key);
+    return v.empty() ? fallback : std::strtoll(v.c_str(), nullptr, 10);
 }
 
 float config_get_float(const std::string& key, float fallback) {
