@@ -465,7 +465,10 @@ void page_online() {
     }
     if (s.hosting && (s.check == LinkCheck::Open || s.check == LinkCheck::OpenVerified)) text = "online.status.hosting";
     row("online.status", tr(text), [&](float w) {
-        if (!s.hosting && !busy && ImGui::Button(tr("online.test"), ImVec2(w, 0))) link_check();
+        if (!s.hosting && !busy) {
+            if (ImGui::Button(tr("online.test"), ImVec2(w, 0))) link_check();
+            page_nav_item();
+        }
     });
     if (!s.address.empty()) {
         static bool shown = false;
@@ -473,11 +476,13 @@ void page_online() {
             ImGui::TextUnformatted(shown ? s.address.c_str() : "\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2");
             const float half = (w - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
             if (ImGui::Button(tr(shown ? "online.hide" : "online.show"), ImVec2(half, 0))) shown = !shown;
+            page_nav_item();
             ImGui::SameLine();
             if (ImGui::Button(tr("online.copy"), ImVec2(half, 0))) {
                 ImGui::SetClipboardText(s.address.c_str());
                 toast(tr("online.copied"));
             }
+            page_nav_item();
         });
     }
     const AddressResult a = address_check_result();
@@ -497,9 +502,16 @@ void page_online() {
             std::snprintf(join, sizeof join, "%s", config_get("online.join").c_str());
         }
         ImGui::SetNextItemWidth(w);
+        ImGuiContext& ctx = *ImGui::GetCurrentContext();
+        if (ctx.NavActivateId == ImGui::GetID("##online_join") && ctx.NavInputSource == ImGuiInputSource_Gamepad)
+            ctx.NavActivateFlags |= ImGuiActivateFlags_PreferInput;
         if (ImGui::InputText("##online_join", join, sizeof join)) store("online.join", join);
+        page_nav_item();
         if (ImGui::IsItemDeactivatedAfterEdit()) address_check_start(join);
-        if (join[0] && ImGui::Button(tr("online.join.test"), ImVec2(w, 0))) address_check_start(join);
+        if (join[0]) {
+            if (ImGui::Button(tr("online.join.test"), ImVec2(w, 0))) address_check_start(join);
+            page_nav_item();
+        }
     });
     if (s.players > 0) ImGui::TextUnformatted(trf("online.players", std::to_string(s.players)).c_str());
 }
