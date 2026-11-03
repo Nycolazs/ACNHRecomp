@@ -162,7 +162,7 @@ int32_t on_input(android_app*, AInputEvent* e) {
         float x = AMotionEvent_getX(e, index), y = AMotionEvent_getY(e, index);
         g_gamepad = false;
         size_t drawn = 0;
-        touch_buttons(drawn);
+        touch_buttons(drawn, g_w / g_h);
         if (drawn) {  // a drawn layout (touch_layout.cpp): its buttons first, the rest of the left half is the stick
             uint64_t b = touch_hit(x / g_w, y / g_h, g_w / g_h);
             bool left = !b && (touch_mirrored() ? x > g_w * 0.5f : x < g_w * 0.5f);
@@ -208,7 +208,7 @@ void read_pad(PadState& p) {
     p.ry = g_pad_buttons.ry;
     float radius = std::max(1.f, g_h * 0.12f);
     size_t drawn = 0;
-    touch_buttons(drawn);
+    touch_buttons(drawn, g_w / g_h);
     for (const auto& t : g_touches) {
         if (t.left) {
             float dx = (t.x - t.x0) / radius, dy = (t.y - t.y0) / radius;
@@ -249,9 +249,13 @@ void set_gamepad_connected(bool connected) {
 // in use or for games without a drawn layout.
 size_t touch_overlay(OverlayShape* out, size_t max) {
     size_t n = 0, k = 0;
-    const TouchButton* b = touch_buttons(n);
-    if (!n) return 0;
     std::lock_guard lk(g_in);
+    if (ANativeWindow* w = android_window()) {  // the layout fits the screen's shape (touch_layout.cpp)
+        g_w = float(ANativeWindow_getWidth(w));
+        g_h = float(ANativeWindow_getHeight(w));
+    }
+    const TouchButton* b = touch_buttons(n, g_w / g_h);
+    if (!n) return 0;
     if (g_gamepad || !touch_enabled()) return 0;
     const float shade = touch_opacity_scale();
     const Touch* stick = nullptr;
@@ -267,7 +271,9 @@ size_t touch_overlay(OverlayShape* out, size_t max) {
         out[k++] = {stick->x0 / g_w, stick->y0 / g_h, r, std::min(1.0f, 0.14f * shade)};
         out[k++] = {(stick->x0 / g_h + dx * s) * g_h / g_w, stick->y0 / g_h + dy * s, 0.055f, std::min(1.0f, 0.45f * shade)};
     } else if (k < max) {
-        out[k++] = {touch_mirrored() ? 0.85f : 0.15f, 0.72f, 0.12f, std::min(1.0f, 0.08f * shade)};  // where the stick goes
+        float sx, sy, sr;
+        touch_stick_rest(g_w / g_h, touch_mirrored(), sx, sy, sr);
+        out[k++] = {sx, sy, sr, std::min(1.0f, 0.08f * shade)};  // where the stick goes
     }
     return k;
 }

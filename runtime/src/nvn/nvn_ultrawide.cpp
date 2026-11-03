@@ -119,10 +119,6 @@ Scale wanted(uint64_t present) {
         s = rows / native;
     }
     s *= plat::dynamic_render_scale();  // thermal.cpp: fewer rows while the GPU cannot keep up (output unchanged)
-    // video.antialiasing / NX_AA supersampling: that many times the rows, scaled down again when presented.
-    std::string aa = setting("NX_AA", "video.antialiasing", "off");
-    if (aa == "ssaa15") s *= 1.5;
-    else if (aa == "ssaa2") s *= 2.0;
     s = std::clamp(s, 0.25, 2.0);  // 2: 2160 rows (4K)
     // Never more rows than the screen has (NX_UW_CAP=0: no cap). Taken here, in the scale every target and every
     // shader patch uses: capping the targets alone (as uw_resize did) left the shaders that read a target by pixel
@@ -131,6 +127,13 @@ Scale wanted(uint64_t present) {
     static const bool cap = !(std::getenv("NX_UW_CAP") && std::getenv("NX_UW_CAP")[0] == '0');
     if (const uint32_t rows = g_display_rows.load(std::memory_order_relaxed); cap && rows >= 240)
         s = std::min(s, double(rows) / (native * std::max(1.0, 1.0 / k)));
+    // video.antialiasing / NX_AA supersampling: that many times the rows, scaled down again when presented. After the
+    // screen's cap, which is what it goes past (before it, 1.5x of a 1440-row window was capped back to 1440 rows: no
+    // supersampling at all). 3: 1.5x of a 2160-row (4K) screen.
+    std::string aa = setting("NX_AA", "video.antialiasing", "off");
+    if (aa == "ssaa15") s *= 1.5;
+    else if (aa == "ssaa2") s *= 2.0;
+    s = std::min(s, 3.0);
     s = std::round(s * native) / native;
     return {float(s), float(k)};
 }

@@ -242,6 +242,7 @@ struct Texture : Object {
     bool uw = false;
     uint32_t base_w = 0, base_h = 0, uw_gen = 0;
     uint64_t sides_cleared = 0;  // a widened window texture: the present before its sides were last cleared (nvn_draw.cpp)
+    bool window = false;         // one of an NVNwindow's textures (nvnWindowInitialize): RGBA16F with HDR (nvn_image.cpp)
     uint32_t block_height_gobs = 0;  // packaged (BNTX) textures carry their own; 0: the layout's default
     uint8_t swizzle[4] = {2, 3, 4, 5};  // NVNtextureSwizzle per channel (0 zero, 1 one, 2 R, 3 G, 4 B, 5 A)
     // nvnTextureWriteTexels data not yet on the GPU (a glyph cache is filled this way): applied before the next use.

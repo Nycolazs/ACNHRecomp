@@ -11,10 +11,12 @@
 #include "touch_layout.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -47,6 +49,60 @@ const TouchButton kAcnh[] = {
     {0.075f, 0.700f, 0.040f, kUp},    {0.075f, 0.900f, 0.040f, kDown},  {0.030f, 0.800f, 0.040f, kLeft},
     {0.120f, 0.800f, 0.040f, kRight},
 };
+
+// kAcnh is drawn for 16:9. On another shape each button keeps its distance from its side of the screen (in screen
+// heights, as a thumb measures it) and the clusters keep their corners: on a 20:9 phone the d-pad and the face
+// buttons stay under the thumbs instead of spreading toward the middle. Settings > Controls > On-screen controls
+// size (input.touch_size, or NX_TOUCH_SIZE: 50..150 %) scales every button and its distance from its corner (#42).
+constexpr float kAcnhAspect = 16.0f / 9.0f;
+constexpr size_t kAcnhCount = sizeof kAcnh / sizeof kAcnh[0];
+
+int env_int(const char* name, int fallback);
+
+float touch_size_scale() {
+    static const int env = env_int("NX_TOUCH_SIZE", 0);
+    const int pct = env ? env : config_get_int("input.touch_size", 100);
+    return float(std::clamp(pct, 50, 150)) / 100.0f;
+}
+
+TouchButton fit_acnh(const TouchButton& b, float aspect, float s) {
+    TouchButton o = b;
+    float dx;  // in heights: from the left edge, the right edge or the middle
+    if (b.x < 0.3f) {
+        dx = b.x * kAcnhAspect * s;
+        o.x = dx / aspect;
+    } else if (b.x > 0.7f) {
+        dx = (1.0f - b.x) * kAcnhAspect * s;
+        o.x = 1.0f - dx / aspect;
+    } else {
+        dx = (b.x - 0.5f) * kAcnhAspect * s;
+        o.x = 0.5f + dx / aspect;
+    }
+    o.y = b.y < 0.5f ? b.y * s : 1.0f - (1.0f - b.y) * s;
+    o.r = b.r * s;
+    return o;
+}
+
+// Two buffers: a new shape or size is written into the one not handed out last (the input and present threads read
+// the layout without a lock; it changes only when the setting does).
+const TouchButton* acnh_buttons(float aspect) {
+    static TouchButton buf[2][kAcnhCount];
+    static std::atomic<int> cur{-1};
+    static std::mutex lock;
+    static float made_aspect = 0, made_scale = 0;
+    if (!(aspect > 0.5f && aspect < 5.0f)) aspect = kAcnhAspect;
+    const float s = touch_size_scale();
+    int c = cur.load(std::memory_order_acquire);
+    if (c >= 0 && std::fabs(made_aspect - aspect) < 1e-3f && made_scale == s) return buf[c];
+    std::lock_guard lk(lock);
+    c = cur.load(std::memory_order_relaxed);
+    if (c >= 0 && std::fabs(made_aspect - aspect) < 1e-3f && made_scale == s) return buf[c];
+    const int next = c == 0 ? 1 : 0;
+    for (size_t k = 0; k < kAcnhCount; k++) buf[next][k] = fit_acnh(kAcnh[k], aspect, s);
+    made_aspect = aspect, made_scale = s;
+    cur.store(next, std::memory_order_release);
+    return buf[next];
+}
 
 int env_int(const char* name, int fallback) {
     const char* e = std::getenv(name);
@@ -109,20 +165,35 @@ float touch_opacity_scale() {
     return float(std::clamp(pct, 10, 100)) / 85.0f;
 }
 
-const TouchButton* touch_buttons(size_t& count) {
+const TouchButton* touch_buttons(size_t& count, float aspect) {
     static const bool wonder = std::strcmp(game::kInfo.id, "wonder") == 0;
     static const bool acnh = std::strcmp(game::kInfo.id, "acnh") == 0;
     if (acnh) {
-        count = sizeof kAcnh / sizeof kAcnh[0];
-        return kAcnh;
+        count = kAcnhCount;
+        return acnh_buttons(aspect);
     }
     count = wonder ? wonder_buttons().size() : 0;
     return wonder ? wonder_buttons().data() : nullptr;
 }
 
+void touch_stick_rest(float aspect, bool mirrored, float& x, float& y, float& r) {
+    static const bool acnh = std::strcmp(game::kInfo.id, "acnh") == 0;
+    r = 0.12f;
+    if (!(aspect > 0.5f && aspect < 5.0f)) aspect = kAcnhAspect;
+    float dx = 0.15f * kAcnhAspect, cy = 0.72f;  // in heights from the side edge
+    if (acnh) {
+        // Beside the d-pad, not over it: its right arrow's outer edge, then the stick's radius and a gap.
+        const TouchButton right = fit_acnh(kAcnh[kAcnhCount - 1], aspect, touch_size_scale());
+        dx = right.x * aspect + right.r + r + 0.04f;
+        cy = 0.66f;
+    }
+    x = mirrored ? 1.0f - dx / aspect : dx / aspect;
+    y = cy;
+}
+
 uint64_t touch_hit(float x, float y, float aspect) {
     size_t n = 0;
-    const TouchButton* b = touch_buttons(n);
+    const TouchButton* b = touch_buttons(n, aspect);
     uint64_t best = 0;
     float best_d = 1e9f;
     for (size_t k = 0; k < n; k++) {
@@ -139,7 +210,9 @@ size_t touch_overlay(OverlayShape* out, size_t max) {
     size_t n = 0, k = 0;
     const TouchButton* b = touch_buttons(n);
     for (; k < n && k < max; k++) out[k] = {b[k].x, b[k].y, b[k].r, 0.22f};
-    if (k < max) out[k++] = {0.15f, 0.72f, 0.12f, 0.10f};  // where the stick usually goes
+    float sx, sy, sr;
+    touch_stick_rest(16.0f / 9.0f, false, sx, sy, sr);
+    if (k < max) out[k++] = {sx, sy, sr, 0.10f};  // where the stick usually goes
     return k;
 }
 #endif

@@ -15,9 +15,11 @@
 #ifndef NX_SHADERS_STANDALONE
 #include <memory>
 #include <mutex>
+#include <set>
 
 #include <nx/runtime.h>
 
+#include "nvn_vk.h"
 #include "platform.h"
 #include "vk_bridge.h"
 #endif
@@ -120,6 +122,7 @@ SupportBuffer support_buffer_defaults() {
     SupportBuffer sb;
     std::memset(&sb, 0, sizeof sb);
     for (auto& s : sb.render_scale) s[0] = 1.0f;  // Ryujinx's SupportBufferUpdater: (1, 0, 0, 0) for all 73
+    if (hdr_requested() != HdrOutput::Off) hdr_shader_settings(sb.hdr);
     return sb;
 }
 
@@ -260,8 +263,41 @@ SpirvPak& spirv_pak() {
     return p;
 }
 
-// A shader's .spv: from spirv.pak, else from the spirv folder.
+// A shader's .spv: with HDR on (video.hdr), an HDR replacement first (the game's tonemap, tools/shaders/hdr; same
+// bindings as the translated one): from the spirv_hdr folder, else built in; then spirv.pak, then the spirv folder.
+std::mutex g_hdr_lock;
+std::set<std::string> g_hdr_replaced;  // the hashes given an HDR replacement
+
+#include "nvn_hdr_tonemap_spirv.inc"
+
+// The HDR replacements built in (tools/shaders/hdr/tonemap_<hash>.hlsl): the game's tonemap, with and without its LUT.
+bool builtin_hdr_spirv(const std::string& hash, std::string& out) {
+    struct Builtin {
+        const char* hash;
+        const uint32_t* words;
+        size_t size;
+    };
+    static const Builtin kBuiltin[] = {
+        {"64ae17e74cc3b846", kHdrTonemap64ae17e74cc3b846, sizeof kHdrTonemap64ae17e74cc3b846},
+        {"3e1bdb382f32d6fe", kHdrTonemap3e1bdb382f32d6fe, sizeof kHdrTonemap3e1bdb382f32d6fe},
+    };
+    for (const Builtin& b : kBuiltin)
+        if (hash == b.hash) {
+            out.assign(reinterpret_cast<const char*>(b.words), b.size);
+            return true;
+        }
+    return false;
+}
+
 bool read_spirv(const std::string& hash, std::string& out) {
+    if (hdr_requested() != HdrOutput::Off) {
+        const bool file = read_whole(plat::data_root() + "/spirv_hdr/" + hash + ".spv", out);  // a newer one, while working on it
+        if (file || builtin_hdr_spirv(hash, out)) {
+            if (std::lock_guard lk(g_hdr_lock); g_hdr_replaced.insert(hash).second)
+                log("nvn: shader %s: HDR replacement%s", hash.c_str(), file ? " (spirv_hdr)" : "");
+            return true;
+        }
+    }
     SpirvPak& p = spirv_pak();
     if (p.f) {
         if (auto it = p.at.find(hash); it != p.at.end()) {
@@ -359,6 +395,7 @@ const ShaderInfo* shader_for(uint64_t code_host, uint64_t control) {
     static const bool depth_pass_colour = std::getenv("NX_DEPTH_PASS_COLOUR") && std::getenv("NX_DEPTH_PASS_COLOUR")[0] == '1';
     info->depth_pass = info->stage == ShaderStage::Fragment && !depth_pass_colour && writes_depth_pass_yellow(info->spirv);
     info->masks_known = true;
+    if (std::lock_guard lk(g_hdr_lock); g_hdr_replaced.count(hash)) info->hdr_replacement = true;
     // Only pipeline builds read the words again (shader_spirv): they are dropped here and read back from the .spv,
     // which keeps ~90 MB of SPIR-V for ~2,300 shaders out of RAM.
     info->spirv = {};

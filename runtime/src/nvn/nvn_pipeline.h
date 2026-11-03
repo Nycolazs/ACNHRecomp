@@ -90,6 +90,9 @@ struct PipelineKey {
     // (nvn_spirv_instance.cpp), for up to two blocks: byte j of inst_binding is the j-th block's b + 1 (0: none), and
     // 16 bits j of inst_step its step.
     uint32_t inst_binding = 0, inst_step = 0;
+    // HDR (nvn_spirv_clamp.cpp): bit k, colour target k is an upgraded UNORM target, the fragment module clamps its
+    // colour outputs to 0..1 (none for the tonemap replacements).
+    uint32_t clamp_colors = 0;
 };
 VkPipeline graphics_pipeline(const PipelineKey& key, const ProgramLayout& layout);
 // Under NX_ASYNC_PIPELINES, whether the next graphics_pipeline may skip its draw while the pipeline compiles: only a
@@ -109,6 +112,7 @@ bool depth_remap();  // NX_CLIP_Z_PATCH: clip z -w..w mapped in the vertex shade
 bool patch_clip_z(const std::vector<uint32_t>& in, std::vector<uint32_t>& out);  // nvn_spirv_clip.cpp
 void clip_z_module(const ShaderInfo* s, std::vector<uint32_t>& code);
 bool patch_fragcoord_scale(const std::vector<uint32_t>& in, std::vector<uint32_t>& out);  // nvn_spirv_fragcoord.cpp
+bool patch_clamp_outputs(const std::vector<uint32_t>& in, std::vector<uint32_t>& out);   // nvn_spirv_clamp.cpp
 bool fs_reads_fragcoord(const ShaderInfo* fs);
 bool patch_instance_block(const std::vector<uint32_t>& in, uint32_t binding, uint32_t step_vec4, std::vector<uint32_t>& out);
 bool patch_instance_blocks(const std::vector<uint32_t>& in, const uint32_t* bindings, const uint32_t* steps, uint32_t nb,

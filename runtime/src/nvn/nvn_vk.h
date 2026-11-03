@@ -53,6 +53,9 @@ struct GpuImage {
     // without swizzle. MoltenVK returned alpha 0 for that view swizzle on a 2D-array view, so all text was invisible.
     bool alpha_from_r = false;
     uint32_t nvn_format = 0;  // the texture's NVN format
+    // An RGB10A2 target made RGBA16F for HDR (nvn_image.cpp): draws into it other than the tonemap get their colours
+    // clamped to 0..1, as the UNORM target did (nvn_spirv_clamp.cpp).
+    bool hdr_clamp = false;
     bool uw = false;          // a scaled screen-sized render target (nvn_ultrawide.cpp)
     float sx = 1, sy = 1;     // its size over the game's (width / base_w, height / base_h)
     // The last two frames (g_frame) it was rendered in: a target drawn in consecutive frames is redrawn every frame
@@ -81,6 +84,13 @@ extern uint64_t g_replay_presents;
 // default they are 2D / 2D-array images of height 1, which the translated shaders (1D sampled as 2D) can view (G8).
 bool vk_1d_images();
 void transition(VkCommandBuffer cb, GpuImage& img, VkImageLayout to);
+// HDR output (video.hdr / NX_HDR = scrgb or hdr10): values as RenoDX's SWAP_CHAIN_OUTPUT_PRESET_* (HDR10 1, scRGB 2).
+enum class HdrOutput : uint8_t { Off = 0, Hdr10 = 1, ScRgb = 2 };
+HdrOutput hdr_requested();  // nvn_present.cpp: the setting, read once (a restart applies it)
+// nvn_screenshot.cpp: F12 asks for the next presented frame (HDR PNG with an HDR swapchain); the present records it
+void screenshot_request();
+void screenshot_record(VkCommandBuffer cb, VkImage image, VkFormat format, VkExtent2D extent);
+extern HdrOutput g_hdr;     // the swapchain's: what the surface gave (make_surface)
 // nvn_present.cpp: the window texture drawn into the swapchain (rotated, fit, alpha 1) instead of blitted.
 bool present_pass_wanted();
 bool present_pass_targets(VkFormat format, const std::vector<VkImage>& images, VkExtent2D extent,
