@@ -614,7 +614,7 @@ void rumble(float, float, uint32_t) {}
 // The folder picker and "open folder" (the settings screen's Saves page) are android/java Picker: NativeActivity gets
 // no activity results, so the picked path comes back through a file in the app's own folder.
 namespace {
-std::string pick_file() { return std::string(g_app ? g_app->activity->internalDataPath : "") + "/pick_result.txt"; }
+std::string pick_answer_file() { return std::string(g_app ? g_app->activity->internalDataPath : "") + "/pick_result.txt"; }
 std::atomic<bool> g_picking{false};
 
 bool start_picker(const char* key, const std::string& value) {
@@ -642,22 +642,22 @@ bool start_picker(const char* key, const std::string& value) {
 void open_path(const std::string& path) { start_picker("open", path); }
 
 void pick_path(bool, const std::string&) {
-    std::remove(pick_file().c_str());
-    g_picking = start_picker("out", pick_file());
+    std::remove(pick_answer_file().c_str());
+    g_picking = start_picker("out", pick_answer_file());
     if (!g_picking) {  // no picker: an empty answer, so the screen does not wait forever
-        if (FILE* f = std::fopen(pick_file().c_str(), "w")) std::fputs("\n", f), std::fclose(f), g_picking = true;
+        if (FILE* f = std::fopen(pick_answer_file().c_str(), "w")) std::fputs("\n", f), std::fclose(f), g_picking = true;
     }
 }
 
 bool pick_result(std::string& path) {
     path.clear();
     if (!g_picking) return false;
-    FILE* f = std::fopen(pick_file().c_str(), "r");
+    FILE* f = std::fopen(pick_answer_file().c_str(), "r");
     if (!f) return false;
     char buf[4096];
     size_t n = std::fread(buf, 1, sizeof buf - 1, f);
     std::fclose(f);
-    std::remove(pick_file().c_str());
+    std::remove(pick_answer_file().c_str());
     g_picking = false;
     path.assign(buf, n);
     while (!path.empty() && (path.back() == '\n' || path.back() == '\r')) path.pop_back();
