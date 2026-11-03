@@ -27,7 +27,7 @@ add_executable(acnhrecomp_launcher WIN32
     ${NX_LAUNCHER_IMGUI}/imgui_widgets.cpp ${NX_LAUNCHER_IMGUI}/backends/imgui_impl_sdl3.cpp
     ${NX_LAUNCHER_IMGUI}/backends/imgui_impl_sdlrenderer3.cpp)
 target_include_directories(acnhrecomp_launcher PRIVATE launcher runtime/src ${NX_LAUNCHER_IMGUI})
-target_link_libraries(acnhrecomp_launcher PRIVATE SDL3::SDL3 Threads::Threads nx_save_storage)
+target_link_libraries(acnhrecomp_launcher PRIVATE SDL3::SDL3 Threads::Threads nx_save_storage nx_mod_manager)
 if(WIN32)
     target_link_libraries(acnhrecomp_launcher PRIVATE ole32 shell32 uuid ws2_32)  # desktop.cpp: the shortcuts
 endif()

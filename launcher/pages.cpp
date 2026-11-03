@@ -31,6 +31,7 @@
 #include "imgui.h"
 #include "imgui_internal.h"
 
+#include "mod_manager.h"
 #include "save_profiles.h"
 
 #include "ui/i18n.h"
@@ -173,6 +174,13 @@ bool g_saves_open = false;
 double g_saves_since = 0;
 std::string g_saves_delete_id;
 void select_save_profile(const std::string& id);
+std::vector<nx::mod_manager::ModInfo> g_mods;
+bool g_mods_open = false;
+double g_mods_since = 0;
+std::string g_mods_delete_id;
+bool g_mods_refresh = false;           // reload list after the grid finishes drawing
+bool g_mods_refresh_wait_pad = false;  // gamepad: wait until FaceDown is released before reshuffling
+void refresh_mods();
 std::string g_banner;  // an error under the page title (a refused file or folder)
 std::string g_toast;
 double g_toast_until = 0;
@@ -190,7 +198,7 @@ ImVec2 g_drag_pos;
 ImVec2 g_page_min, g_page_max;  // the visible part of the page (it scrolls)
 
 // File dialogs answer on their own time (and maybe on another thread): queued here, applied in the frame.
-enum Target { kPickGame, kPickMod, kPickInstall, kPickBuild, kPickSaveImport };
+enum Target { kPickGame, kPickMod, kPickInstall, kPickBuild, kPickSaveImport, kPickModImportFolder, kPickModImportZip };
 struct Picked {
     int target;
     std::vector<std::string> paths;
@@ -267,7 +275,16 @@ void set_build(const std::string& folder, bool remember) {
         settings().set("launcher.build", folder);
         settings().save();
     }
-    if (*g_build_problem == 0) refresh_save_profiles();
+    if (*g_build_problem == 0) {
+        refresh_save_profiles();
+        refresh_mods();
+    }
+}
+
+void refresh_mods() {
+    g_mods.clear();
+    if (*g_build_problem != 0) return;
+    g_mods = nx::mod_manager::list_mods(g_build.data);
 }
 
 void refresh_save_profiles() {
@@ -344,6 +361,8 @@ void pick(Target t) {
             break;
         case kPickBuild: SDL_ShowOpenFolderDialog(on_picked, user, g_window, nullptr, false); break;
         case kPickSaveImport: SDL_ShowOpenFolderDialog(on_picked, user, g_window, where, false); break;
+        case kPickModImportFolder: SDL_ShowOpenFolderDialog(on_picked, user, g_window, where, false); break;
+        case kPickModImportZip: SDL_ShowOpenFileDialog(on_picked, user, g_window, zip, 2, where, false); break;
     }
 }
 
@@ -439,6 +458,18 @@ void apply_picks() {
                     refresh_save_profiles();
                 } else
                     g_banner = trf("launcher.saves.import_failed", err);
+                break;
+            }
+            case kPickModImportFolder:
+            case kPickModImportZip: {
+                std::string err, id;
+                bool had_exefs = false;
+                if (nx::mod_manager::import_mod(g_build.data, first, &id, &had_exefs, &err)) {
+                    load_game_ini();
+                    refresh_mods();
+                    toast(had_exefs ? trf("launcher.mods.import_ok_exefs", id) : trf("launcher.mods.import_ok", id));
+                } else
+                    g_banner = trf("launcher.mods.import_failed", err);
                 break;
             }
             default:  // a card
@@ -1589,28 +1620,44 @@ std::string active_island_pill_text() {
     return trf("launcher.home.save_file", tr("launcher.profiles.empty"));
 }
 
-// Version, add-ons, and save file under the title (stacked when they do not fit on one line).
+// Version, add-ons, mods, and save file under the title (wrapped when they do not fit on one line).
 void contents_row() {
     const BuildContents& c = contents();
     std::string ver = c.version.empty() ? tr("launcher.home.version_unknown") : trf("launcher.home.version", c.version);
     std::string save = active_island_pill_text();
     std::string add = c.addons.empty() ? tr("launcher.addons.none")
                                        : trf("launcher.addons.count", std::to_string(c.addons.size()));
+    size_t mods_on = 0;
+    for (const nx::mod_manager::ModInfo& m : g_mods)
+        if (m.enabled) ++mods_on;
+    std::string mods_arg = std::to_string(mods_on) + "/" + std::to_string(g_mods.size());
+    std::string mods = g_mods.empty() ? tr("launcher.mods.none") : trf("launcher.mods.count", mods_arg);
     float avail = ImGui::GetContentRegionAvail().x, gap = S(10), x0 = ImGui::GetCursorScreenPos().x;
-    float w1 = pill_width(ver.c_str()), w2 = pill_width(add.c_str()), w3 = pill_width(save.c_str());
-    bool one_row = w1 + gap + w2 + gap + w3 <= avail;
-    float row_w = one_row ? w1 + gap + w2 + gap + w3 : std::max({w1, w2, w3});
+    float widths[4] = {pill_width(ver.c_str()), pill_width(add.c_str()), pill_width(mods.c_str()),
+                       pill_width(save.c_str())};
+    float total = widths[0] + widths[1] + widths[2] + widths[3] + 3 * gap;
+    bool one_row = total <= avail;
+    // Two-by-two when one row does not fit but two columns do.
+    bool two_by_two = !one_row && std::max(widths[0] + gap + widths[1], widths[2] + gap + widths[3]) <= avail;
     float y0 = ImGui::GetCursorScreenPos().y;
     auto place_pill = [&](const char* id, int icon, ImU32 color, const char* text, bool clickable, bool dot,
-                          int row) {
-        float w = pill_width(text);
-        float x = x0 + std::floor((avail - (one_row ? row_w : w)) * 0.5f);
+                          int index) {
+        float w = widths[index];
+        float x = x0, y = y0;
         if (one_row) {
-            if (row == 1) x += w1 + gap;
-            if (row == 2) x += w1 + gap + w2 + gap;
-        } else
+            float row_w = total;
+            x = x0 + std::floor((avail - row_w) * 0.5f);
+            for (int i = 0; i < index; ++i) x += widths[i] + gap;
+        } else if (two_by_two) {
+            int col = index % 2, row = index / 2;
+            float pair = widths[row * 2] + gap + widths[row * 2 + 1];
+            x = x0 + std::floor((avail - pair) * 0.5f);
+            if (col) x += widths[row * 2] + gap;
+            y = y0 + float(row) * (S(38) + gap);
+        } else {
             x = x0 + std::floor((avail - w) * 0.5f);
-        float y = y0 + (one_row ? 0 : float(row) * (S(38) + gap));
+            y = y0 + float(index) * (S(38) + gap);
+        }
         ImGui::SetCursorScreenPos(ImVec2(x, y));
         return pill(id, icon, color, text, clickable, dot, x);
     };
@@ -1621,16 +1668,21 @@ void contents_row() {
         contents(true);
         g_addons_open = true, g_addons_since = ImGui::GetTime();
     }
+    if (place_pill("##mods", nx::ui::kIconText, g_mods.empty() ? kGrey : kOrange, mods.c_str(), true, mods_on > 0, 2)) {
+        refresh_mods();
+        g_mods_open = true;
+        g_mods_since = ImGui::GetTime();
+    }
     bool has_save = false;
     for (const nx::save_profiles::ProfileInfo& p : g_save_profiles)
         if (p.id == g_save_profile_active && p.has_save) has_save = true;
-    if (place_pill("##savefile", nx::ui::kIconHouse, has_save ? kRed : kGrey, save.c_str(), true, has_save, 2)) {
+    if (place_pill("##savefile", nx::ui::kIconHouse, has_save ? kRed : kGrey, save.c_str(), true, has_save, 3)) {
         refresh_save_profiles();
         g_saves_open = true;
         g_saves_since = ImGui::GetTime();
     }
-    ImGui::SetCursorScreenPos(
-        ImVec2(x0, y0 + (one_row ? S(38) : 3 * (S(38) + gap)) + S(4)));
+    int rows = one_row ? 1 : (two_by_two ? 2 : 4);
+    ImGui::SetCursorScreenPos(ImVec2(x0, y0 + float(rows) * (S(38) + gap) - gap + S(4)));
 }
 
 // The add-on content, one card each: its number, size and files, and that the game loads it.
@@ -1804,6 +1856,203 @@ void saves_popup() {
         if (button(tr("launcher.addons.close"), kWhite) || ImGui::IsKeyPressed(ImGuiKey_Escape) ||
             ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false))
             g_saves_open = false, g_saves_delete_id.clear(), ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar();
+}
+
+void mods_popup() {
+    if (g_mods_open) ImGui::OpenPopup("mods");
+    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, out_cubic((ImGui::GetTime() - g_mods_since) / 0.18));
+    ImGui::PushStyleColor(ImGuiCol_NavCursor, ImVec4(0, 0, 0, 0));
+    const ImVec2 ds = ImGui::GetIO().DisplaySize;
+    ImGui::SetNextWindowSize(ImVec2(std::min(ds.x * 0.94f, S(1180)), std::min(ds.y * 0.9f, S(700))));
+    if (ImGui::BeginPopupModal("mods", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize)) {
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        ImVec2 p = ImGui::GetCursorScreenPos();
+        float r = S(18);
+        dl->AddCircleFilled(ImVec2(p.x + r, p.y + r), r, kOrange);
+        theme_icon(dl, nx::ui::kIconText, ImVec2(p.x + r, p.y + r), r * 0.6f, kWhite);
+        float fs = font_size(g_title) * 0.8f;
+        dl->AddText(g_title, fs, ImVec2(p.x + 2 * r + S(12), p.y + r - fs * 0.6f), kInk, tr("launcher.mods.title"));
+        ImGui::Dummy(ImVec2(0, 2 * r + S(8)));
+        ImGui::PushStyleColor(ImGuiCol_Text, col4(kInkSoft));
+        ImGui::TextWrapped("%s", tr("launcher.mods.hint"));
+        ImGui::PopStyleColor();
+        ImGui::Dummy(ImVec2(0, S(10)));
+
+        const char* folder_l = tr("launcher.mods.import_folder");
+        const char* zip_l = tr("launcher.mods.import_zip");
+        const char* open_l = tr("launcher.mods.open");
+        const char* close_l = tr("launcher.addons.close");
+        float footer = S(56) + ImGui::GetFrameHeight();
+        if (!g_mods_delete_id.empty()) footer += S(72);
+        float grid_h = std::max(S(140), ImGui::GetContentRegionAvail().y - footer);
+
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(12), S(12)));
+        ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, S(16));
+        ImGui::BeginChild("##mods_grid", ImVec2(0, grid_h),
+                          ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
+        ImGui::PopStyleVar(2);
+
+        if (g_mods.empty()) {
+            ImGui::TextDisabled("%s", tr("launcher.mods.empty"));
+        } else {
+            std::vector<int> order(g_mods.size(), 0);
+            int next = 1;
+            for (size_t i = 0; i < g_mods.size(); ++i)
+                if (g_mods[i].enabled) order[i] = next++;
+
+            float avail = ImGui::GetContentRegionAvail().x, gap = S(12);
+            int cols = avail >= S(900) ? 3 : (avail >= S(520) ? 2 : 1);
+            float tile_w = (avail - gap * float(cols - 1)) / float(cols);
+            float tile_h = S(128);
+            const char* up_l = tr("launcher.mods.up");
+            const char* down_l = tr("launcher.mods.down");
+            const char* del_l = tr("launcher.mods.delete");
+            float action_w = std::min(S(96), std::max(S(64), (tile_w - S(36)) / 3.f));
+
+            // Snapshot ids so toggles cannot reshuffle g_mods while this frame still walks the grid.
+            const size_t mod_count = g_mods.size();
+            for (size_t i = 0; i < mod_count; ++i) {
+                const nx::mod_manager::ModInfo mod = g_mods[i];
+                if (i % size_t(cols) != 0) ImGui::SameLine(0, gap);
+                ImGui::PushID(mod.id.c_str());
+
+                ImVec2 tile_min = ImGui::GetCursorScreenPos();
+                ImGui::PushStyleColor(ImGuiCol_ChildBg, col4(mod.enabled ? rgb(255, 244, 210) : rgb(255, 252, 242)));
+                ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, S(14));
+                ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(12), S(10)));
+                ImGui::BeginChild("##tile", ImVec2(tile_w, tile_h),
+                                  ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
+                ImGui::PopStyleVar(2);
+                ImGui::PopStyleColor();
+
+                // Load-order badge (1-based among enabled mods).
+                ImDrawList* tdl = ImGui::GetWindowDrawList();
+                ImVec2 badge = ImGui::GetCursorScreenPos();
+                float br = S(14);
+                ImVec2 bc(badge.x + br, badge.y + br);
+                tdl->AddCircleFilled(bc, br, mod.enabled ? kOrange : kGrey);
+                char num[8];
+                if (mod.enabled)
+                    std::snprintf(num, sizeof num, "%d", order[i]);
+                else
+                    std::snprintf(num, sizeof num, "-");
+                ImVec2 ns = measure(g_body, font_size(g_body) * 0.85f, num, -1);
+                tdl->AddText(g_body, font_size(g_body) * 0.85f, ImVec2(bc.x - ns.x * 0.5f, bc.y - ns.y * 0.5f), kWhite,
+                             num);
+
+                ImGui::SetCursorScreenPos(ImVec2(badge.x + 2 * br + S(10), badge.y));
+                bool enabled = mod.enabled;
+                if (ImGui::Checkbox("##on", &enabled)) {
+                    std::string err;
+                    if (nx::mod_manager::set_enabled(g_build.data, mod.id, enabled, &err)) {
+                        load_game_ini();
+                        // Keep the tile put for this frame; reshuffle (disabled → bottom) after the grid,
+                        // and on gamepad only once FaceDown is released so activate cannot hit another tile.
+                        if (i < g_mods.size() && g_mods[i].id == mod.id) g_mods[i].enabled = enabled;
+                        g_mods_refresh = true;
+                        ImGuiContext& ctx = *ImGui::GetCurrentContext();
+                        if (ctx.NavInputSource == ImGuiInputSource_Gamepad) {
+                            g_mods_refresh_wait_pad = true;
+                            ctx.NavActivateId = 0;
+                            ctx.NavActivateDownId = 0;
+                            ctx.NavActivatePressedId = 0;
+                        } else {
+                            g_mods_refresh_wait_pad = false;
+                        }
+                    } else
+                        g_banner = trf("launcher.mods.toggle_failed", err);
+                }
+                nav_item();
+                ImGui::SameLine();
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextUnformatted(mod.id.c_str());
+                if (mod.managed) ImGui::TextDisabled("%s", tr("launcher.mods.managed"));
+                if (mod.has_exefs) ImGui::TextDisabled("%s", tr("launcher.mods.exefs_warn"));
+
+                ImGui::SetCursorPosY(tile_h - ImGui::GetStyle().WindowPadding.y - ImGui::GetFrameHeight() - S(4));
+                // Keep Up/Down in the nav tree even when off so tiles do not gain/lose targets on toggle.
+                if (button(up_l, kWhite, mod.enabled, action_w)) {
+                    std::string err;
+                    if (nx::mod_manager::move_enabled(g_build.data, mod.id, -1, &err)) {
+                        load_game_ini();
+                        g_mods_refresh = true;
+                        if (ImGui::GetCurrentContext()->NavInputSource == ImGuiInputSource_Gamepad)
+                            g_mods_refresh_wait_pad = true;
+                    }
+                }
+                ImGui::SameLine();
+                if (button(down_l, kWhite, mod.enabled, action_w)) {
+                    std::string err;
+                    if (nx::mod_manager::move_enabled(g_build.data, mod.id, 1, &err)) {
+                        load_game_ini();
+                        g_mods_refresh = true;
+                        if (ImGui::GetCurrentContext()->NavInputSource == ImGuiInputSource_Gamepad)
+                            g_mods_refresh_wait_pad = true;
+                    }
+                }
+                ImGui::SameLine();
+                if (button(del_l, kRed, true, action_w)) g_mods_delete_id = mod.id;
+
+                ImGui::EndChild();
+                // Soft settle animation like the add-ons cards.
+                float e = out_cubic((ImGui::GetTime() - g_mods_since - 0.03 * double(i)) / 0.2);
+                if (e < 1.f) {
+                    ImVec2 a = tile_min, b(tile_min.x + tile_w, tile_min.y + tile_h);
+                    ImGui::GetWindowDrawList()->AddRectFilled(a, b, rgb(248, 239, 214, int(180 * (1 - e))), S(14));
+                }
+                ImGui::PopID();
+            }
+        }
+        ImGui::EndChild();
+        if (g_mods_refresh) {
+            const bool pad_held = g_mods_refresh_wait_pad && ImGui::IsKeyDown(ImGuiKey_GamepadFaceDown);
+            if (!pad_held) {
+                g_mods_refresh = false;
+                g_mods_refresh_wait_pad = false;
+                refresh_mods();  // enabled stay on top; disabled move to the bottom
+            }
+        }
+
+        if (!g_mods_delete_id.empty()) {
+            ImGui::Dummy(ImVec2(0, S(6)));
+            ImGui::PushStyleColor(ImGuiCol_Text, col4(kInkSoft));
+            const bool managed = [&] {
+                for (const nx::mod_manager::ModInfo& m : g_mods)
+                    if (m.id == g_mods_delete_id) return m.managed;
+                return false;
+            }();
+            ImGui::TextWrapped("%s", tr(managed ? "launcher.mods.delete_confirm_managed" : "launcher.mods.delete_confirm"));
+            ImGui::PopStyleColor();
+            if (button(tr("launcher.mods.delete"), kRed)) {
+                std::string err;
+                std::string id = g_mods_delete_id;
+                g_mods_delete_id.clear();
+                if (nx::mod_manager::delete_mod(g_build.data, id, &err)) {
+                    load_game_ini();
+                    refresh_mods();
+                    toast(tr("launcher.mods.deleted"));
+                } else
+                    g_banner = trf("launcher.mods.delete_failed", err);
+            }
+            ImGui::SameLine();
+            if (button(tr("common.no"), kWhite)) g_mods_delete_id.clear();
+        }
+
+        ImGui::Dummy(ImVec2(0, S(8)));
+        float pair_w = std::max({button_width(folder_l), button_width(zip_l), button_width(open_l)});
+        if (button(folder_l, kBlue, true, pair_w)) pick(kPickModImportFolder);
+        ImGui::SameLine();
+        if (button(zip_l, kBlue, true, pair_w)) pick(kPickModImportZip);
+        ImGui::SameLine();
+        if (button(open_l, kWhite, true, pair_w)) open_folder(g_build.data + "/mods");
+        align_right({close_l});
+        if (button(close_l, kWhite) || ImGui::IsKeyPressed(ImGuiKey_Escape) ||
+            ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false))
+            g_mods_open = false, g_mods_delete_id.clear(), ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
     ImGui::PopStyleColor();
@@ -2159,6 +2408,7 @@ void popups() {
     if (g_quit_after_stop && !setup_state().running) g_exit = true;
     addons_popup();
     saves_popup();
+    mods_popup();
     g_nav_section = -1;
 }
 
@@ -2252,7 +2502,7 @@ bool pages_draw(float scale, ImFont* title) {
     for (int key = ImGuiKey_GamepadStart; key <= ImGuiKey_GamepadRStickDown; ++key)
         if (ImGui::IsKeyPressed(ImGuiKey(key), false)) controller_navigation = true;
     const bool popup_before = popup_last_frame || ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) ||
-                              g_confirm_stop || g_confirm_quit || g_addons_open || g_saves_open;
+                              g_confirm_stop || g_confirm_quit || g_addons_open || g_saves_open || g_mods_open;
     auto direction = [](ImGuiKey dpad, ImGuiKey stick) {
         return ImGui::IsKeyPressed(dpad, true) || ImGui::IsKeyPressed(stick, true);
     };
@@ -2260,7 +2510,7 @@ bool pages_draw(float scale, ImFont* title) {
                    int(direction(ImGuiKey_GamepadDpadLeft, ImGuiKey_GamepadLStickLeft));
     const int dy = int(direction(ImGuiKey_GamepadDpadDown, ImGuiKey_GamepadLStickDown)) -
                    int(direction(ImGuiKey_GamepadDpadUp, ImGuiKey_GamepadLStickUp));
-    const bool popup_requested = g_confirm_stop || g_confirm_quit || g_addons_open || g_saves_open;
+    const bool popup_requested = g_confirm_stop || g_confirm_quit || g_addons_open || g_saves_open || g_mods_open;
     const bool move = controller_navigation && (!popup_before || popup_requested) && ctx.ActiveId == 0 && (dx || dy);
     if (move) ImGui::NavMoveRequestCancel();
     static bool first = true;
@@ -2377,7 +2627,7 @@ bool pages_draw(float scale, ImFont* title) {
     }
     g_nav_section = -1;
     popups();
-    const bool popup_active = g_confirm_stop || g_confirm_quit || g_addons_open || g_saves_open;
+    const bool popup_active = g_confirm_stop || g_confirm_quit || g_addons_open || g_saves_open || g_mods_open;
     if (controller_navigation && popup_active && ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) &&
         drawn_page == g_page && !g_nav_items.empty()) {
         auto first_popup_item = std::find_if(g_nav_items.begin(), g_nav_items.end(), [](const NavItem& item) {
@@ -2393,7 +2643,7 @@ bool pages_draw(float scale, ImFont* title) {
                 nav_move(dx, dx ? 0 : dy, 3);
         }
     } else if (controller_navigation && !popup_before && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) &&
-        !g_confirm_stop && !g_confirm_quit && !g_addons_open && !g_saves_open &&
+        !g_confirm_stop && !g_confirm_quit && !g_addons_open && !g_saves_open && !g_mods_open &&
         drawn_page == g_page && !g_nav_items.empty()) {
         const bool page_changed = !nav_page_valid || nav_page != g_page;
         auto focused = std::find_if(g_nav_items.begin(), g_nav_items.end(), [&](const NavItem& item) { return item.id == ctx.NavId; });
@@ -2415,7 +2665,7 @@ bool pages_draw(float scale, ImFont* title) {
         saved_focus[int(g_page)] = ctx.NavId;
     }
     popup_last_frame = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) || g_confirm_stop || g_confirm_quit ||
-                       g_addons_open || g_saves_open;
+                       g_addons_open || g_saves_open || g_mods_open;
     opening_overlay();
     ImGui::End();
     return !g_exit;

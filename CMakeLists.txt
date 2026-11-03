@@ -142,6 +142,15 @@ set(NX_IMGUI_DIR "${CMAKE_SOURCE_DIR}/private/third_party/imgui" CACHE PATH "Dea
 add_library(nx_save_storage STATIC runtime/src/save_storage.cpp runtime/src/save_profiles.cpp)
 target_include_directories(nx_save_storage PUBLIC ${CMAKE_SOURCE_DIR}/runtime/src)
 
+add_library(nx_mod_manager STATIC runtime/src/mod_manager.cpp)
+target_include_directories(nx_mod_manager PUBLIC ${CMAKE_SOURCE_DIR}/runtime/src)
+target_link_libraries(nx_mod_manager PUBLIC nx_save_storage)
+find_package(ZLIB QUIET)
+if(ZLIB_FOUND)
+    target_link_libraries(nx_mod_manager PRIVATE ZLIB::ZLIB)
+    target_compile_definitions(nx_mod_manager PRIVATE NX_HAVE_ZLIB)
+endif()
+
 # The launcher (launcher/): the program a player opens first. It has no game code, so it builds from a plain
 # checkout (cmake --build <dir> --target acnhrecomp_launcher) and leaves the game's targets as they are.
 option(NX_LAUNCHER "Build the first-run launcher (acnhrecomp_launcher)" ON)

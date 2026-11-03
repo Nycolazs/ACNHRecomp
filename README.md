@@ -105,6 +105,8 @@ starring the repository help just as much. Thank you! 💚
 - **Save management:** import from Switch backups (JKSV, Checkpoint), from emulators (yuzu and its forks,
   Ryujinx/Ryubing) or from another ACNHRecomp; export in a format JKSV and Checkpoint can restore on a console;
   automatic backups.
+- **Mod management (launcher):** import RomFS LayeredFS mod folders or zips, toggle them on or off, reorder
+  priority, open a mod's folder, or delete it (ExeFS / Skyline plugins are not loaded).
 - **All 14 game languages**, plus Brazilian Portuguese through a fan translation you install yourself, loaded as a
   RomFS mod (LayeredFS).
 - **DLC** (add-on content) from your game folder's `aoc/`.
@@ -568,10 +570,21 @@ Then choose "Português (Brasil)" as the game language (or leave it on Automatic
 translation replaces the European Spanish texts, so the console language becomes Spanish and the mod's files are
 layered on top.
 
-**RomFS mods** in general work the same way (LayeredFS): `--mod <name>=<zip>` extracts a zip with a `romfs/` folder
-to `private/acnh/mods/<name>/romfs/`. When the game opens a file, the first enabled mod that has a file at the same
-path wins; otherwise the original is used. Mods can only replace files that already exist in the game. Enable mods
-with `game.mods = <name>[,<name>...]` in `config.ini`.
+**RomFS mods** in general work the same way (LayeredFS): a folder or zip with a `romfs/` tree is copied to
+`mods/<name>/romfs/` under the game data folder. When the game opens a file, the first enabled mod that has a file at
+the same path wins; otherwise the original is used. Mods can only replace files that already exist in the game.
+
+In a **release build**, open the launcher home screen and use the **Mods** pill (next to add-ons and save profiles)
+to import a mod folder or zip, toggle mods on or off, reorder priority, open a mod's folder, or delete it. Enablement
+is stored as `game.mods = <name>[,<name>...]` in `config.ini` and applies the next time you Play.
+
+From a **source checkout**, you can still install with setup:
+
+```sh
+python3 tools/setup_acnh.py --mod <name>=~/Downloads/<mod>.zip
+```
+
+then enable the name in the launcher Mod Manager or by editing `game.mods` in `config.ini`.
 
 ## Building from source
 
