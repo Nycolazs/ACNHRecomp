@@ -1381,6 +1381,9 @@ const Entry kLauncherNl[] = {
 };
 
 const Entry kLauncherRu[] = {
+    {"launcher.autostart", "Запуск игры через {}..."},
+    {"launcher.autostart.stay", "Нажмите на лаунчер, чтобы остаться"},
+    {"launcher.autostart.setting", "Автоматически запускать игру при открытии лаунчера"},
     {"launcher.fullscreen", "Показывать лаунчер на весь экран"},
     {"launcher.subtitle", "Animal Crossing: New Horizons, перекомпилированная для ПК"},
     {"launcher.welcome.title", "Добро пожаловать!"},
@@ -1559,6 +1562,9 @@ const Entry kLauncherRu[] = {
 };
 
 const Entry kLauncherJa[] = {
+    {"launcher.autostart", "{} 秒後にゲームを開始します..."},
+    {"launcher.autostart.stay", "ランチャーをクリックするとここに留まります"},
+    {"launcher.autostart.setting", "ランチャーを開いたときにゲームを自動で開始する"},
     {"launcher.fullscreen", "ランチャーを全画面で表示"},
     {"launcher.subtitle", "Animal Crossing: New Horizons を PC 向けに再コンパイル"},
     {"launcher.welcome.title", "ようこそ！"},
@@ -1737,6 +1743,9 @@ const Entry kLauncherJa[] = {
 };
 
 const Entry kLauncherKo[] = {
+    {"launcher.autostart", "{}초 후 게임을 시작합니다..."},
+    {"launcher.autostart.stay", "런처를 클릭하면 여기에 머무릅니다"},
+    {"launcher.autostart.setting", "런처를 열 때 게임을 자동으로 시작"},
     {"launcher.fullscreen", "런처를 전체 화면으로 표시"},
     {"launcher.subtitle", "Animal Crossing: New Horizons, PC용으로 다시 컴파일"},
     {"launcher.welcome.title", "환영합니다!"},
@@ -1915,6 +1924,9 @@ const Entry kLauncherKo[] = {
 };
 
 const Entry kLauncherZhCn[] = {
+    {"launcher.autostart", "{} 秒后启动游戏..."},
+    {"launcher.autostart.stay", "点击启动器以留在此处"},
+    {"launcher.autostart.setting", "打开启动器时自动启动游戏"},
     {"launcher.fullscreen", "全屏显示启动器"},
     {"launcher.subtitle", "Animal Crossing: New Horizons，为 PC 重新编译"},
     {"launcher.welcome.title", "欢迎！"},
@@ -2093,6 +2105,9 @@ const Entry kLauncherZhCn[] = {
 };
 
 const Entry kLauncherZhTw[] = {
+    {"launcher.autostart", "{} 秒後啟動遊戲..."},
+    {"launcher.autostart.stay", "點擊啟動器以留在此處"},
+    {"launcher.autostart.setting", "開啟啟動器時自動啟動遊戲"},
     {"launcher.fullscreen", "全螢幕顯示啟動器"},
     {"launcher.subtitle", "Animal Crossing: New Horizons，為 PC 重新編譯"},
     {"launcher.welcome.title", "歡迎！"},

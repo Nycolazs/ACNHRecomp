@@ -58,7 +58,7 @@ jobs:
       - name: libvpx, libvorbis (vcpkg)
         run: |
           "$(cygpath -u "$VCPKG_INSTALLATION_ROOT")/vcpkg.exe" install libvpx:x64-windows-static-md-release \
-              libvorbis:x64-windows-static-md-release --disable-metrics
+              libvorbis:x64-windows-static-md-release zlib:x64-windows-static-md-release --disable-metrics
       - name: Package
         run: |
           export PATH="/c/Program Files/LLVM/bin:$PATH"

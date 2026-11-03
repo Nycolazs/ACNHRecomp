@@ -145,6 +145,9 @@ target_include_directories(nx_save_storage PUBLIC ${CMAKE_SOURCE_DIR}/runtime/sr
 add_library(nx_mod_manager STATIC runtime/src/mod_manager.cpp)
 target_include_directories(nx_mod_manager PUBLIC ${CMAKE_SOURCE_DIR}/runtime/src)
 target_link_libraries(nx_mod_manager PUBLIC nx_save_storage)
+if(WIN32)
+    set(ZLIB_USE_STATIC_LIBS ON)  # vcpkg's static zlib: the launcher ships no zlib1.dll
+endif()
 find_package(ZLIB QUIET)
 if(ZLIB_FOUND)
     target_link_libraries(nx_mod_manager PRIVATE ZLIB::ZLIB)
