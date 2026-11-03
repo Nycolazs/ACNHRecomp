@@ -1665,6 +1665,8 @@ void addons_popup() {
 void saves_popup() {
     if (g_saves_open) ImGui::OpenPopup("saves");
     ImGui::PushStyleVar(ImGuiStyleVar_Alpha, out_cubic((ImGui::GetTime() - g_saves_since) / 0.18));
+    // Hide ImGui's square nav outline for the whole popup; the profile rows draw a rounded focus outline below.
+    ImGui::PushStyleColor(ImGuiCol_NavCursor, ImVec4(0, 0, 0, 0));
     ImGui::SetNextWindowSize(ImVec2(std::min(ImGui::GetIO().DisplaySize.x * 0.9f, S(520)), 0));
     if (ImGui::BeginPopupModal("saves", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize)) {
         ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -1701,8 +1703,10 @@ void saves_popup() {
                 ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0, 0, 0, 0));
                 ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0, 0, 0, 0));
                 ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0, 0, 0, 0));
+                ImGui::PushStyleColor(ImGuiCol_NavCursor, ImVec4(0, 0, 0, 0));
                 bool selected = ImGui::Selectable(label.c_str(), active);
-                ImGui::PopStyleColor(3);
+                const bool highlighted = ImGui::IsItemHovered() || ImGui::IsItemFocused();
+                ImGui::PopStyleColor(4);
                 if (active) {
                     list_draw->ChannelsSetCurrent(0);
                     list_draw->AddRectFilled(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(),
@@ -1711,6 +1715,11 @@ void saves_popup() {
                     list_draw->ChannelsSetCurrent(0);
                     list_draw->AddRectFilled(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(),
                                              rgb(252, 246, 228), S(10));
+                }
+                if (highlighted) {
+                    list_draw->ChannelsSetCurrent(1);
+                    list_draw->AddRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(),
+                                       rgb(246, 170, 40), S(10), 0, S(2));
                 }
                 list_draw->ChannelsMerge();
                 if (selected) select_save_profile(prof.id);
@@ -1767,6 +1776,7 @@ void saves_popup() {
             g_saves_open = false, g_saves_delete_id.clear(), ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
+    ImGui::PopStyleColor();
     ImGui::PopStyleVar();
 }
 
