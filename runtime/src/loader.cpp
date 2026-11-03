@@ -439,11 +439,8 @@ inline uint32_t cache_slot(uint64_t rel) {
     fatal("call to %llx (%s), lr %s", (unsigned long long)t, describe(t).c_str(), describe(c.x[30]).c_str());
 }
 
+// The NFC overrides are checked in call_slow only: their targets are never cached, so they always get there.
 NX_GAME_API void call(CPU& c, uint64_t t) {
-    if (auto it = hle_call_overrides().find(t); it != hle_call_overrides().end()) {
-        it->second(c);
-        return;
-    }
     uint64_t rel = t - g_cache_base;
     if (rel < g_cache_span) [[likely]] {
         uint64_t e = g_call_cache[cache_slot(rel)].load(std::memory_order_relaxed);
