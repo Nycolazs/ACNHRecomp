@@ -20,7 +20,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Apply touch-size-fix.patch
-        run: patch -p1 < touch-size-fix.patch
+        run: cat touch-size-fix*.patch | patch -p1
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -41,6 +41,12 @@ jobs:
           mkdir -p private/third_party
           curl -fsSL "https://github.com/KhronosGroup/Vulkan-Headers/archive/refs/tags/v$VK_HEADERS.tar.gz" |
             tar -xz -C private/third_party
+      - name: Dear ImGui
+        run: |
+          # the settings screen (without it CMake falls back to ui_stub.cpp and the link fails)
+          mkdir -p private/third_party/imgui
+          curl -fsSL https://github.com/ocornut/imgui/archive/refs/tags/v1.91.9.tar.gz |
+            tar -xz --strip-components=1 -C private/third_party/imgui
       - name: Build
         run: tools/build_android.sh --no-game
       - uses: actions/upload-artifact@v4
