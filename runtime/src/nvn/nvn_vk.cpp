@@ -1289,14 +1289,3 @@ void gpu_present(uint64_t texture, const int32_t* crop, int interval) {
 }
 
 }  // namespace nx::nvn
-
-// Dear ImGui's Vulkan backend submits font uploads on the same queue as the game (imgui_impl_vulkan.cpp).
-extern "C" VkResult nx_ui_vk_queue_submit(VkQueue queue, const VkSubmitInfo* submit_info, VkFence fence) {
-    std::lock_guard<std::mutex> lk(nx::nvn::vk_queue_mutex());
-    return nx::vk::p_vkQueueSubmit(queue, 1, submit_info, fence);
-}
-
-extern "C" VkResult nx_ui_vk_queue_wait_idle(VkQueue queue) {
-    std::lock_guard<std::mutex> lk(nx::nvn::vk_queue_mutex());
-    return nx::vk::p_vkQueueWaitIdle(queue);
-}
