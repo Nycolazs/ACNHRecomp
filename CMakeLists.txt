@@ -2,6 +2,29 @@ cmake_minimum_required(VERSION 3.25)
 project(SwitchGamesRecomp C CXX)
 if(WIN32)
     enable_language(RC)  # assets/acnhrecomp.rc: the executables' icon
+    # clang-cl + Ninja uses cmake_llvm_rc (preprocess via clang-cl, then rc.exe). That path breaks here
+    # ("Empty resource compilation command", literal -I SOURCE_DIR). Compile .rc with rc.exe instead.
+    function(nx_add_windows_rc target rc_relpath)
+        if(NOT WIN32)
+            return()
+        endif()
+        set(_rc "${CMAKE_SOURCE_DIR}/${rc_relpath}")
+        if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+            set(_rc_dir "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/${target}.dir/assets")
+            set(_rc_res "${_rc_dir}/acnhrecomp.rc.res")
+            file(MAKE_DIRECTORY "${_rc_dir}")
+            add_custom_command(
+                OUTPUT "${_rc_res}"
+                COMMAND "${CMAKE_RC_COMPILER}" /nologo /fo "${_rc_res}" "${_rc}"
+                WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/assets"
+                DEPENDS "${_rc}" "${CMAKE_SOURCE_DIR}/assets/acnhrecomp.ico"
+                COMMENT "Building RC object acnhrecomp.rc.res"
+                VERBATIM)
+            target_sources(${target} PRIVATE "${_rc_res}")
+        else()
+            target_sources(${target} PRIVATE "${_rc}")
+        endif()
+    endfunction()
 endif()
 
 set(CMAKE_CXX_STANDARD 20)
@@ -209,10 +232,12 @@ set(NX_RUNTIME_SOURCES
     runtime/src/svc_process.cpp
     runtime/src/hle_fs.cpp
     runtime/src/svc_account.cpp
+    runtime/src/svc_nfp.cpp
     runtime/src/users.cpp
     runtime/src/hle_ro.cpp
     runtime/src/hle_vi.cpp
     runtime/src/hle_hid.cpp
+    runtime/src/hle_hid_system_nfc.cpp
     runtime/src/hle_net.cpp
     runtime/src/hle_ldn.cpp
     runtime/src/hle_vsock.cpp
@@ -222,6 +247,9 @@ set(NX_RUNTIME_SOURCES
     runtime/src/hle_audio.cpp
     runtime/src/hle_pl.cpp
     runtime/src/hle_nfp.cpp
+    runtime/src/nfp_host.cpp
+    runtime/src/acnh_amiibo_hook.cpp
+    runtime/src/amiibo_decode.cpp
     runtime/src/hle_time.cpp
     runtime/src/hle_bcat.cpp
     runtime/src/hle_movie.cpp
@@ -446,10 +474,10 @@ else()
     find_package(SDL3 REQUIRED CONFIG)
     find_path(NX_VULKAN_INCLUDE vulkan/vulkan.h HINTS "${NX_VULKAN_SDK}/Include")
     add_executable(${NX_GAME} ${NX_RUNTIME_SOURCES} runtime/src/platform_win.cpp runtime/src/platform_sdl.cpp
-                   runtime/src/app_icon.cpp assets/acnhrecomp.rc assets/acnhrecomp.manifest
-                   runtime/src/memguard_win.cpp)
+                   runtime/src/app_icon.cpp assets/acnhrecomp.manifest runtime/src/memguard_win.cpp)
+    nx_add_windows_rc(${NX_GAME} assets/acnhrecomp.rc)
     target_include_directories(${NX_GAME} PRIVATE runtime/include runtime/src "${NX_GAME_DIR}" "${NX_VULKAN_INCLUDE}")
-    target_link_libraries(${NX_GAME} PRIVATE SDL3::SDL3 ole32 psapi winmm dxgi ws2_32)
+    target_link_libraries(${NX_GAME} PRIVATE SDL3::SDL3 ole32 psapi winmm dxgi ws2_32 bcrypt)
     if(NX_GAME_FROM_FOLDER)
         # The game's code from game/windows-x64/<game>_game.dll, which the player hands its runtime calls to
         # (game_abi.cpp: nx_game_bind).
@@ -510,8 +538,8 @@ endif()
 # The settings screen (runtime/src/ui): Dear ImGui (NX_IMGUI_DIR, above). Without it the screen is a stub;
 # config.ini still works.
 if(EXISTS "${NX_IMGUI_DIR}/imgui.cpp")
-    target_sources(${NX_GAME} PRIVATE runtime/src/ui/ui.cpp runtime/src/ui/settings.cpp runtime/src/ui/i18n.cpp
-        runtime/src/ui/theme.cpp ${NX_IMGUI_DIR}/imgui.cpp ${NX_IMGUI_DIR}/imgui_draw.cpp ${NX_IMGUI_DIR}/imgui_tables.cpp
+    target_sources(${NX_GAME} PRIVATE runtime/src/ui/ui.cpp runtime/src/ui/settings.cpp runtime/src/ui/amiibo_importer.cpp
+        runtime/src/ui/i18n.cpp runtime/src/ui/theme.cpp ${NX_IMGUI_DIR}/imgui.cpp ${NX_IMGUI_DIR}/imgui_draw.cpp ${NX_IMGUI_DIR}/imgui_tables.cpp
         ${NX_IMGUI_DIR}/imgui_widgets.cpp ${NX_IMGUI_DIR}/backends/imgui_impl_vulkan.cpp)
     target_include_directories(${NX_GAME} PRIVATE ${NX_IMGUI_DIR})
     target_compile_definitions(${NX_GAME} PRIVATE IMGUI_IMPL_VULKAN_NO_PROTOTYPES $<$<NOT:$<BOOL:${ANDROID}>>:NX_HAVE_SDL3>)

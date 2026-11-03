@@ -44,6 +44,8 @@
 
 #include "kernel.h"
 #include "config.h"
+#include "nfp_host.h"
+#include "ui/amiibo_importer.h"
 #include "ui/ui.h"
 #include "bug_report.h"
 #include "platform.h"
@@ -479,6 +481,8 @@ static void sample_input() {
                (m & SDL_KMOD_RALT ? 8u : 0u) | (m & SDL_KMOD_GUI ? 16u : 0u) | (m & SDL_KMOD_CAPS ? 256u : 0u) |
                (m & SDL_KMOD_SCROLL ? 512u : 0u) | (m & SDL_KMOD_NUM ? 1024u : 0u);
     }
+    if (focused && nx::ui::ui_visible()) nx::ui::amiibo_importer_poll();
+    nx::nfp_host::poll();
     // The settings screen takes the input while it is open (and watches for its Minus + Plus combo).
     bool ui = nx::ui::ui_pad(p.buttons, p.lx, p.ly);
     p.buttons = nx::ui::ui_filter_game_buttons(p.buttons, ui);
@@ -592,6 +596,23 @@ void pick_path(bool zip, const std::string& title) {
             SDL_SetNumberProperty(props, SDL_PROP_FILE_DIALOG_NFILTERS_NUMBER, 1);
         }
         SDL_ShowFileDialogWithProperties(zip ? SDL_FILEDIALOG_OPENFILE : SDL_FILEDIALOG_OPENFOLDER, picked, nullptr, props);
+        SDL_DestroyProperties(props);
+    });
+}
+
+void pick_file(const std::string& title, const char* extension) {
+    {
+        std::lock_guard lk(g_pick_lock);
+        g_pick_done = false;
+    }
+    run_on_main([title, extension] {
+        SDL_PropertiesID props = SDL_CreateProperties();
+        SDL_SetPointerProperty(props, SDL_PROP_FILE_DIALOG_WINDOW_POINTER, g_window);
+        SDL_SetStringProperty(props, SDL_PROP_FILE_DIALOG_TITLE_STRING, title.c_str());
+        SDL_DialogFileFilter filter = {extension, extension};
+        SDL_SetPointerProperty(props, SDL_PROP_FILE_DIALOG_FILTERS_POINTER, &filter);
+        SDL_SetNumberProperty(props, SDL_PROP_FILE_DIALOG_NFILTERS_NUMBER, 1);
+        SDL_ShowFileDialogWithProperties(SDL_FILEDIALOG_OPENFILE, picked, nullptr, props);
         SDL_DestroyProperties(props);
     });
 }
