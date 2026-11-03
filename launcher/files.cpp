@@ -90,15 +90,25 @@ fs::path child_dir(const fs::path& dir, const char* name) {
 
 struct GameFolder {
     fs::path exefs, romfs, aoc;
+    bool pak = false;  // romfs is romfs.pak: the RomFS in one file (ACNHRecomp-Importer's option, hle_fs.cpp)
 };
 
-// The parts of a game folder: exefs/ and romfs/ (or extract/romfs/), and aoc/ when there is add-on content.
+// Whether the file starts like a packed RomFS ("NXRP", version 1).
+bool is_romfs_pak(const fs::path& p) {
+    std::ifstream f(p, std::ios::binary);
+    char h[8] = {};
+    return f.read(h, 8) && std::memcmp(h, "NXRP\x01\0\0\0", 8) == 0;
+}
+
+// The parts of a game folder: exefs/ and romfs/ (or extract/romfs/, or romfs.pak), and aoc/ when there is add-on
+// content. romfs.pak wins, as in the player.
 bool game_parts(const std::string& path, GameFolder& g) {
     std::error_code ec;
     fs::path d = u8(path);
     if (!fs::is_directory(d, ec)) return false;
     g.exefs = child_dir(d, "exefs");
-    g.romfs = child_dir(d, "romfs");
+    g.pak = fs::is_regular_file(d / "romfs.pak", ec) && is_romfs_pak(d / "romfs.pak");
+    g.romfs = g.pak ? d / "romfs.pak" : child_dir(d, "romfs");
     if (g.romfs.empty() && fs::is_directory(d / "extract" / "romfs", ec)) g.romfs = d / "extract" / "romfs";
     g.aoc = child_dir(d, "aoc");
     return !g.exefs.empty() && !g.romfs.empty();
@@ -300,7 +310,7 @@ FileCheck check_file(Kind kind, const std::string& path) {
         if (b.empty()) return ok(Status::Error, trf("launcher.err.game_exefs", m));
         if (std::strcmp(m, "main") == 0) id = b;
     }
-    if (!fs::is_directory(g.romfs / "Shader", ec)) return ok(Status::Error, tr("launcher.err.game_romfs"));
+    if (!g.pak && !fs::is_directory(g.romfs / "Shader", ec)) return ok(Status::Error, tr("launcher.err.game_romfs"));
     size_t addons = 0;
     if (!g.aoc.empty())
         for (const auto& e : fs::directory_iterator(g.aoc, ec))
