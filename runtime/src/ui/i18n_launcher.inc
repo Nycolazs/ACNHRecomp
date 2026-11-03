@@ -138,7 +138,7 @@ const Entry kLauncherEn[] = {
     {"launcher.addons.close", "Close"},
     {"launcher.home.start_over", "Set up again"},
     {"launcher.credits", "Credits"},
-    {"launcher.credits.text", "People who built on ACNHRecomp, and the projects it stands on."},
+    {"launcher.credits.text", "People who built and contributed to ACNHRecomp, and the projects it stands on."},
     {"launcher.credits.contributors", "Contributors"},
     {"launcher.credits.contributors.desc", "GitHub name, then what they added. Tap a name to open their profile."},
     {"launcher.credits.contrib.nycolazs", "Project creator and maintainer: recompilation, runtime, launcher, and releases."},
