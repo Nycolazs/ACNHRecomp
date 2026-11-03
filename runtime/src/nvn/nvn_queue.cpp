@@ -252,9 +252,10 @@ void QueueSubmitCommands(CPU& c) {  // (NVNqueue*, int count, const NVNcommandHa
         g_sub_called++;
     }
     tl("submit-call");
-    worker_run([lists = std::move(lists), deferred, scale = uw_wanted_generation()] {
+    worker_run([lists = std::move(lists), deferred, scale = uw_wanted_generation(), cam = temporal_submit()] {
         tl("replay>");
         uw_allow(scale);  // the screen scale this frame was recorded for (nvn_ultrawide.cpp)
+        temporal_allow(cam);  // the camera it was drawn with (nvn_temporal.cpp)
         gpu_submit(lists, deferred);
         tl("replay<");
         submit_done();

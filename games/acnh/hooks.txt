@@ -13,7 +13,7 @@
 31c3f98  # guiTouchManager::update (main+31c3b50) before its hit tests: window buttons kept reachable (pointer.cpp)
 3c48c60  # focus manager input (main+3c48c60): a click on a list item focuses it and presses A (pointer.cpp)
 3c4b1fc  # button handler input (main+3c4b1fc): a click while a message waits for its button presses A (pointer.cpp)
-37e4624  # DIAG sead::LookAtCamera::doUpdateMatrix entry (temporary)
+37e4624  # sead::LookAtCamera::doUpdateMatrix entry (x0 = this): the camera temporal AA reprojects with (nvn_temporal.cpp)
 2216938  # DIAG entry (temporary)
 226af00  # DIAG entry (temporary)
 7c6430  # DIAG entry (temporary)

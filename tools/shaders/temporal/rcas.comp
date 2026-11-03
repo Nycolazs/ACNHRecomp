@@ -1,0 +1,32 @@
+#version 450
+// Sharpening after DLAA (nvn_temporal.cpp; DLSS has none of its own): AMD's RCAS (FidelityFX FSR 1, MIT), the cross of
+// 5 pixels sharpened only as far as it stays within the neighbourhood's range. The picture is linear HDR here: it is
+// taken into 0..1 by c / (1 + max(c)) and back after, so highlights are sharpened as the rest is.
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(binding = 0, rgba16f) uniform readonly image2D src;
+layout(binding = 1, rgba16f) uniform writeonly image2D dst;
+layout(push_constant) uniform Push {
+    float sharpness;  // exp2(-stops): 1 the most, 0.25 two stops softer
+} pc;
+
+vec3 load(ivec2 p) {
+    vec3 c = max(imageLoad(src, clamp(p, ivec2(0), imageSize(src) - 1)).rgb, vec3(0.0));
+    return c / (1.0 + max(c.r, max(c.g, c.b)));
+}
+
+void main() {
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(p, imageSize(src)))) return;
+    vec3 b = load(p + ivec2(0, -1)), d = load(p + ivec2(-1, 0)), e = load(p), f = load(p + ivec2(1, 0)),
+         h = load(p + ivec2(0, 1));
+    vec3 mn4 = min(min(b, d), min(f, h)), mx4 = max(max(b, d), max(f, h));
+    const vec2 peak = vec2(1.0, -4.0);
+    vec3 hit_min = min(mn4, e) / (4.0 * mx4 + 1e-6);
+    vec3 hit_max = (peak.x - max(mx4, e)) / (4.0 * mn4 + peak.y);
+    vec3 lobe3 = max(-hit_min, hit_max);
+    float lobe = max(-0.1875, min(max(lobe3.r, max(lobe3.g, lobe3.b)), 0.0)) * pc.sharpness;
+    vec3 t = (lobe * (b + d + f + h) + e) / (4.0 * lobe + 1.0);
+    t = clamp(t, vec3(0.0), vec3(0.999));
+    float alpha = imageLoad(src, p).a;
+    imageStore(dst, p, vec4(t / (1.0 - max(t.r, max(t.g, t.b))), alpha));
+}

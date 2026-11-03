@@ -10,6 +10,7 @@
 27d4c0  # nn::ui2d::Pane::Calculate entry: same as 3.0.2 (nvn_ultrawide.cpp)
 37e5b6c  # sead::OrthoProjection::doUpdateMatrix entry (nvn_ultrawide.cpp; 3.0.2 main+37e5b5c)
 37e5968  # sead::PerspectiveProjection::doUpdateMatrix entry (nvn_ultrawide.cpp; 3.0.2 main+37e5958)
+37e4634  # sead::LookAtCamera::doUpdateMatrix entry (nvn_temporal.cpp; 3.0.2 main+37e4624)
 6d659c  # job worker's Havok thread registration: same as 3.0.2 (game.cpp, the Phive guard)
 31c3fa8  # guiTouchManager::update (main+31c3b60) before its hit tests, x24 = the manager (v3_0_3.cpp; 3.0.2 main+31c3f98)
 3c48c70  # focus manager input entry (v3_0_3.cpp; 3.0.2 main+3c48c60)
