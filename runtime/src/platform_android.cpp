@@ -590,6 +590,53 @@ int system_adreno_model(void* lib) {
     return model;
 }
 
+// The first .so file in <game folder>/drivers/ (sorted by name), "" when there is none.
+std::string custom_driver_file() {
+    std::vector<std::string> found;
+    if (DIR* d = opendir((g_root + "/drivers").c_str())) {
+        while (dirent* e = readdir(d)) {
+            std::string n = e->d_name;
+            if (n.size() > 3 && n.compare(n.size() - 3, 3, ".so") == 0) found.push_back(n);
+        }
+        closedir(d);
+    }
+    std::sort(found.begin(), found.end());
+    return found.empty() ? std::string() : g_root + "/drivers/" + found[0];
+}
+
+void* load_custom_driver(const std::string& so) {
+    namespace fs = std::filesystem;
+    std::string name = fs::path(so).filename().string();
+    std::string dir = g_cache_dir + "/custom_driver/";
+    std::error_code ec;
+    fs::create_directories(dir, ec);
+    // Copied again when the file in the game folder changed (another size or a newer time).
+    fs::path dst = fs::path(dir) / name;
+    bool fresh = fs::exists(dst, ec) && fs::file_size(dst, ec) == fs::file_size(so, ec) &&
+                 fs::last_write_time(dst, ec) >= fs::last_write_time(so, ec);
+    if (!fresh) {
+        for (const auto& e : fs::directory_iterator(dir, ec)) fs::remove(e.path(), ec);  // one driver at a time
+        fs::copy_file(so, dst, fs::copy_options::overwrite_existing, ec);
+        if (ec) {
+            nx::log("vulkan: could not copy the custom driver %s (%s): the default driver", so.c_str(), ec.message().c_str());
+            return nullptr;
+        }
+        chmod(dst.c_str(), 0700);
+    }
+    std::string tmp = g_cache_dir + "/adrenotools/";
+    mkdir(tmp.c_str(), 0700);
+    std::string hooks = g_native_lib_dir + "/";
+    if (void* h = adrenotools_open_libvulkan(RTLD_NOW, ADRENOTOOLS_DRIVER_CUSTOM, tmp.c_str(), hooks.c_str(), dir.c_str(),
+                                             name.c_str(), nullptr, nullptr)) {
+        if (void* gipa = dlsym(h, "vkGetInstanceProcAddr")) {
+            nx::log("vulkan: custom driver %s (from the game folder's drivers/) through libadrenotools", name.c_str());
+            return gipa;
+        }
+    }
+    nx::log("vulkan: the custom driver %s could not be loaded (%s): the default driver", name.c_str(), dlerror());
+    return nullptr;
+}
+
 void* load_vulkan() {
     std::string pick = std::getenv("NX_GPU_DRIVER") ? std::getenv("NX_GPU_DRIVER") : nx::config_get("video.gpu_driver", "auto");
     char vk[PROP_VALUE_MAX] = {};
@@ -606,6 +653,19 @@ void* load_vulkan() {
             setenv("NX_UBWC_FLAGS", "0", 0);
             setenv("NX_ZERO_COPY", "0", 0);
         }
+    }
+    if (pick == "custom") {
+        // A driver the player chose (issue #47): the first .so in <game folder>/drivers/, e.g. a newer Turnip build's
+        // libvulkan_freedreno.so. Shared storage cannot hold code that runs, so it is copied into the app's own
+        // storage first and loaded from there through libadrenotools, the way the bundled Turnip is. Adreno only.
+        std::string so = custom_driver_file();
+        if (so.empty())
+            nx::log("vulkan: video.gpu_driver = custom, but %s/drivers/ has no .so: the default driver", g_root.c_str());
+        else if (std::strcmp(vk, "adreno") != 0)
+            nx::log("vulkan: a custom driver needs an Adreno GPU (this one is \"%s\"): the phone's driver", vk);
+        else if (void* gipa = load_custom_driver(so))
+            return gipa;
+        pick = "auto";
     }
     if (pick != "system" && std::strcmp(vk, "adreno") == 0 && !g_native_lib_dir.empty() && access(turnip.c_str(), R_OK) == 0) {
         // Binning on (Turnip's default): the main pass and the whole frame took much less GPU time with it on the S20

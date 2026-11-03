@@ -33,6 +33,11 @@ struct Entry {
 // clang-format off
 
 const Entry kEn[] = {
+    {"video.gpu_driver", "GPU driver"},
+    {"video.gpu_driver.desc", "Which Vulkan driver the game uses. Automatic: the bundled Turnip on Adreno 6xx/7xx, the phone's own driver on Adreno 8xx and other GPUs. Custom: the first .so file in the game folder's drivers/ folder (for example a newer Turnip's libvulkan_freedreno.so; Adreno only). Applies after a restart."},
+    {"video.gpu_driver.turnip", "Bundled Turnip (Mesa)"},
+    {"video.gpu_driver.system", "Phone's driver"},
+    {"video.gpu_driver.custom", "Custom (drivers/ folder)"},
     {"app.title", "Settings"},
     {"app.subtitle", "ACNHRecomp"},
     {"app.hint_open", "Press F1 or Minus + Plus to open the settings"},
@@ -377,6 +382,11 @@ const Entry kEn[] = {
 };
 
 const Entry kPtBr[] = {
+    {"video.gpu_driver", "Driver da GPU"},
+    {"video.gpu_driver.desc", "Qual driver Vulkan o jogo usa. Automático: o Turnip incluído nas Adreno 6xx/7xx, o driver do próprio celular nas Adreno 8xx e nas outras GPUs. Personalizado: o primeiro arquivo .so da pasta drivers/ dentro da pasta do jogo (por exemplo o libvulkan_freedreno.so de um Turnip mais novo; só Adreno). Vale depois de reiniciar."},
+    {"video.gpu_driver.turnip", "Turnip incluído (Mesa)"},
+    {"video.gpu_driver.system", "Driver do celular"},
+    {"video.gpu_driver.custom", "Personalizado (pasta drivers/)"},
     {"app.title", "Configurações"},
     {"app.subtitle", "ACNHRecomp"},
     {"app.hint_open", "Pressione F1 ou Menos + Mais para abrir as configurações"},
@@ -622,6 +632,11 @@ const Entry kPtBr[] = {
 };
 
 const Entry kEs[] = {
+    {"video.gpu_driver", "Controlador de la GPU"},
+    {"video.gpu_driver.desc", "Qué controlador Vulkan usa el juego. Automático: el Turnip incluido en Adreno 6xx/7xx, el del propio móvil en Adreno 8xx y en otras GPU. Personalizado: el primer archivo .so de la carpeta drivers/ dentro de la carpeta del juego (por ejemplo el libvulkan_freedreno.so de un Turnip más nuevo; solo Adreno). Se aplica al reiniciar."},
+    {"video.gpu_driver.turnip", "Turnip incluido (Mesa)"},
+    {"video.gpu_driver.system", "Controlador del móvil"},
+    {"video.gpu_driver.custom", "Personalizado (carpeta drivers/)"},
     {"app.title", "Ajustes"},
     {"app.subtitle", "ACNHRecomp"},
     {"app.hint_open", "Pulsa F1 o Menos + Más para abrir los ajustes"},
@@ -856,6 +871,11 @@ const Entry kEs[] = {
 };
 
 const Entry kFr[] = {
+    {"video.gpu_driver", "Pilote GPU"},
+    {"video.gpu_driver.desc", "Le pilote Vulkan utilisé par le jeu. Automatique : le Turnip inclus sur Adreno 6xx/7xx, le pilote du téléphone sur Adreno 8xx et les autres GPU. Personnalisé : le premier fichier .so du dossier drivers/ du dossier du jeu (par exemple le libvulkan_freedreno.so d'un Turnip plus récent ; Adreno uniquement). S'applique au redémarrage."},
+    {"video.gpu_driver.turnip", "Turnip inclus (Mesa)"},
+    {"video.gpu_driver.system", "Pilote du téléphone"},
+    {"video.gpu_driver.custom", "Personnalisé (dossier drivers/)"},
     {"app.title", "Paramètres"},
     {"app.subtitle", "ACNHRecomp"},
     {"app.hint_open", "Appuyez sur F1 ou Moins + Plus pour ouvrir les paramètres"},
@@ -1086,6 +1106,11 @@ const Entry kFr[] = {
 };
 
 const Entry kDe[] = {
+    {"video.gpu_driver", "GPU-Treiber"},
+    {"video.gpu_driver.desc", "Welchen Vulkan-Treiber das Spiel verwendet. Automatisch: das mitgelieferte Turnip auf Adreno 6xx/7xx, der Treiber des Telefons auf Adreno 8xx und anderen GPUs. Eigener: die erste .so-Datei im Ordner drivers/ des Spielordners (z. B. libvulkan_freedreno.so eines neueren Turnip; nur Adreno). Gilt nach einem Neustart."},
+    {"video.gpu_driver.turnip", "Mitgeliefertes Turnip (Mesa)"},
+    {"video.gpu_driver.system", "Treiber des Telefons"},
+    {"video.gpu_driver.custom", "Eigener (Ordner drivers/)"},
     {"app.title", "Einstellungen"},
     {"app.subtitle", "ACNHRecomp"},
     {"app.hint_open", "Drücke F1 oder Minus + Plus, um die Einstellungen zu öffnen"},
@@ -1291,6 +1316,11 @@ const Entry kDe[] = {
 };
 
 const Entry kIt[] = {
+    {"video.gpu_driver", "Driver GPU"},
+    {"video.gpu_driver.desc", "Il driver Vulkan usato dal gioco. Automatico: il Turnip incluso su Adreno 6xx/7xx, il driver del telefono su Adreno 8xx e sulle altre GPU. Personalizzato: il primo file .so nella cartella drivers/ della cartella del gioco (ad esempio libvulkan_freedreno.so di un Turnip più recente; solo Adreno). Si applica al riavvio."},
+    {"video.gpu_driver.turnip", "Turnip incluso (Mesa)"},
+    {"video.gpu_driver.system", "Driver del telefono"},
+    {"video.gpu_driver.custom", "Personalizzato (cartella drivers/)"},
     {"app.title", "Impostazioni"},
     {"app.subtitle", "ACNHRecomp"},
     {"app.hint_open", "Premi F1 o Meno + Più per aprire le impostazioni"},
@@ -1495,6 +1525,11 @@ const Entry kIt[] = {
 };
 
 const Entry kNl[] = {
+    {"video.gpu_driver", "GPU-stuurprogramma"},
+    {"video.gpu_driver.desc", "Welk Vulkan-stuurprogramma het spel gebruikt. Automatisch: de meegeleverde Turnip op Adreno 6xx/7xx, het stuurprogramma van de telefoon op Adreno 8xx en andere GPU's. Aangepast: het eerste .so-bestand in de map drivers/ van de spelmap (bijv. libvulkan_freedreno.so van een nieuwere Turnip; alleen Adreno). Geldt na een herstart."},
+    {"video.gpu_driver.turnip", "Meegeleverde Turnip (Mesa)"},
+    {"video.gpu_driver.system", "Stuurprogramma van de telefoon"},
+    {"video.gpu_driver.custom", "Aangepast (map drivers/)"},
     {"app.title", "Instellingen"},
     {"app.subtitle", "ACNHRecomp"},
     {"app.hint_open", "Druk op F1 of Min + Plus om de instellingen te openen"},
@@ -1698,6 +1733,11 @@ const Entry kNl[] = {
 };
 
 const Entry kRu[] = {
+    {"video.gpu_driver", "Драйвер GPU"},
+    {"video.gpu_driver.desc", "Какой драйвер Vulkan использует игра. Автоматически: встроенный Turnip на Adreno 6xx/7xx, драйвер телефона на Adreno 8xx и других GPU. Свой: первый файл .so в папке drivers/ внутри папки игры (например, libvulkan_freedreno.so более новой сборки Turnip; только Adreno). Применяется после перезапуска."},
+    {"video.gpu_driver.turnip", "Встроенный Turnip (Mesa)"},
+    {"video.gpu_driver.system", "Драйвер телефона"},
+    {"video.gpu_driver.custom", "Свой (папка drivers/)"},
     {"app.title", "Настройки"},
     {"app.subtitle", "ACNHRecomp"},
     {"app.hint_open", "Нажмите F1 или Минус + Плюс, чтобы открыть настройки"},
@@ -1901,6 +1941,11 @@ const Entry kRu[] = {
 };
 
 const Entry kJa[] = {
+    {"video.gpu_driver", "GPU ドライバー"},
+    {"video.gpu_driver.desc", "ゲームが使う Vulkan ドライバー。自動: Adreno 6xx/7xx では同梱の Turnip、Adreno 8xx やその他の GPU では端末のドライバー。カスタム: ゲームフォルダー内の drivers/ フォルダーにある最初の .so ファイル (新しい Turnip の libvulkan_freedreno.so など。Adreno のみ)。再起動後に適用されます。"},
+    {"video.gpu_driver.turnip", "同梱の Turnip (Mesa)"},
+    {"video.gpu_driver.system", "端末のドライバー"},
+    {"video.gpu_driver.custom", "カスタム (drivers/ フォルダー)"},
     {"app.title", "設定"},
     {"app.subtitle", "ACNHRecomp"},
     {"app.hint_open", "F1キー、または −ボタンと+ボタンの同時押しで設定を開けます"},
@@ -2101,6 +2146,11 @@ const Entry kJa[] = {
 };
 
 const Entry kKo[] = {
+    {"video.gpu_driver", "GPU 드라이버"},
+    {"video.gpu_driver.desc", "게임이 사용할 Vulkan 드라이버. 자동: Adreno 6xx/7xx에서는 내장 Turnip, Adreno 8xx와 다른 GPU에서는 휴대폰 자체 드라이버. 사용자 지정: 게임 폴더의 drivers/ 폴더에 있는 첫 번째 .so 파일 (예: 최신 Turnip의 libvulkan_freedreno.so, Adreno 전용). 다시 시작한 뒤 적용됩니다."},
+    {"video.gpu_driver.turnip", "내장 Turnip (Mesa)"},
+    {"video.gpu_driver.system", "휴대폰 드라이버"},
+    {"video.gpu_driver.custom", "사용자 지정 (drivers/ 폴더)"},
     {"app.title", "설정"},
     {"app.subtitle", "ACNHRecomp"},
     {"app.hint_open", "F1 키를 누르거나 −버튼과 +버튼을 함께 눌러 설정을 열 수 있습니다"},
@@ -2298,6 +2348,11 @@ const Entry kKo[] = {
 };
 
 const Entry kZhCn[] = {
+    {"video.gpu_driver", "GPU 驱动"},
+    {"video.gpu_driver.desc", "游戏使用的 Vulkan 驱动。自动：Adreno 6xx/7xx 使用内置 Turnip，Adreno 8xx 及其他 GPU 使用手机自带驱动。自定义：游戏文件夹中 drivers/ 文件夹里的第一个 .so 文件（例如较新 Turnip 的 libvulkan_freedreno.so；仅限 Adreno）。重启后生效。"},
+    {"video.gpu_driver.turnip", "内置 Turnip (Mesa)"},
+    {"video.gpu_driver.system", "手机自带驱动"},
+    {"video.gpu_driver.custom", "自定义（drivers/ 文件夹）"},
     {"app.title", "设置"},
     {"app.subtitle", "ACNHRecomp"},
     {"app.hint_open", "按 F1 键，或同时按下 − 和 + 按钮，即可打开设置"},
@@ -2488,6 +2543,11 @@ const Entry kZhCn[] = {
 };
 
 const Entry kZhTw[] = {
+    {"video.gpu_driver", "GPU 驅動程式"},
+    {"video.gpu_driver.desc", "遊戲使用的 Vulkan 驅動程式。自動：Adreno 6xx/7xx 使用內建 Turnip，Adreno 8xx 及其他 GPU 使用手機本身的驅動程式。自訂：遊戲資料夾中 drivers/ 資料夾裡的第一個 .so 檔案（例如較新 Turnip 的 libvulkan_freedreno.so；僅限 Adreno）。重新啟動後生效。"},
+    {"video.gpu_driver.turnip", "內建 Turnip (Mesa)"},
+    {"video.gpu_driver.system", "手機本身的驅動程式"},
+    {"video.gpu_driver.custom", "自訂（drivers/ 資料夾）"},
     {"app.title", "設定"},
     {"app.subtitle", "ACNHRecomp"},
     {"app.hint_open", "按 F1 鍵，或同時按下 − 和 + 按鈕，即可開啟設定"},
