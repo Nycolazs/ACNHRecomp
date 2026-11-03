@@ -874,6 +874,13 @@ void page_video() {
               w);
     });
     row("video.root_clocks", "video.root_clocks.desc", [&](float w) { toggle("video.root_clocks", false, w); });
+    // Read when Vulkan is loaded (platform_android.cpp load_vulkan): a restart (issue #47).
+    row("video.gpu_driver", "video.gpu_driver.desc", [&](float w) {
+        combo("video.gpu_driver", "auto",
+              {{"auto", tr("common.auto")}, {"turnip", tr("video.gpu_driver.turnip")},
+               {"system", tr("video.gpu_driver.system")}, {"custom", tr("video.gpu_driver.custom")}},
+              w);
+    });
 #endif
 }
 

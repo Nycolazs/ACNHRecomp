@@ -390,7 +390,7 @@ std::vector<ConfigEntry> config_all() {
 bool config_needs_restart(const std::string& key) {
     for (const Mapping& m : kMappings)
         if (key == m.key) return m.restart;
-    return key == "game.mods" || key == "controls.glyphs" || key == "input.layout" || key == "video.preset";  // icons: read at boot
+    return key == "game.mods" || key == "video.gpu_driver" || key == "controls.glyphs" || key == "input.layout" || key == "video.preset";  // icons: read at boot
 }
 
 }  // namespace nx

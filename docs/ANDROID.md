@@ -166,6 +166,19 @@ the floors of the memory bus and L3 clocks raised made no difference). The phone
 Native 1080 rows run at ~26 game frames a second on the Adreno 650 (the GPU is the limit there).
 Benchmarks: `NX_TIME_OFFSET=<seconds>` in `config.txt` moves the game's clock, for the same light every run.
 
+## GPU driver
+
+*Settings > Video > GPU driver* (`video.gpu_driver` in `config.ini`, `NX_GPU_DRIVER` in `config.txt`) chooses the
+Vulkan driver; it applies after a restart:
+
+- **Automatic** (default): the bundled Turnip on Adreno 6xx/7xx; the phone's own driver on Adreno 8xx (the bundled
+  Turnip draws only noise there), on Mali and on Xclipse.
+- **Bundled Turnip** / **Phone's driver**: one or the other, whatever the GPU.
+- **Custom**: the first `.so` file in a `drivers/` folder inside the game folder, for example the
+  `libvulkan_freedreno.so` from a newer Turnip build (the ones made for emulators come as a `.zip`: take the `.so`
+  out of it). The app copies it into its own storage and loads it through libadrenotools, as it does the bundled
+  Turnip. Adreno only. If it cannot be loaded, the log says why and the automatic choice is used.
+
 ## Troubleshooting
 
 - **Black screen or the app closes at start**: `adb shell cat <data folder>/nx.log | tail -50` and open an issue
