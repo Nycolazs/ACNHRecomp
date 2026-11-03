@@ -4,6 +4,8 @@
 // through a null pointer (ACNH: Orville's "local play" crashed the game).
 #include <nx/runtime.h>
 
+#include "nfp_host.h"
+
 namespace nx {
 
 namespace {
@@ -19,7 +21,13 @@ void eai_fail(CPU& c) { c.x[0] = 4; }   // EAI_FAIL
 void htonl_(CPU& c) { c.x[0] = bswap(uint32_t(c.x[0])); }
 void htons_(CPU& c) { c.x[0] = bswap(uint16_t(c.x[0])); }
 void show_error(CPU& c) {  // the first argument: a Result or an ErrorCode (by value), or a pointer to an argument
-    log("nn::err::%s(%#llx)", hle_current_name(), (unsigned long long)c.x[0]);
+    const uint64_t code = c.x[0];
+    if (code <= 0xffffffffull && (code & 0x1ff) == 115) {  // nn::nfp / nn::nfc module
+        log("nn::err::%s(%#llx) nfp error, virtual amiibo %s (lr %s)", hle_current_name(), (unsigned long long)code,
+            nfp_host::has_tag() ? "loaded" : "not loaded", describe(c.x[30]).c_str());
+        return;
+    }
+    log("nn::err::%s(%#llx)", hle_current_name(), (unsigned long long)code);
 }
 
 }  // namespace

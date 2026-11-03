@@ -1283,4 +1283,15 @@ void gpu_present(uint64_t texture, const int32_t* crop, int interval) {
     }
 }
 
+// ImGui font uploads (imgui_impl_vulkan.cpp) share the game's queue with NVN replay/present.
+extern "C" VkResult nx_ui_vk_queue_submit(VkQueue queue, const VkSubmitInfo* submit_info, VkFence fence) {
+    std::lock_guard<std::mutex> q(vk_queue_mutex());
+    return p_vkQueueSubmit(queue, 1, submit_info, fence);
+}
+
+extern "C" VkResult nx_ui_vk_queue_wait_idle(VkQueue queue) {
+    std::lock_guard<std::mutex> q(vk_queue_mutex());
+    return p_vkQueueWaitIdle(queue);
+}
+
 }  // namespace nx::nvn

@@ -612,6 +612,7 @@ std::string controller_kind() { return ""; }
 void rumble(float, float, uint32_t) {}
 void open_path(const std::string&) {}
 void pick_path(bool, const std::string&) {}
+void pick_file(const std::string&, const char*) {}
 bool pick_result(std::string& path) {
     path.clear();
     return false;

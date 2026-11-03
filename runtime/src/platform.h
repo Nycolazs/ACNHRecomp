@@ -230,6 +230,7 @@ std::string controller_kind();                 // "switch", "xbox", "playstation
 void open_path(const std::string& path);       // shows a folder in the file manager
 // Asks the player for a folder (or a .zip when `zip`): the answer arrives later; poll with pick_result.
 void pick_path(bool zip, const std::string& title);
+void pick_file(const std::string& title, const char* extension);  // a single file (e.g. Amiibo .bin)
 bool pick_result(std::string& path);           // true once, when an answer came ("" = cancelled)
 
 // Audio: s16 stereo 48 kHz. `done` is called (on any thread) when a submitted buffer has been played.
