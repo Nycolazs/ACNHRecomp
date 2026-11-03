@@ -1838,7 +1838,8 @@ void mods_popup() {
     ImGui::PushStyleColor(ImGuiCol_NavCursor, ImVec4(0, 0, 0, 0));
     const ImVec2 ds = ImGui::GetIO().DisplaySize;
     ImGui::SetNextWindowSize(ImVec2(std::min(ds.x * 0.94f, S(1180)), std::min(ds.y * 0.9f, S(700))));
-    if (ImGui::BeginPopupModal("mods", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize)) {
+    if (ImGui::BeginPopupModal("mods", nullptr,
+                               ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove)) {
         ImDrawList* dl = ImGui::GetWindowDrawList();
         ImVec2 p = ImGui::GetCursorScreenPos();
         float r = S(18);
@@ -1916,7 +1917,9 @@ void mods_popup() {
 
                 ImGui::SetCursorScreenPos(ImVec2(badge.x + 2 * br + S(10), badge.y));
                 bool enabled = mod.enabled;
-                if (ImGui::Checkbox("##on", &enabled)) {
+                // Bundled mods (ptbr / speedfix60) are driven by language / 60 FPS settings — not toggled here.
+                ImGui::BeginDisabled(mod.managed);
+                if (ImGui::Checkbox("##on", &enabled) && !mod.managed) {
                     std::string err;
                     if (nx::mod_manager::set_enabled(g_build.data, mod.id, enabled, &err)) {
                         load_game_ini();
@@ -1936,36 +1939,44 @@ void mods_popup() {
                     } else
                         g_banner = trf("launcher.mods.toggle_failed", err);
                 }
+                ImGui::EndDisabled();
                 nav_item();
                 ImGui::SameLine();
                 ImGui::AlignTextToFramePadding();
                 ImGui::TextUnformatted(mod.id.c_str());
-                if (mod.managed) ImGui::TextDisabled("%s", tr("launcher.mods.managed"));
+                if (mod.managed) {
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+                    ImGui::TextWrapped("%s", tr("launcher.mods.managed"));
+                    ImGui::PopStyleColor();
+                }
                 if (mod.has_exefs) ImGui::TextDisabled("%s", tr("launcher.mods.exefs_warn"));
 
-                ImGui::SetCursorPosY(tile_h - ImGui::GetStyle().WindowPadding.y - ImGui::GetFrameHeight() - S(4));
-                // Keep Up/Down in the nav tree even when off so tiles do not gain/lose targets on toggle.
-                if (button(up_l, kWhite, mod.enabled, action_w)) {
-                    std::string err;
-                    if (nx::mod_manager::move_enabled(g_build.data, mod.id, -1, &err)) {
-                        load_game_ini();
-                        g_mods_refresh = true;
-                        if (ImGui::GetCurrentContext()->NavInputSource == ImGuiInputSource_Gamepad)
-                            g_mods_refresh_wait_pad = true;
+                // Bundled mods have no reorder / delete controls (avoids overlap with the note above).
+                if (!mod.managed) {
+                    ImGui::SetCursorPosY(tile_h - ImGui::GetStyle().WindowPadding.y - ImGui::GetFrameHeight() - S(4));
+                    // Keep Up/Down in the nav tree even when off so tiles do not gain/lose targets on toggle.
+                    if (button(up_l, kWhite, mod.enabled, action_w)) {
+                        std::string err;
+                        if (nx::mod_manager::move_enabled(g_build.data, mod.id, -1, &err)) {
+                            load_game_ini();
+                            g_mods_refresh = true;
+                            if (ImGui::GetCurrentContext()->NavInputSource == ImGuiInputSource_Gamepad)
+                                g_mods_refresh_wait_pad = true;
+                        }
                     }
-                }
-                ImGui::SameLine();
-                if (button(down_l, kWhite, mod.enabled, action_w)) {
-                    std::string err;
-                    if (nx::mod_manager::move_enabled(g_build.data, mod.id, 1, &err)) {
-                        load_game_ini();
-                        g_mods_refresh = true;
-                        if (ImGui::GetCurrentContext()->NavInputSource == ImGuiInputSource_Gamepad)
-                            g_mods_refresh_wait_pad = true;
+                    ImGui::SameLine();
+                    if (button(down_l, kWhite, mod.enabled, action_w)) {
+                        std::string err;
+                        if (nx::mod_manager::move_enabled(g_build.data, mod.id, 1, &err)) {
+                            load_game_ini();
+                            g_mods_refresh = true;
+                            if (ImGui::GetCurrentContext()->NavInputSource == ImGuiInputSource_Gamepad)
+                                g_mods_refresh_wait_pad = true;
+                        }
                     }
+                    ImGui::SameLine();
+                    if (button(del_l, kRed, true, action_w)) g_mods_delete_id = mod.id;
                 }
-                ImGui::SameLine();
-                if (button(del_l, kRed, true, action_w)) g_mods_delete_id = mod.id;
 
                 ImGui::EndChild();
                 // Soft settle animation like the add-ons cards.
