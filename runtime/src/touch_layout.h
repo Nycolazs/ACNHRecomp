@@ -12,8 +12,10 @@ struct TouchButton {
     float x, y, r;  // centre across the landscape screen (0..1), radius as a fraction of its height
     uint64_t button;
 };
-// The game's layout (count 0: the game handles touch its own way).
-const TouchButton* touch_buttons(size_t& count);
+// The game's layout (count 0: the game handles touch its own way) for a screen of that shape (width / height).
+const TouchButton* touch_buttons(size_t& count, float aspect = 16.0f / 9.0f);
+// Where the stick's hint is drawn while no thumb is on it (x, y: 0..1 across the screen; r: of its height).
+void touch_stick_rest(float aspect, bool mirrored, float& x, float& y, float& r);
 // Launcher settings (config.txt NX_TOUCH_*): drawn and accepted at all, stick on the right half, brightness scale.
 bool touch_enabled();
 bool touch_mirrored();

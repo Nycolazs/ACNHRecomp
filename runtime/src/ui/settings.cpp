@@ -831,6 +831,7 @@ void page_controls() {
     // Phones: the on-screen controls instead of keyboard keys.
     row("controls.touch", "controls.touch.desc", [&](float w) { toggle("input.touch_controls", true, w); });
     row("controls.touch_opacity", nullptr, [&](float w) { slider("input.touch_opacity", 10, 100, 60, "%d%%", w); });
+    row("controls.touch_size", nullptr, [&](float w) { slider("input.touch_size", 50, 150, 100, "%d%%", w); });
 #else
     ImGui::Dummy(ImVec2(0, 6 * g_scale));
     ImGui::PushFont(nullptr);
