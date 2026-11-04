@@ -1834,7 +1834,8 @@ void mods_popup() {
     if (g_mods_open) ImGui::OpenPopup("mods");
     ImGui::PushStyleVar(ImGuiStyleVar_Alpha, out_cubic((ImGui::GetTime() - g_mods_since) / 0.18));
     ImGui::PushStyleColor(ImGuiCol_NavCursor, ImVec4(0, 0, 0, 0));
-    ImGui::SetNextWindowSize(ImVec2(std::min(ImGui::GetIO().DisplaySize.x * 0.9f, S(520)), 0));
+    const ImVec2 ds = ImGui::GetIO().DisplaySize;
+    ImGui::SetNextWindowSize(ImVec2(std::min(ds.x * 0.94f, S(1180)), std::min(ds.y * 0.9f, S(700))));
     if (ImGui::BeginPopupModal("mods", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize)) {
         ImDrawList* dl = ImGui::GetWindowDrawList();
         ImVec2 p = ImGui::GetCursorScreenPos();
@@ -1847,18 +1848,69 @@ void mods_popup() {
         ImGui::PushStyleColor(ImGuiCol_Text, col4(kInkSoft));
         ImGui::TextWrapped("%s", tr("launcher.mods.hint"));
         ImGui::PopStyleColor();
-        ImGui::Dummy(ImVec2(0, S(12)));
-        float list_h = std::min(S(280), ImGui::GetIO().DisplaySize.y * 0.45f);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(10), S(10)));
+        ImGui::Dummy(ImVec2(0, S(10)));
+
+        const char* folder_l = tr("launcher.mods.import_folder");
+        const char* zip_l = tr("launcher.mods.import_zip");
+        const char* open_l = tr("launcher.mods.open");
+        const char* close_l = tr("launcher.addons.close");
+        float footer = S(56) + ImGui::GetFrameHeight();
+        if (!g_mods_delete_id.empty()) footer += S(72);
+        float grid_h = std::max(S(140), ImGui::GetContentRegionAvail().y - footer);
+
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(12), S(12)));
         ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, S(16));
-        ImGui::BeginChild("##mods_list", ImVec2(0, list_h),
+        ImGui::BeginChild("##mods_grid", ImVec2(0, grid_h),
                           ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
         ImGui::PopStyleVar(2);
+
         if (g_mods.empty()) {
             ImGui::TextDisabled("%s", tr("launcher.mods.empty"));
         } else {
-            for (const nx::mod_manager::ModInfo& mod : g_mods) {
+            std::vector<int> order(g_mods.size(), 0);
+            int next = 1;
+            for (size_t i = 0; i < g_mods.size(); ++i)
+                if (g_mods[i].enabled) order[i] = next++;
+
+            float avail = ImGui::GetContentRegionAvail().x, gap = S(12);
+            int cols = avail >= S(900) ? 3 : (avail >= S(520) ? 2 : 1);
+            float tile_w = (avail - gap * float(cols - 1)) / float(cols);
+            float tile_h = S(128);
+            const char* up_l = tr("launcher.mods.up");
+            const char* down_l = tr("launcher.mods.down");
+            const char* del_l = tr("launcher.mods.delete");
+            float action_w = std::min(S(96), std::max(S(64), (tile_w - S(36)) / 3.f));
+
+            for (size_t i = 0; i < g_mods.size(); ++i) {
+                const nx::mod_manager::ModInfo& mod = g_mods[i];
+                if (i % size_t(cols) != 0) ImGui::SameLine(0, gap);
                 ImGui::PushID(mod.id.c_str());
+
+                ImVec2 tile_min = ImGui::GetCursorScreenPos();
+                ImGui::PushStyleColor(ImGuiCol_ChildBg, col4(mod.enabled ? rgb(255, 244, 210) : rgb(255, 252, 242)));
+                ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, S(14));
+                ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(12), S(10)));
+                ImGui::BeginChild("##tile", ImVec2(tile_w, tile_h),
+                                  ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
+                ImGui::PopStyleVar(2);
+                ImGui::PopStyleColor();
+
+                // Load-order badge (1-based among enabled mods).
+                ImDrawList* tdl = ImGui::GetWindowDrawList();
+                ImVec2 badge = ImGui::GetCursorScreenPos();
+                float br = S(14);
+                ImVec2 bc(badge.x + br, badge.y + br);
+                tdl->AddCircleFilled(bc, br, mod.enabled ? kOrange : kGrey);
+                char num[8];
+                if (mod.enabled)
+                    std::snprintf(num, sizeof num, "%d", order[i]);
+                else
+                    std::snprintf(num, sizeof num, "-");
+                ImVec2 ns = measure(g_body, font_size(g_body) * 0.85f, num, -1);
+                tdl->AddText(g_body, font_size(g_body) * 0.85f, ImVec2(bc.x - ns.x * 0.5f, bc.y - ns.y * 0.5f), kWhite,
+                             num);
+
+                ImGui::SetCursorScreenPos(ImVec2(badge.x + 2 * br + S(10), badge.y));
                 bool enabled = mod.enabled;
                 if (ImGui::Checkbox("##on", &enabled)) {
                     std::string err;
@@ -1870,14 +1922,14 @@ void mods_popup() {
                 }
                 nav_item();
                 ImGui::SameLine();
-                std::string label = mod.id;
-                if (mod.enabled) label += std::string(" (") + tr("launcher.mods.enabled") + ")";
                 ImGui::AlignTextToFramePadding();
-                ImGui::TextUnformatted(label.c_str());
+                ImGui::TextUnformatted(mod.id.c_str());
                 if (mod.managed) ImGui::TextDisabled("%s", tr("launcher.mods.managed"));
                 if (mod.has_exefs) ImGui::TextDisabled("%s", tr("launcher.mods.exefs_warn"));
+
+                ImGui::SetCursorPosY(tile_h - ImGui::GetStyle().WindowPadding.y - ImGui::GetFrameHeight() - S(4));
                 if (mod.enabled) {
-                    if (button(tr("launcher.mods.up"), kWhite)) {
+                    if (button(up_l, kWhite, true, action_w)) {
                         std::string err;
                         if (nx::mod_manager::move_enabled(g_build.data, mod.id, -1, &err)) {
                             load_game_ini();
@@ -1885,7 +1937,7 @@ void mods_popup() {
                         }
                     }
                     ImGui::SameLine();
-                    if (button(tr("launcher.mods.down"), kWhite)) {
+                    if (button(down_l, kWhite, true, action_w)) {
                         std::string err;
                         if (nx::mod_manager::move_enabled(g_build.data, mod.id, 1, &err)) {
                             load_game_ini();
@@ -1894,13 +1946,22 @@ void mods_popup() {
                     }
                     ImGui::SameLine();
                 }
-                if (button(tr("launcher.mods.delete"), kRed)) g_mods_delete_id = mod.id;
-                ImGui::Dummy(ImVec2(0, S(8)));
+                if (button(del_l, kRed, true, action_w)) g_mods_delete_id = mod.id;
+
+                ImGui::EndChild();
+                // Soft settle animation like the add-ons cards.
+                float e = out_cubic((ImGui::GetTime() - g_mods_since - 0.03 * double(i)) / 0.2);
+                if (e < 1.f) {
+                    ImVec2 a = tile_min, b(tile_min.x + tile_w, tile_min.y + tile_h);
+                    ImGui::GetWindowDrawList()->AddRectFilled(a, b, rgb(248, 239, 214, int(180 * (1 - e))), S(14));
+                }
                 ImGui::PopID();
             }
         }
         ImGui::EndChild();
+
         if (!g_mods_delete_id.empty()) {
+            ImGui::Dummy(ImVec2(0, S(6)));
             ImGui::PushStyleColor(ImGuiCol_Text, col4(kInkSoft));
             const bool managed = [&] {
                 for (const nx::mod_manager::ModInfo& m : g_mods)
@@ -1922,21 +1983,17 @@ void mods_popup() {
             }
             ImGui::SameLine();
             if (button(tr("common.no"), kWhite)) g_mods_delete_id.clear();
-            ImGui::Dummy(ImVec2(0, S(4)));
         }
+
         ImGui::Dummy(ImVec2(0, S(8)));
-        const char* folder_l = tr("launcher.mods.import_folder");
-        const char* zip_l = tr("launcher.mods.import_zip");
-        const char* open_l = tr("launcher.mods.open");
         float pair_w = std::max({button_width(folder_l), button_width(zip_l), button_width(open_l)});
         if (button(folder_l, kBlue, true, pair_w)) pick(kPickModImportFolder);
         ImGui::SameLine();
         if (button(zip_l, kBlue, true, pair_w)) pick(kPickModImportZip);
         ImGui::SameLine();
         if (button(open_l, kWhite, true, pair_w)) open_folder(g_build.data + "/mods");
-        ImGui::Dummy(ImVec2(0, S(4)));
-        align_right({tr("launcher.addons.close")});
-        if (button(tr("launcher.addons.close"), kWhite) || ImGui::IsKeyPressed(ImGuiKey_Escape) ||
+        align_right({close_l});
+        if (button(close_l, kWhite) || ImGui::IsKeyPressed(ImGuiKey_Escape) ||
             ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false))
             g_mods_open = false, g_mods_delete_id.clear(), ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
