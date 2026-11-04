@@ -521,11 +521,19 @@ float button_width(const char* label) { return std::max(S(120), ImGui::CalcTextS
 
 bool button(const char* label, ImU32 color = kMint, bool enabled = true, float w = 0) {
     ImGui::BeginDisabled(!enabled);
+    const bool light = color == kMint || color == kWhite;
+    ImGuiWindow* window = ImGui::GetCurrentWindow();
+    const ImGuiID id = window->GetID(label);
+    ImGuiContext& g = *ImGui::GetCurrentContext();
+    const bool hot = enabled && (g.HoveredIdPreviousFrame == id || g.ActiveId == id ||
+                                 (g.NavId == id && g.NavIdIsAlive && g.NavHighlightItemUnderNav));
     ImGui::PushStyleColor(ImGuiCol_Button, col4(color));
-    ImGui::PushStyleColor(ImGuiCol_Text, col4(color == kMint || color == kWhite ? kInk : kWhite));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, col4(kYellow));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, col4(rgb(246, 196, 64)));
+    ImGui::PushStyleColor(ImGuiCol_Text, col4(hot || light ? kInk : kWhite));
     bool r = ImGui::Button(label, ImVec2(w > 0 ? w : button_width(label), 0));
     nav_item();
-    ImGui::PopStyleColor(2);
+    ImGui::PopStyleColor(4);
     ImGui::EndDisabled();
     return r;
 }
@@ -1421,8 +1429,9 @@ bool big_button(const char* label, int icon, ImU32 color, float w, float h, cons
         p = ImVec2(p.x + dx, p.y + dy * 2), w -= dx * 2, h -= dy * 2;
     }
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    dl->AddRectFilled(ImVec2(p.x, p.y + S(4)), ImVec2(p.x + w, p.y + h + S(4)), rgb(80, 140, 60, 120), h * 0.5f);
-    dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), hov ? kYellow : color, h * 0.5f);
+    const float round = std::min(S(22), h * 0.18f);
+    dl->AddRectFilled(ImVec2(p.x, p.y + S(4)), ImVec2(p.x + w, p.y + h + S(4)), rgb(80, 140, 60, 120), round);
+    dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), hov ? kYellow : color, round);
     float ir = h * 0.22f, pad = S(12), avail = w - ir * 2 - pad - S(24);
     ImU32 ink = hov ? kInk : kWhite;
     float fs = font_size(g_title);
@@ -1494,17 +1503,22 @@ void select_save_profile(const std::string& id) {
     g_banner.clear();
 }
 
-void play_block() {
-    // Same size for countdown and Play so cancel does not resize/recolor the control.
-    float w = std::min(ImGui::GetContentRegionAvail().x, S(420));
-    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (ImGui::GetContentRegionAvail().x - w) * 0.5f);
+// Same size for countdown and Play so cancel does not resize/recolor the control.
+void play_button(float w, float h = 0) {
+    if (h <= 0) h = S(80);
     if (g_autostart_at >= 0) {
         int left = std::max(1, int(std::ceil(g_autostart_at - ImGui::GetTime())));
         std::string label = trf("launcher.autostart", std::to_string(left));
-        big_button(label.c_str(), nx::ui::kIconPlay, kGreen, w, S(80), tr("launcher.autostart.stay"));
-    } else if (big_button(tr("launcher.play"), nx::ui::kIconPlay, kGreen, w, S(80)) && !g_autostart_ui) {
+        big_button(label.c_str(), nx::ui::kIconPlay, kGreen, w, h, tr("launcher.autostart.stay"));
+    } else if (big_button(tr("launcher.play"), nx::ui::kIconPlay, kGreen, w, h) && !g_autostart_ui) {
         play();
     }
+}
+
+void play_block() {
+    float w = std::min(ImGui::GetContentRegionAvail().x, S(420));
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (ImGui::GetContentRegionAvail().x - w) * 0.5f);
+    play_button(w);
     ImGui::Dummy(ImVec2(0, S(8)));
 }
 
@@ -1625,7 +1639,7 @@ std::string active_island_pill_text() {
     return trf("launcher.home.save_file", tr("launcher.profiles.empty"));
 }
 
-// Version, add-ons, mods, and save file under the title (wrapped when they do not fit on one line).
+// Version + add-ons on the left; save file + mods on the right — flush to the center line.
 void contents_row() {
     const BuildContents& c = contents();
     std::string ver = c.version.empty() ? tr("launcher.home.version_unknown") : trf("launcher.home.version", c.version);
@@ -1638,56 +1652,42 @@ void contents_row() {
     std::string mods_arg = std::to_string(mods_on) + "/" + std::to_string(g_mods.size());
     std::string mods = g_mods.empty() ? tr("launcher.mods.none") : trf("launcher.mods.count", mods_arg);
     float avail = ImGui::GetContentRegionAvail().x, gap = S(10), x0 = ImGui::GetCursorScreenPos().x;
-    float widths[4] = {pill_width(ver.c_str()), pill_width(add.c_str()), pill_width(mods.c_str()),
-                       pill_width(save.c_str())};
-    float total = widths[0] + widths[1] + widths[2] + widths[3] + 3 * gap;
-    bool one_row = total <= avail;
-    // Two-by-two when one row does not fit but two columns do.
-    bool two_by_two = !one_row && std::max(widths[0] + gap + widths[1], widths[2] + gap + widths[3]) <= avail;
     float y0 = ImGui::GetCursorScreenPos().y;
-    auto place_pill = [&](const char* id, int icon, ImU32 color, const char* text, bool clickable, bool dot,
-                          int index) {
-        float w = widths[index];
-        float x = x0, y = y0;
-        if (one_row) {
-            float row_w = total;
-            x = x0 + std::floor((avail - row_w) * 0.5f);
-            for (int i = 0; i < index; ++i) x += widths[i] + gap;
-        } else if (two_by_two) {
-            int col = index % 2, row = index / 2;
-            float pair = widths[row * 2] + gap + widths[row * 2 + 1];
-            x = x0 + std::floor((avail - pair) * 0.5f);
-            if (col) x += widths[row * 2] + gap;
-            y = y0 + float(row) * (S(38) + gap);
-        } else {
-            x = x0 + std::floor((avail - w) * 0.5f);
-            y = y0 + float(index) * (S(38) + gap);
-        }
+    float center = x0 + std::floor(avail * 0.5f);
+    float row_h = S(38) + gap;
+    // Left pills right-align to the center; right pills left-align from it.
+    float x_ver = center - gap * 0.5f - pill_width(ver.c_str());
+    float x_add = center - gap * 0.5f - pill_width(add.c_str());
+    float x_right = center + gap * 0.5f;
+
+    auto place = [&](const char* id, int icon, ImU32 color, const char* text, bool clickable, bool dot, float x,
+                     float y) {
         ImGui::SetCursorScreenPos(ImVec2(x, y));
         return pill(id, icon, color, text, clickable, dot, x);
     };
-    place_pill("##version", nx::ui::kIconLeaf, kMint, ver.c_str(), false, false, 0);
+
+    place("##version", nx::ui::kIconLeaf, kMint, ver.c_str(), false, false, x_ver, y0);
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", g_build.data.c_str());
-    if (place_pill("##addons", nx::ui::kIconBox, c.addons.empty() ? kGrey : kPurple, add.c_str(), true, !c.addons.empty(),
-                   1)) {
+    if (place("##addons", nx::ui::kIconBox, c.addons.empty() ? kGrey : kPurple, add.c_str(), true, !c.addons.empty(),
+              x_add, y0 + row_h)) {
         contents(true);
         g_addons_open = true, g_addons_since = ImGui::GetTime();
-    }
-    if (place_pill("##mods", nx::ui::kIconText, g_mods.empty() ? kGrey : kOrange, mods.c_str(), true, mods_on > 0, 2)) {
-        refresh_mods();
-        g_mods_open = true;
-        g_mods_since = ImGui::GetTime();
     }
     bool has_save = false;
     for (const nx::save_profiles::ProfileInfo& p : g_save_profiles)
         if (p.id == g_save_profile_active && p.has_save) has_save = true;
-    if (place_pill("##savefile", nx::ui::kIconHouse, has_save ? kRed : kGrey, save.c_str(), true, has_save, 3)) {
+    if (place("##savefile", nx::ui::kIconHouse, has_save ? kRed : kGrey, save.c_str(), true, has_save, x_right, y0)) {
         refresh_save_profiles();
         g_saves_open = true;
         g_saves_since = ImGui::GetTime();
     }
-    int rows = one_row ? 1 : (two_by_two ? 2 : 4);
-    ImGui::SetCursorScreenPos(ImVec2(x0, y0 + float(rows) * (S(38) + gap) - gap + S(4)));
+    if (place("##mods", nx::ui::kIconText, g_mods.empty() ? kGrey : kOrange, mods.c_str(), true, mods_on > 0, x_right,
+              y0 + row_h)) {
+        refresh_mods();
+        g_mods_open = true;
+        g_mods_since = ImGui::GetTime();
+    }
+    ImGui::SetCursorScreenPos(ImVec2(x0, y0 + 2 * row_h - gap + S(4)));
 }
 
 // The add-on content, one card each: its number, size and files, and that the game loads it.
@@ -2089,16 +2089,15 @@ void page_home() {
     ImGui::Dummy(ImVec2(0, S(6)));
     update_notice();
     if (valid) {
-        hero(nx::ui::kIconHouse, kGreen, S(46));
-        centered(tr("launcher.home.title"), g_title, 1.1f, kInk);
-        ImGui::Dummy(ImVec2(0, S(6)));
         contents_row();
         ImGui::Dummy(ImVec2(0, S(10)));
-        play_block();
+        centered(tr("launcher.home.title"), g_title, 1.1f, kInk);
+        ImGui::Dummy(ImVec2(0, S(4)));
     }
-    // Settings, Rebuild, Change build folder.
+    // Left: Settings / Online. Center: Play. Right: Rebuild / Change folder.
     const bool can_rebuild = valid && setup_supported() &&
                              g_build.exe.rfind(g_build.data, 0) == 0 && g_build.exe.find("build") != std::string::npos;
+    const bool player = !player_beside().empty();  // a release: the folder is played as it is, nothing to rebuild
     struct A {
         const char* id;
         int icon;
@@ -2108,50 +2107,113 @@ void page_home() {
         bool enabled;
         int action;
     };
-    std::vector<A> acts;
-    if (valid) acts.push_back({"##settings", nx::ui::kIconGear, kPurple, tr("launcher.home.settings"),
-                               tr("launcher.home.settings.desc"), true, 0});
-    if (valid) acts.push_back({"##online", nx::ui::kIconBox, kBlue, tr("tab.online"), tr("online.home.desc"), true, 4});
-    const bool player = !player_beside().empty();  // a release: the folder is played as it is, nothing to rebuild
+    std::vector<A> left, right;
+    if (valid) {
+        left.push_back({"##online", nx::ui::kIconBox, kBlue, tr("tab.online"), tr("online.home.desc"), true, 4});
+        left.push_back({"##settings", nx::ui::kIconGear, kPurple, tr("launcher.home.settings"),
+                        tr("launcher.home.settings.desc"), true, 0});
+    }
     if (setup_supported() && !player)
-        acts.push_back({"##rebuild", nx::ui::kIconLeaf, kOrange, tr("launcher.home.rebuild"),
-                        tr(can_rebuild ? "launcher.home.rebuild.desc" : "launcher.home.rebuild.unavailable"), can_rebuild, 1});
-#if defined(__APPLE__)
-    acts.push_back({"##desktop", nx::ui::kIconPlus, kMint, tr("launcher.home.install_app"),
-                    tr("launcher.home.install_app.desc"), true, 3});
-#else
-    acts.push_back({"##desktop", nx::ui::kIconPlus, kMint, tr("launcher.home.desktop"), tr("launcher.home.desktop.desc"),
-                    true, 3});
-#endif
-    acts.push_back({"##change", nx::ui::kIconFolder, kBlue, tr(player ? "launcher.home.change_game" : "launcher.home.change"),
-                    tr(player ? "launcher.home.change_game.desc" : "launcher.home.change.desc"), true, 2});
+        right.push_back({"##rebuild", nx::ui::kIconLeaf, kOrange, tr("launcher.home.rebuild"),
+                         tr(can_rebuild ? "launcher.home.rebuild.desc" : "launcher.home.rebuild.unavailable"),
+                         can_rebuild, 1});
+    right.push_back({"##change", nx::ui::kIconFolder, kBlue,
+                     tr(player ? "launcher.home.change_game" : "launcher.home.change"),
+                     tr(player ? "launcher.home.change_game.desc" : "launcher.home.change.desc"), true, 2});
+
+    auto run_action = [&](int action) {
+        if (action == 0) load_game_ini(), g_page = Page::Settings;
+        if (action == 4) load_game_ini(), g_page = Page::Online;
+        if (action == 1) start_setup(true);
+        if (action == 2) pick(kPickBuild);
+    };
+
     float avail = ImGui::GetContentRegionAvail().x, gap = S(14);
-    bool stack = g_portrait || avail < S(700);
-    float w = stack ? avail : (avail - gap * float(acts.size() - 1)) / float(acts.size());
-    float h = 0;
-    for (const A& a : acts) h = std::max(h, action_height(a.title, a.desc, w));
-    for (size_t k = 0; k < acts.size(); k++) {
-        if (k && !stack) ImGui::SameLine(0, gap);
-        const A& a = acts[k];
-        if (action_card(a.id, a.icon, a.color, a.title, a.desc, ImVec2(w, h), a.enabled)) {
-            if (a.action == 0) load_game_ini(), g_page = Page::Settings;
-            if (a.action == 4) load_game_ini(), g_page = Page::Online;
-            if (a.action == 1) start_setup(true);
-            if (a.action == 2) pick(kPickBuild);
-            if (a.action == 3) {
-                DesktopResult r = add_to_desktop();
-                toast(r.ok ? trf("launcher.desktop.done", r.where) : std::string(tr("launcher.desktop.failed")));
-            }
+    const bool stack = g_portrait || avail < S(700) || left.empty() || right.empty();
+    // Play keeps a fixed-ish middle width; side columns expand into the rest.
+    const float play_h = S(155);
+    const float play_w_cap = S(400);
+    float play_w_target = stack ? std::min(avail, play_w_cap) : std::min(play_w_cap, avail * 0.34f);
+    float col_w = stack ? avail : (avail - play_w_target - 2 * gap) * 0.5f;
+    float mid_w = stack ? avail : play_w_target;
+
+    auto draw_column = [&](const std::vector<A>& col) {
+        if (col.empty()) return 0.f;
+        float card_h = 0;
+        for (const A& a : col) card_h = std::max(card_h, action_height(a.title, a.desc, col_w));
+        for (size_t i = 0; i < col.size(); ++i) {
+            if (i) ImGui::Dummy(ImVec2(0, gap));
+            const A& a = col[i];
+            if (action_card(a.id, a.icon, a.color, a.title, a.desc, ImVec2(col_w, card_h), a.enabled))
+                run_action(a.action);
         }
+        return card_h * float(col.size()) + gap * float(col.size() - 1);
+    };
+
+    if (stack) {
+        if (valid) {
+            float play_w = std::min(mid_w, play_w_cap);
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail - play_w) * 0.5f);
+            play_button(play_w, play_h);
+            ImGui::Dummy(ImVec2(0, gap));
+        }
+        draw_column(left);
+        if (!left.empty() && !right.empty()) ImGui::Dummy(ImVec2(0, gap));
+        draw_column(right);
+    } else {
+        float side_h = 0;
+        for (const A& a : left) side_h = std::max(side_h, action_height(a.title, a.desc, col_w));
+        side_h = side_h * float(std::max(left.size(), right.size())) +
+                 gap * float(std::max(size_t(1), std::max(left.size(), right.size())) - 1);
+        float play_w = std::min(mid_w, play_w_cap);
+        float row_h = std::max(side_h, play_h);
+        float side_pad = std::max(0.f, (row_h - side_h) * 0.5f);
+        float play_pad = std::max(0.f, (row_h - play_h) * 0.5f);
+        float play_inset = std::max(0.f, (mid_w - play_w) * 0.5f);
+
+        ImGui::BeginGroup();
+        if (side_pad > 0) ImGui::Dummy(ImVec2(col_w, side_pad));
+        draw_column(left);
+        ImGui::EndGroup();
+        ImGui::SameLine(0, gap);
+        ImGui::BeginGroup();
+        if (valid) {
+            if (play_pad > 0) ImGui::Dummy(ImVec2(mid_w, play_pad));
+            if (play_inset > 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + play_inset);
+            play_button(play_w, play_h);
+            ImGui::Dummy(ImVec2(mid_w, 0));
+        }
+        ImGui::EndGroup();
+        ImGui::SameLine(0, gap);
+        ImGui::BeginGroup();
+        if (side_pad > 0) ImGui::Dummy(ImVec2(col_w, side_pad));
+        draw_column(right);
+        ImGui::EndGroup();
     }
 }
 
 void footer_home() {
-    if (player_beside().empty()) {  // a release has no setup to start over
-        if (button(tr("launcher.home.start_over"), kWhite)) g_banner.clear(), g_page = Page::Welcome;
-    }
-    align_right({tr("launcher.credits")});
+#if defined(__APPLE__)
+    const char* shortcut_l = tr("launcher.home.install_app");
+#else
+    const char* shortcut_l = tr("launcher.home.desktop");
+#endif
     if (button(tr("launcher.credits"), kWhite)) g_page = Page::Credits;
+
+    // Same style as the side footer buttons, centered between them.
+    float shortcut_bw = button_width(shortcut_l);
+    float mid = (ImGui::GetWindowContentRegionMin().x + ImGui::GetWindowContentRegionMax().x - shortcut_bw) * 0.5f;
+    ImGui::SameLine(0, 0);
+    ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(), mid));
+    if (button(shortcut_l, kBlue)) {
+        DesktopResult r = add_to_desktop();
+        toast(r.ok ? trf("launcher.desktop.done", r.where) : std::string(tr("launcher.desktop.failed")));
+    }
+
+    if (player_beside().empty()) {  // a release has no setup to start over
+        align_right({tr("launcher.home.start_over")});
+        if (button(tr("launcher.home.start_over"), kRed)) g_banner.clear(), g_page = Page::Welcome;
+    }
 }
 
 // ---- settings: a few of the game's config.ini keys ------------------------------------------------------------
