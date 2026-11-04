@@ -2,9 +2,18 @@
 #include "ui/theme.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
+#include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <vector>
+
+// stb_truetype, the rasterizer Dear ImGui already uses. A second static copy so a system font can be rejected
+// before it is merged: a face ImGui cannot parse fails the whole atlas.
+#define STBTT_STATIC
+#define STB_TRUETYPE_IMPLEMENTATION
+#include "imstb_truetype.h"
 
 #if __has_include(<nx/runtime.h>) && !defined(NX_LAUNCHER_UI)
 #include <nx/runtime.h>
@@ -17,6 +26,12 @@
 #include "ui/i18n.h"
 
 namespace nx::ui {
+
+// Subset of Noto Sans (SIL OFL 1.1): the menu's CJK glyphs when the system face is missing or unreadable.
+extern const unsigned char kUiCjkTtf[];
+extern const int kUiCjkTtfSize;
+extern const unsigned char kUiHangulTtf[];
+extern const int kUiHangulTtfSize;
 
 namespace {
 
@@ -63,6 +78,97 @@ std::string find_cover_font(const std::string& latin) {
     return "";
 }
 
+// Dear ImGui 1.91 draws with stb_truetype, which reads TrueType and CFF but not CFF2. Android 15+ replaced
+// /system/fonts/NotoSansCJK-Regular.ttc with a CFF2 variable collection, so merging it failed the atlas and the
+// menu kept only a Latin font. Every missing glyph is then "?".
+int preferred_cjk_face(const std::string& lang) {
+    if (lang == "zh-CN") return 2;  // Noto CJK collection: JP, KR, SC, TC, HK
+    if (lang == "zh-TW") return 3;
+    if (lang == "ko") return 1;
+    return 0;
+}
+
+int cjk_face_index(const unsigned char* data, int faces, int prefer) {
+    auto draws_han = [&](int i) {
+        if (i < 0 || i >= faces) return false;
+        const int off = stbtt_GetFontOffsetForIndex(data, i);
+        if (off < 0) return false;
+        stbtt_fontinfo info;
+        if (!stbtt_InitFont(&info, data, off)) return false;
+        return stbtt_FindGlyphIndex(&info, 0x4E2D) != 0;  // 中
+    };
+    if (draws_han(prefer)) return prefer;
+    for (int i = 0; i < faces; i++)
+        if (draws_han(i)) return i;
+    return -1;
+}
+
+bool usable_cjk_file(const std::string& path, int prefer, int* index) {
+    namespace fs = std::filesystem;
+    std::ifstream in(fs::u8path(path), std::ios::binary);
+    if (!in) return false;
+    in.seekg(0, std::ios::end);
+    const std::streamoff n = in.tellg();
+    if (n <= 0 || n > 80 * 1024 * 1024) return false;
+    in.seekg(0);
+    std::vector<unsigned char> data(static_cast<size_t>(n));
+    if (!in.read(reinterpret_cast<char*>(data.data()), n)) return false;
+    int faces = stbtt_GetNumberOfFonts(data.data());
+    if (faces <= 0) faces = 1;
+    const int face = cjk_face_index(data.data(), faces, prefer);
+    if (face < 0) return false;
+    *index = face;
+    return true;
+}
+
+#if defined(__ANDROID__)
+bool name_looks_cjk(std::string name) {
+    for (char& ch : name) ch = char(std::tolower(static_cast<unsigned char>(ch)));
+    for (const char* k : {"cjk", "fallback", "misans", "harmony", "sourcehan", "notosanssc", "notosanstc", "notoserif",
+                          "droidsans", "hans", "hant", "chinese"})
+        if (name.find(k) != std::string::npos) return true;
+    return false;
+}
+#endif
+
+// The first face stb can draw 中 from. `index` is its number inside a collection.
+std::string find_cjk_font(const std::string& lang, const std::string& user_font, int* index) {
+    namespace fs = std::filesystem;
+    const int prefer = preferred_cjk_face(lang);
+    std::vector<std::string> c;
+    if (!user_font.empty()) c.push_back(user_font);
+    for (const char* p : {"/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+                          "/usr/share/fonts/noto-cjk/NotoSansCJK-Bold.ttc",
+                          "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Bold.ttc",
+                          "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+                          "/System/Library/Fonts/PingFang.ttc", "/System/Library/Fonts/Hiragino Sans GB.ttc",
+                          "C:\\Windows\\Fonts\\msyhbd.ttc", "C:\\Windows\\Fonts\\YuGothB.ttc",
+                          "C:\\Windows\\Fonts\\malgunbd.ttf", "/system/fonts/NotoSansCJK-Regular.ttc",
+                          "/system/fonts/NotoSansCJK-Regular.otf", "/product/fonts/NotoSansCJK-Regular.ttc",
+                          "/system/fonts/NotoSansSC-Regular.otf", "/system/fonts/NotoSansHans-Regular.otf",
+                          "/system/fonts/DroidSansFallbackFull.ttf", "/system/fonts/DroidSansFallback.ttf",
+                          "/system/fonts/NotoSerifCJK-Regular.ttc", "/product/fonts/NotoSerifCJK-Regular.ttc"})
+        c.push_back(p);
+    std::error_code ec;
+#if defined(__ANDROID__)
+    for (const char* dir : {"/system/fonts", "/product/fonts", "/system_ext/fonts"}) {
+        fs::directory_iterator it(dir, fs::directory_options::skip_permission_denied, ec), end;
+        for (int n = 0; !ec && it != end && n < 400; it.increment(ec), n++) {
+            if (!it->is_regular_file(ec)) continue;
+            const std::string name = it->path().filename().string();
+            if (!name_looks_cjk(name)) continue;
+            c.push_back(it->path().string());
+        }
+        ec.clear();
+    }
+#endif
+    for (const std::string& p : c) {
+        if (!fs::is_regular_file(fs::u8path(p), ec)) continue;
+        if (usable_cjk_file(p, prefer, index)) return p;
+    }
+    return "";
+}
+
 }  // namespace
 
 float theme_scale(float width, float height) {
@@ -79,7 +185,10 @@ ThemeFonts theme_build_fonts(float scale, const std::string& user_font) {
     bool cjk = lang == "ja" || lang == "ko" || lang == "zh-CN" || lang == "zh-TW";
     // The CJK font is merged in every language: in full for ja/ko/zh, else only for the languages' own names in the
     // language lists (日本語, 한국어, 中文).
-    std::string latin = find_font(false, user_font), extra = find_font(true, ""), cover = find_cover_font(latin);
+    int cjk_index = 0;
+    std::string latin = find_font(false, user_font), cover = find_cover_font(latin);
+    std::string extra = find_cjk_font(lang, user_font, &cjk_index);
+    bool embed = extra.empty();  // no system face stb can draw; the Noto subset compiled into the app
     static ImVector<ImWchar> ranges;  // Latin + Latin-1/Extended + Cyrillic + general punctuation + arrows/dashes
     ranges.clear();
     ImFontGlyphRangesBuilder rb;
@@ -91,11 +200,23 @@ ThemeFonts theme_build_fonts(float scale, const std::string& user_font) {
     static ImVector<ImWchar> cjk_ranges;
     cjk_ranges.clear();
     ImFontGlyphRangesBuilder cb;
-    if (cjk)
-        cb.AddRanges(lang == "ja"      ? io.Fonts->GetGlyphRangesJapanese()
-                     : lang == "ko"    ? io.Fonts->GetGlyphRangesKorean()
-                     : lang == "zh-TW" ? io.Fonts->GetGlyphRangesChineseFull()
-                                       : io.Fonts->GetGlyphRangesChineseSimplifiedCommon());
+    if (cjk) {
+        // ChineseFull is every ideograph (U+4E00..U+9FAF). On a phone that atlas is large enough to fail the build,
+        // which used to throw the CJK face away. The menu's own traditional characters are added from its strings.
+#if defined(__ANDROID__)
+        const bool full_traditional = false;
+#else
+        const bool full_traditional = lang == "zh-TW";
+#endif
+        cb.AddRanges(lang == "ja" ? io.Fonts->GetGlyphRangesJapanese()
+                     : lang == "ko" ? io.Fonts->GetGlyphRangesKorean()
+                     : full_traditional ? io.Fonts->GetGlyphRangesChineseFull()
+                                        : io.Fonts->GetGlyphRangesChineseSimplifiedCommon());
+        struct Visit {
+            static void fn(const char* s, void* p) { static_cast<ImFontGlyphRangesBuilder*>(p)->AddText(s); }
+        };
+        ui_visit_texts(lang.c_str(), Visit::fn, &cb);
+    }
     for (const UiLanguage& l : ui_languages()) cb.AddText(l.native_name);
     cb.AddText("简体中文繁體中文日本語한국어");  // the game's language list (settings.cpp)
     cb.BuildRanges(&cjk_ranges);
@@ -114,11 +235,29 @@ ThemeFonts theme_build_fonts(float scale, const std::string& user_font) {
             m.OversampleH = 2;
             io.Fonts->AddFontFromFileTTF(cover.c_str(), px, &m, ranges.Data);
         }
+        auto merge_embedded = [&] {
+            ImFontConfig m;
+            m.MergeMode = true;
+            m.OversampleH = 1;
+            m.FontDataOwnedByAtlas = false;
+            io.Fonts->AddFontFromMemoryTTF(const_cast<unsigned char*>(kUiCjkTtf), kUiCjkTtfSize, px, &m, cjk_ranges.Data);
+            if (kUiHangulTtfSize > 0) {
+                ImFontConfig h;
+                h.MergeMode = true;
+                h.OversampleH = 1;
+                h.FontDataOwnedByAtlas = false;
+                io.Fonts->AddFontFromMemoryTTF(const_cast<unsigned char*>(kUiHangulTtf), kUiHangulTtfSize, px, &h,
+                                               cjk_ranges.Data);
+            }
+        };
         if (!extra.empty()) {
             ImFontConfig m;
             m.MergeMode = true;
             m.OversampleH = 1;
+            m.FontNo = cjk_index;
             io.Fonts->AddFontFromFileTTF(extra.c_str(), px, &m, cjk_ranges.Data);
+        } else if (embed) {
+            merge_embedded();
         }
         return f;
     };
@@ -130,12 +269,15 @@ ThemeFonts theme_build_fonts(float scale, const std::string& user_font) {
     unsigned char* px = nullptr;
     int w = 0, h = 0;
     auto built = [&] { return io.Fonts->Build() && (io.Fonts->GetTexDataAsRGBA32(&px, &w, &h), w > 0 && h > 0); };
-    if (!built() && !extra.empty()) {  // Android's NotoSansCJK-Regular.ttc: the rest without it
-        THEME_LOG("ui: the fonts did not build with %s: without it", extra.c_str());
+    if (!built() && !extra.empty()) {  // the system face parsed and still would not pack: the embedded subset
+        THEME_LOG("ui: the fonts did not build with %s: the embedded CJK font", extra.c_str());
         io.Fonts->Clear();
         extra.clear();
+        embed = true;
         fonts.body = add(std::round(20.0f * scale));
         fonts.title = add(std::round(30.0f * scale));
+    } else if (embed) {
+        THEME_LOG("ui: no system CJK font stb can draw: the embedded Noto subset (%d bytes)", kUiCjkTtfSize);
     }
     if (!built()) {
         THEME_LOG("ui: the fonts did not build (%s, %s, %s): the built-in font instead", latin.c_str(), cover.c_str(),
