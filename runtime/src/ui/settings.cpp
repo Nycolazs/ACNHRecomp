@@ -327,10 +327,8 @@ void combo(const std::string& key, const std::string& fallback, const Choices& c
     }
 }
 
-// An on/off pill like the game's.
-void toggle(const std::string& key, bool fallback, float width = 0) {
-    g_row_key = key;
-    bool on = config_get_bool(key, fallback);
+// An on/off pill like the game's. Returns whether the value flipped this frame.
+bool draw_toggle_pill(bool& on, float width = 0) {
     float h = ImGui::GetFrameHeight(), pill_w = h * 1.9f;
     const char* label = tr(on ? "common.on" : "common.off");
     ImVec2 ts = ImGui::CalcTextSize(label);
@@ -343,7 +341,6 @@ void toggle(const std::string& key, bool fallback, float width = 0) {
     page_nav_item();
     bool focused = ImGui::IsItemFocused();
     bool hov = ImGui::IsItemHovered();
-    bool was_on = on;
     bool changed = false;
 
     if (clicked) {
@@ -363,13 +360,6 @@ void toggle(const std::string& key, bool fallback, float width = 0) {
         }
     }
 
-    if (changed) {
-        store(key, on ? "1" : "0");
-        if (key == "input.rumble" && !was_on && on) {
-            plat::rumble(0.45f, 0.70f, 180);
-        }
-    }
-
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImU32 bg = on ? rgb(118, 200, 170) : rgb(214, 200, 168);
     dl->AddRectFilled(p, ImVec2(p.x + pill_w, p.y + h), bg, h * 0.5f);
@@ -380,6 +370,20 @@ void toggle(const std::string& key, bool fallback, float width = 0) {
     ImVec2 knob(on ? p.x + pill_w - h * 0.5f : p.x + h * 0.5f, p.y + h * 0.5f);
     dl->AddCircleFilled(knob, r, rgb(255, 255, 255));
     dl->AddText(ImVec2(p.x + pill_w + 10.0f * g_scale, p.y + (h - ts.y) * 0.5f), rgb(107, 79, 54), label);
+    return changed;
+}
+
+// An on/off pill like the game's.
+void toggle(const std::string& key, bool fallback, float width = 0) {
+    g_row_key = key;
+    bool on = config_get_bool(key, fallback);
+    const bool was_on = on;
+    if (draw_toggle_pill(on, width)) {
+        store(key, on ? "1" : "0");
+        if (key == "input.rumble" && !was_on && on) {
+            plat::rumble(0.45f, 0.70f, 180);
+        }
+    }
 }
 
 bool g_slider_held = false;  // a slider under the finger this frame: it takes the drag, the page does not scroll
@@ -581,6 +585,7 @@ void page_game() {
     Choices ui_langs = {{"auto", tr("common.auto")}};
     for (const UiLanguage& l : ui_languages()) ui_langs.push_back({l.code, l.native_name});
     row("ui.language", "ui.language.desc", [&](float w) { combo("ui.language", "auto", ui_langs, w); });
+    row("video.show_fps", "video.show_fps.desc", [&](float w) { toggle("video.show_fps", config_show_fps(), w); });
 
     section("game.section.time");
     row("game.time_travel.sync", "game.time_travel.sync.desc", [&](float w) { toggle("game.time_travel_enabled", true, w); });
@@ -740,6 +745,7 @@ void page_online() {
 }
 
 void page_video() {
+    // Essential settings stay visible. The Advanced toggle (session-only) reveals fine-tuning rows below.
     section("video.section.screen");
 #if !defined(__ANDROID__)  // a phone's game is always the whole screen
     row("video.display", nullptr, [&](float w) {
@@ -754,7 +760,6 @@ void page_video() {
         });
 #endif
     row("video.vsync", "video.vsync.desc", [&](float w) { toggle("video.vsync", true, w); });
-    row("video.show_fps", "video.show_fps.desc", [&](float w) { toggle("video.show_fps", config_show_fps(), w); });
 
     section("video.section.picture");
     // The screen's own first: the picture drawn at the window's rows and in its shape.
@@ -807,10 +812,19 @@ void page_video() {
         combo("video.mode", "docked", {{"docked", console("video.render.docked")}, {"handheld", tr("video.render.handheld")}}, w);
     });
 
-    // Anti-aliasing and upscaling: one choice of method (video.temporal for DLSS and FSR, video.antialiasing for FXAA),
-    // then the picture's size (supersampling: video.antialiasing ssaa15 / ssaa2) and, with DLSS or FSR, the 3D scene's
-    // share of it (video.upscale: nvn_temporal.cpp). Only combinations that work are offered.
-    section("video.section.aa");
+    section("video.section.performance");
+    row("video.preset", "video.preset.desc", [&](float w) {
+        combo("video.preset", "custom",
+              {{"custom", tr("video.preset.custom")}, {"quality", tr("video.preset.quality")},
+               {"balanced", tr("video.preset.balanced")}, {"low", tr("video.preset.low")}},
+              w);
+    });
+    row("video.framerate", "video.framerate.desc", [&](float w) {
+        // No choice yet: 30, as config.cpp applies.
+        combo("video.frame_rate", "30",
+              {{"30", console("video.framerate.30")}, {"60", tr("video.framerate.60")}}, w);
+    });
+    // Anti-aliasing method stays essential; its quality knobs live under Advanced.
     const std::string temporal = config_get("video.temporal", "off"), aa = config_get("video.antialiasing", "off");
 #if defined(_WIN32)
     const bool nvidia = nvn::gpu_is_nvidia();
@@ -835,6 +849,31 @@ void page_video() {
             if (!temporal_m && config_get("video.frame_gen", "off") == "fsr") store("video.frame_gen", "off");
         });
     });
+    // Built-in (nvn_framegen.cpp) always; lsfg-vk when it is installed (or already chosen).
+    bool lsfg = lsfg_available();
+    const char* fg_default = "off";  // nvn_framegen.cpp
+    std::string fg = config_get("video.frame_gen", fg_default);
+    Choices fg_choices = {{"off", console("video.framegen.off")}, {"builtin", tr("video.framegen.builtin")}};
+    if (lsfg || fg == "lsfg") fg_choices.push_back({"lsfg", tr("video.framegen.lsfg")});
+#if defined(_WIN32)
+    // AMD FSR 3 (nvn_temporal.cpp): needs DLSS or FSR anti-aliasing (their depth and motion vectors).
+    const bool temporal_on = config_get("video.temporal", "off") != "off";
+    if (temporal_on || fg == "fsr") fg_choices.push_back({"fsr", tr("video.framegen.fsr")});
+#else
+    const bool temporal_on = false;
+#endif
+    const char* fg_desc = fg == "lsfg"  ? (lsfg ? "video.framegen.desc" : "video.framegen.missing")
+                          : fg == "fsr" ? (temporal_on ? "video.framegen.fsr.desc" : "video.framegen.fsr.needs")
+                                        : temporal_on ? "video.framegen.builtin.desc" : "video.framegen.builtin.only";
+    row("video.framegen", fg_desc, [&](float w) { combo("video.frame_gen", fg_default, fg_choices, w); });
+
+    section("video.section.advanced");
+    static bool show_advanced = false;
+    row("video.advanced", "video.advanced.desc", [&](float w) { draw_toggle_pill(show_advanced, w); });
+    if (!show_advanced) return;
+
+    // Upscaling quality, supersampling, HDR, filtering, legacy FSR 1, GPU / shaders — tweak only if needed.
+    section("video.section.aa");
     if (method != "fxaa")
         row("video.supersample", "video.supersample.desc", [&](float w) {
             combo("video.antialiasing", "off",
@@ -886,35 +925,6 @@ void page_video() {
     if (config_get("video.upscaler", plat::kDefaultUpscaler) == "fsr")
         row("video.sharpness", nullptr, [&](float w) { slider("video.fsr_sharpness_pct", 0, 100, 80, "%d%%", w); });
 
-    section("video.section.performance");
-    row("video.preset", "video.preset.desc", [&](float w) {
-        combo("video.preset", "custom",
-              {{"custom", tr("video.preset.custom")}, {"quality", tr("video.preset.quality")},
-               {"balanced", tr("video.preset.balanced")}, {"low", tr("video.preset.low")}},
-              w);
-    });
-    row("video.framerate", "video.framerate.desc", [&](float w) {
-        // No choice yet: 30, as config.cpp applies.
-        combo("video.frame_rate", "30",
-              {{"30", console("video.framerate.30")}, {"60", tr("video.framerate.60")}}, w);
-    });
-    // Built-in (nvn_framegen.cpp) always; lsfg-vk when it is installed (or already chosen).
-    bool lsfg = lsfg_available();
-    const char* fg_default = "off";  // nvn_framegen.cpp
-    std::string fg = config_get("video.frame_gen", fg_default);
-    Choices fg_choices = {{"off", console("video.framegen.off")}, {"builtin", tr("video.framegen.builtin")}};
-    if (lsfg || fg == "lsfg") fg_choices.push_back({"lsfg", tr("video.framegen.lsfg")});
-#if defined(_WIN32)
-    // AMD FSR 3 (nvn_temporal.cpp): needs DLSS or FSR anti-aliasing (their depth and motion vectors).
-    const bool temporal_on = config_get("video.temporal", "off") != "off";
-    if (temporal_on || fg == "fsr") fg_choices.push_back({"fsr", tr("video.framegen.fsr")});
-#else
-    const bool temporal_on = false;
-#endif
-    const char* fg_desc = fg == "lsfg"  ? (lsfg ? "video.framegen.desc" : "video.framegen.missing")
-                          : fg == "fsr" ? (temporal_on ? "video.framegen.fsr.desc" : "video.framegen.fsr.needs")
-                                        : temporal_on ? "video.framegen.builtin.desc" : "video.framegen.builtin.only";
-    row("video.framegen", fg_desc, [&](float w) { combo("video.frame_gen", fg_default, fg_choices, w); });
 #if !defined(__ANDROID__)  // one GPU in a phone
     row("video.gpu", nullptr, [&](float w) {
         combo("video.gpu", "auto",
