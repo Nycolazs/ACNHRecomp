@@ -129,7 +129,7 @@ GPU; see [docs/STATUS.md](docs/STATUS.md) for the full, regularly updated log.
 | Opening movie (VP9 + Vorbis), arrival on the island | Working |
 | Free roaming on the island | Working, 30 fps on an Intel Iris Xe |
 | First save (written at the end of the first day) | Not yet verified in a full playthrough |
-| 60 fps | Not native yet (see below) |
+| 60 fps | Native with ACNHRecomp-Importer 1.0.6+ ([credits](#credits-and-references)) |
 | Online features through Nintendo (Dodo codes, Nook Link, Dream Suite) | Unavailable |
 | Visits between PCs (airport, Local Play), over LAN or the internet, no server | Works on Windows; [docs/LOCAL_PLAY.md](docs/LOCAL_PLAY.md) |
 
@@ -137,9 +137,6 @@ GPU; see [docs/STATUS.md](docs/STATUS.md) for the full, regularly updated log.
 
 - Some villagers (birds) may render with part of the head black. Starting villagers are random, so it does not
   always reproduce.
-- **60 fps is not native yet.** The game's logic advances once per frame, so presenting at 60 fps makes the whole
-  game run twice as fast. A real 60 fps mode requires halving the step of every frame-counting system and is not
-  done yet. Play at 30 fps.
 - The first save only happens at the end of the first in-game day, and that path has not been verified end to end
   in a full playthrough. Back up and be prepared for surprises.
 - Nintendo's online services are not available: the game sees a console with no internet connection. Visits between
