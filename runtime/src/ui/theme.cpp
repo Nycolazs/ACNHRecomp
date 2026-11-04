@@ -64,6 +64,24 @@ std::string find_font(bool cjk, const std::string& user_font) {
     return "";
 }
 
+// True when stb can draw `cp` from face 0. CFF2 variable fonts (some Android Noto Sans builds) fail this and must
+// not be merged: one unreadable face fails the whole atlas, and the menu then falls back to "?" again.
+bool file_draws(const std::string& path, int cp) {
+    namespace fs = std::filesystem;
+    std::ifstream in(fs::u8path(path), std::ios::binary);
+    if (!in) return false;
+    in.seekg(0, std::ios::end);
+    const std::streamoff n = in.tellg();
+    if (n <= 0 || n > 40 * 1024 * 1024) return false;
+    in.seekg(0);
+    std::vector<unsigned char> data(static_cast<size_t>(n));
+    if (!in.read(reinterpret_cast<char*>(data.data()), n)) return false;
+    const int off = stbtt_GetFontOffsetForIndex(data.data(), 0);
+    if (off < 0) return false;
+    stbtt_fontinfo info;
+    return stbtt_InitFont(&info, data.data(), off) && stbtt_FindGlyphIndex(&info, cp) != 0;
+}
+
 // A font with Cyrillic and the rest of the extended ranges, merged under the menu font: rounded fonts such as
 // Quicksand have no Cyrillic, which then showed as "?" in Russian. Glyphs the menu font has keep its look.
 std::string find_cover_font(const std::string& latin) {
@@ -73,8 +91,10 @@ std::string find_cover_font(const std::string& latin) {
          {"/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf", "/usr/share/fonts/noto/NotoSans-Bold.ttf",
           "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
           "/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf", "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
-          "C:\\Windows\\Fonts\\segoeuib.ttf", "C:\\Windows\\Fonts\\arialbd.ttf"})
-        if (latin != p && fs::is_regular_file(fs::u8path(p), ec)) return p;
+          "C:\\Windows\\Fonts\\segoeuib.ttf", "C:\\Windows\\Fonts\\arialbd.ttf",
+          "/system/fonts/NotoSans-Regular.ttf", "/system/fonts/NotoSans-VF.ttf",
+          "/system/fonts/RobotoStatic-Regular.ttf", "/system/fonts/Roboto-Regular.ttf"})
+        if (latin != p && fs::is_regular_file(fs::u8path(p), ec) && file_draws(p, 0x0416)) return p;  // Ж
     return "";
 }
 
@@ -201,17 +221,20 @@ ThemeFonts theme_build_fonts(float scale, const std::string& user_font) {
     cjk_ranges.clear();
     ImFontGlyphRangesBuilder cb;
     if (cjk) {
-        // ChineseFull is every ideograph (U+4E00..U+9FAF). On a phone that atlas is large enough to fail the build,
-        // which used to throw the CJK face away. The menu's own traditional characters are added from its strings.
+        // ChineseFull is every ideograph and GetGlyphRangesKorean is every Hangul syllable. Either one, from a
+        // complete system face, makes an atlas a phone will not build. The failure path then kept only the Latin
+        // font, so Korean (and a traditional menu) became "?" even after simplified Chinese worked. The menu's own
+        // characters are added from its strings below; simplified common and the Japanese list stay, they are the
+        // size that already fits.
 #if defined(__ANDROID__)
-        const bool full_traditional = false;
+        if (lang == "ja") cb.AddRanges(io.Fonts->GetGlyphRangesJapanese());
+        else if (lang != "ko") cb.AddRanges(io.Fonts->GetGlyphRangesChineseSimplifiedCommon());
 #else
-        const bool full_traditional = lang == "zh-TW";
-#endif
         cb.AddRanges(lang == "ja" ? io.Fonts->GetGlyphRangesJapanese()
                      : lang == "ko" ? io.Fonts->GetGlyphRangesKorean()
-                     : full_traditional ? io.Fonts->GetGlyphRangesChineseFull()
-                                        : io.Fonts->GetGlyphRangesChineseSimplifiedCommon());
+                     : lang == "zh-TW" ? io.Fonts->GetGlyphRangesChineseFull()
+                                       : io.Fonts->GetGlyphRangesChineseSimplifiedCommon());
+#endif
         struct Visit {
             static void fn(const char* s, void* p) { static_cast<ImFontGlyphRangesBuilder*>(p)->AddText(s); }
         };
@@ -256,9 +279,11 @@ ThemeFonts theme_build_fonts(float scale, const std::string& user_font) {
             m.OversampleH = 1;
             m.FontNo = cjk_index;
             io.Fonts->AddFontFromFileTTF(extra.c_str(), px, &m, cjk_ranges.Data);
-        } else if (embed) {
-            merge_embedded();
         }
+        // A phone's CJK face is often simplified Chinese only (Noto Sans SC, MiSans, HarmonyOS Sans). It draws 中,
+        // so it used to be the only face merged, and Hangul, kana and the traditional characters it lacks stayed
+        // "?". The embedded subset fills those holes. MergeMode keeps the system glyph where both have one.
+        merge_embedded();
         return f;
     };
     ThemeFonts fonts;
