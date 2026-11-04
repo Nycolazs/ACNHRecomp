@@ -175,17 +175,6 @@ bool write_game_mods_key(const std::string& data_root, const std::string& value,
     return true;
 }
 
-size_t count_files(const fs::path& root) {
-    size_t n = 0;
-    std::error_code ec;
-    if (!fs::is_directory(root, ec)) return 0;
-    for (fs::recursive_directory_iterator it(root, ec), end; !ec && it != end; it.increment(ec)) {
-        std::error_code e2;
-        if (it->is_regular_file(e2)) ++n;
-    }
-    return n;
-}
-
 fs::path find_romfs_child(const fs::path& dir) {
     std::error_code ec;
     if (!fs::is_directory(dir, ec)) return {};
@@ -591,7 +580,6 @@ std::vector<ModInfo> list_mods(const std::string& data_root) {
         m.enabled = enabled_set.count(id) != 0;
         m.managed = is_managed(id);
         m.has_exefs = dir_has_exefs(it->path());
-        m.file_count = count_files(romfs);
         out.push_back(std::move(m));
     }
 

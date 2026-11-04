@@ -1876,8 +1876,6 @@ void mods_popup() {
                 ImGui::TextUnformatted(label.c_str());
                 if (mod.managed) ImGui::TextDisabled("%s", tr("launcher.mods.managed"));
                 if (mod.has_exefs) ImGui::TextDisabled("%s", tr("launcher.mods.exefs_warn"));
-                if (mod.file_count)
-                    ImGui::TextDisabled("%s", trf("launcher.mods.files", std::to_string(mod.file_count)).c_str());
                 if (mod.enabled) {
                     if (button(tr("launcher.mods.up"), kWhite)) {
                         std::string err;

@@ -12,7 +12,6 @@ struct ModInfo {
     bool enabled = false;    // listed in game.mods
     bool managed = false;    // ptbr / speedfix60 (bundled / settings-linked)
     bool has_exefs = false;  // Atmosphere ExeFS present; ignored by ACNHRecomp
-    size_t file_count = 0;
 };
 
 std::vector<ModInfo> list_mods(const std::string& data_root);
