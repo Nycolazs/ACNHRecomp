@@ -421,6 +421,8 @@ restart are marked on the screen. Environment variables set on the command line 
 |---|---|---|
 | `game.language` | `auto`, `en-US`, `en-GB`, `es`, `es-419`, `fr`, `fr-CA`, `de`, `it`, `nl`, `ru`, `ja`, `ko`, `zh-CN`, `zh-TW`, `pt-BR` | `NX_LANGUAGE` |
 | `game.mods` | Comma-separated mod names | `NX_MODS` |
+| `game.time_travel_enabled` | `0`, `1` (real-time sync with the computer) | |
+| `game.time_travel_offset` | Seconds added to the host clock when sync is off | `NX_TIME_OFFSET` |
 | `ui.language` | `auto` or a menu language code | |
 | `video.preset` | `custom`, `quality`, `balanced`, `low` (see below) | |
 | `video.fullscreen` | `0`, `1` | `NX_FULLSCREEN` |
@@ -498,6 +500,11 @@ Default keyboard layout:
 
 As on the Switch, *New Horizons* keeps one island per console. The save lives in
 `private/acnh/user/device_save/`. The game writes its first save at the end of the first day.
+
+The **launcher** can keep several **save profiles** under `private/acnh/user/profiles/` (each holds a copy of
+`device_save`). The profile you select on the home screen is swapped into `user/device_save` before Play. That is
+separate from automatic **backups** in `user/backups/` (import, restore, and “Back up now” in the game settings).
+Quit the game before switching profiles.
 
 From the **Saves** page you can import a save from:
 

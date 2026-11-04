@@ -64,6 +64,7 @@ VkSurfaceTransformFlagBitsKHR g_sc_transform = VK_SURFACE_TRANSFORM_IDENTITY_BIT
 VkFormat g_sc_format = VK_FORMAT_B8G8R8A8_UNORM;
 VkSemaphore g_acquired = VK_NULL_HANDLE, g_rendered = VK_NULL_HANDLE;
 VkBool32 g_depth_clip_control = VK_FALSE;
+VkBool32 g_fragment_interlock = VK_FALSE;  // fragmentShaderPixelInterlock (vk_fragment_interlock)
 bool g_dynamic_rendering = true;  // vkCmdBeginRendering usable (core 1.3 or VK_KHR_dynamic_rendering)
 std::atomic<bool> g_fifo{false};    // the swapchain presents in FIFO (VSync): present_vsync_paced
 bool g_display_timing = false;      // VK_GOOGLE_display_timing enabled
@@ -318,6 +319,7 @@ bool init() {
             g_require_sg32 ? "pinned to 32" : "left to the driver");
     }
     g_depth_clip_control = fclip.depthClipControl;
+    g_fragment_interlock = finterlock.fragmentShaderPixelInterlock;
     g_dynamic_rendering = api >= VK_API_VERSION_1_3 ? f13.dynamicRendering == VK_TRUE : fdyn.dynamicRendering == VK_TRUE;
     log("nvn/vk: Vulkan %u.%u device, dynamic rendering %s", VK_API_VERSION_MAJOR(api), VK_API_VERSION_MINOR(api),
         g_dynamic_rendering ? "yes" : "no: render pass objects");
@@ -370,7 +372,9 @@ bool init() {
     // spills bigger uploads to staging buffers in proportion to the ring).
     {
 #if defined(__ANDROID__)
-        uint64_t ring_mb = 64;
+        // Arm Mali: its dma-buf pools cannot be mapped (no zero copy), so more goes through uploads: one submit
+        // entering the Resident Services tent uploaded 144 MB and wrapped the 64 MB ring into a GPU hang (#12).
+        uint64_t ring_mb = props.vendorID == 0x13B5 ? 256 : 64;
 #else
         uint64_t ring_mb = 256;
 #endif
@@ -543,6 +547,7 @@ VkQueue vk_queue() { return g_queue; }
 std::mutex& vk_queue_mutex() { return g_queue_mx; }
 uint32_t vk_queue_family() { return g_family; }
 bool vk_depth_clip_control() { return g_depth_clip_control; }
+bool vk_fragment_interlock() { return g_fragment_interlock; }
 bool vk_dynamic_rendering() { return g_dynamic_rendering; }
 const VkPhysicalDeviceFeatures& vk_features() { return g_features; }
 bool gpu_is_integrated() { return g_integrated; }
@@ -1283,15 +1288,15 @@ void gpu_present(uint64_t texture, const int32_t* crop, int interval) {
     }
 }
 
-// ImGui font uploads (imgui_impl_vulkan.cpp) share the game's queue with NVN replay/present.
+}  // namespace nx::nvn
+
+// Dear ImGui's Vulkan backend submits font uploads on the same queue as the game (imgui_impl_vulkan.cpp).
 extern "C" VkResult nx_ui_vk_queue_submit(VkQueue queue, const VkSubmitInfo* submit_info, VkFence fence) {
-    std::lock_guard<std::mutex> q(vk_queue_mutex());
-    return p_vkQueueSubmit(queue, 1, submit_info, fence);
+    std::lock_guard<std::mutex> lk(nx::nvn::vk_queue_mutex());
+    return nx::vk::p_vkQueueSubmit(queue, 1, submit_info, fence);
 }
 
 extern "C" VkResult nx_ui_vk_queue_wait_idle(VkQueue queue) {
-    std::lock_guard<std::mutex> q(vk_queue_mutex());
-    return p_vkQueueWaitIdle(queue);
+    std::lock_guard<std::mutex> lk(nx::nvn::vk_queue_mutex());
+    return nx::vk::p_vkQueueWaitIdle(queue);
 }
-
-}  // namespace nx::nvn

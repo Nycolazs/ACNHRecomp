@@ -24,6 +24,7 @@ void config_apply();                   // settings -> NX_* environment defaults 
 bool config_save();                    // writes the file back
 std::string config_get(const std::string& key, const std::string& fallback = "");
 int config_get_int(const std::string& key, int fallback);
+int64_t config_get_int64(const std::string& key, int64_t fallback);
 float config_get_float(const std::string& key, float fallback);
 bool config_get_bool(const std::string& key, bool fallback);
 void config_set(const std::string& key, const std::string& value);

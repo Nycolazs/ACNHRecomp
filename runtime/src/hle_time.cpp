@@ -4,23 +4,18 @@
 // service; time:u has no such rule to give (ITimeZoneService 4 was a stub), so the conversion produced a date the game
 // rejected ("The system is set to a date outside the supported range."). Here the rule is ignored and the host's
 // localtime/mktime do the work: the island follows the computer's clock, as it follows the console's.
-#include <chrono>
-#include <cstdlib>
 #include <cstring>
 #include <ctime>
 
 #include <nx/runtime.h>
 
+#include "game_clock.h"
+
 namespace nx {
 
 namespace {
 
-int64_t unix_now() {
-    // NX_TIME_OFFSET=<seconds>: shift the clock (time travel, like changing the console's date).
-    static const int64_t shift = std::getenv("NX_TIME_OFFSET") ? std::strtoll(std::getenv("NX_TIME_OFFSET"), nullptr, 10) : 0;
-    return std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count() +
-           shift;
-}
+int64_t unix_now() { return game_clock_unix_seconds(); }
 
 std::tm local_tm(int64_t t) {
     time_t tt = time_t(t);
