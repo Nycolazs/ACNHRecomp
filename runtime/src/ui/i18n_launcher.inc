@@ -192,7 +192,7 @@ const Entry kLauncherEn[] = {
     {"launcher.mods.empty", "No mods installed yet. Import a folder or zip that contains a romfs/ tree."},
     {"launcher.mods.enabled", "On"},
     {"launcher.mods.managed", "Bundled with the Native release"},
-    {"launcher.mods.exefs_warn", "This pack had ExeFS or Skyline files; only the RomFS overlay is used."},
+    {"launcher.mods.exefs_warn", "ExeFS files detected; only the RomFS are used."},
     {"launcher.mods.files", "{} files"},
     {"launcher.mods.up", "Up"},
     {"launcher.mods.down", "Down"},
