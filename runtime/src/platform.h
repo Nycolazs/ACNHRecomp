@@ -74,6 +74,9 @@ bool read_asset(const std::string& path, std::string& out);  // a file of the AP
 void log_line(const char* line);  // stderr / logcat
 std::string data_root();
 std::string setting(const std::string& key);  // a player setting: config.txt (Android), NX_<KEY> (PC); "" if unset          // where private/ lives ("private" on PC, the app's external files dir on Android)
+// The OS locale as a BCP 47 tag ("zh-Hans-CN", "pt-BR"). "" where the process has no device locale of its own
+// (desktop builds read LANG instead). Android does not put the phone's language in LANG.
+std::string device_locale();
 
 // ---- display, input, audio ----
 void* create_window();       // native window handle for the Vulkan surface (HWND / ANativeWindow*), kept alive

@@ -17,6 +17,10 @@
 #include <SDL3/SDL_stdinc.h>
 #endif
 
+#if defined(__ANDROID__) && !defined(NX_LAUNCHER_UI)
+#include "platform.h"
+#endif
+
 #if defined(_WIN32)
 #include <windows.h>
 #endif
@@ -2834,8 +2838,12 @@ const std::vector<UiLanguage>& ui_languages() {
 
 std::string ui_detect_system_language() {
     int l = -1;
+#if defined(__ANDROID__) && !defined(NX_LAUNCHER_UI)
+    std::string phone = nx::plat::device_locale();
+    if (!phone.empty()) l = match_tag(phone);
+#endif
 #if defined(NX_HAVE_SDL3)
-    l = detect_sdl();
+    if (l < 0) l = detect_sdl();
 #endif
     if (l < 0) l = detect_os();
     return kLanguages[l < 0 ? 0 : l].info.code;
