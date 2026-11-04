@@ -532,6 +532,7 @@ bool button(const char* label, ImU32 color = kMint, bool enabled = true, float w
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, col4(rgb(246, 196, 64)));
     ImGui::PushStyleColor(ImGuiCol_Text, col4(hot || light ? kInk : kWhite));
     bool r = ImGui::Button(label, ImVec2(w > 0 ? w : button_width(label), 0));
+    if (enabled && ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
     nav_item();
     ImGui::PopStyleColor(4);
     ImGui::EndDisabled();
@@ -713,6 +714,7 @@ bool card(const char* id, const Card& c, ImVec2 size) {
     bool clicked = nav_card(id, size);
     ImGui::EndDisabled();
     bool hov = c.enabled && (ImGui::IsItemHovered() || ImGui::IsItemFocused());
+    if (c.enabled && ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2 q(p.x + size.x, p.y + size.y);
     dl->AddRectFilled(p, q, hov ? rgb(255, 240, 196) : kPaper, S(26));
@@ -1424,6 +1426,7 @@ bool big_button(const char* label, int icon, ImU32 color, float w, float h, cons
     // Countdown: yellow. After cancel: green until the pointer leaves. Otherwise: normal hover/focus.
     bool hov = sub ? true
                    : (!g_autostart_ui && !g_play_calm && (ImGui::IsItemHovered() || ImGui::IsItemFocused()));
+    if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
     if (!sub && !g_autostart_ui && !g_play_calm && ImGui::IsItemActive()) {  // pressed: the button gives a little under the finger (3 %, from its centre)
         float dx = w * 0.015f, dy = h * 0.015f;
         p = ImVec2(p.x + dx, p.y + dy * 2), w -= dx * 2, h -= dy * 2;
@@ -1546,6 +1549,7 @@ bool action_card(const char* id, int icon, ImU32 color, const char* title, const
     bool clicked = nav_card(id, size, false, true);
     ImGui::EndDisabled();
     bool hov = enabled && (ImGui::IsItemHovered() || ImGui::IsItemFocused());
+    if (enabled && ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2 q(p.x + size.x, p.y + size.y);
     dl->AddRectFilled(p, q, hov ? rgb(255, 240, 196) : kPaper, S(22));
