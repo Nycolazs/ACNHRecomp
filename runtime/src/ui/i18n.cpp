@@ -2823,6 +2823,17 @@ int detect_os() {
 
 }  // namespace
 
+void ui_visit_texts(const char* code, void (*fn)(const char* utf8, void* ctx), void* ctx) {
+    for (const Language& l : kLanguages) {
+        if (code && code != std::string_view(l.info.code)) continue;
+        fn(l.info.native_name, ctx);
+        for (size_t i = 0; i < l.count; i++)
+            if (l.entries[i].text) fn(l.entries[i].text, ctx);
+        for (size_t i = 0; i < l.launcher_count; i++)
+            if (l.launcher[i].text) fn(l.launcher[i].text, ctx);
+    }
+}
+
 const std::vector<UiLanguage>& ui_languages() {
     static const std::vector<UiLanguage> list = [] {
         std::vector<UiLanguage> v;
