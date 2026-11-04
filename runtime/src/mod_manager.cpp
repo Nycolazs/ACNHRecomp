@@ -583,7 +583,7 @@ std::vector<ModInfo> list_mods(const std::string& data_root) {
         out.push_back(std::move(m));
     }
 
-    // Enabled first, in game.mods order; then the rest alphabetically.
+    // Enabled first (game.mods load order), disabled at the bottom alphabetically.
     std::vector<ModInfo> ordered;
     std::set<std::string> placed;
     for (const std::string& id : enabled) {

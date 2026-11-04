@@ -178,6 +178,8 @@ std::vector<nx::mod_manager::ModInfo> g_mods;
 bool g_mods_open = false;
 double g_mods_since = 0;
 std::string g_mods_delete_id;
+bool g_mods_refresh = false;           // reload list after the grid finishes drawing
+bool g_mods_refresh_wait_pad = false;  // gamepad: wait until FaceDown is released before reshuffling
 void refresh_mods();
 std::string g_banner;  // an error under the page title (a refused file or folder)
 std::string g_toast;
@@ -1881,8 +1883,10 @@ void mods_popup() {
             const char* del_l = tr("launcher.mods.delete");
             float action_w = std::min(S(96), std::max(S(64), (tile_w - S(36)) / 3.f));
 
-            for (size_t i = 0; i < g_mods.size(); ++i) {
-                const nx::mod_manager::ModInfo& mod = g_mods[i];
+            // Snapshot ids so toggles cannot reshuffle g_mods while this frame still walks the grid.
+            const size_t mod_count = g_mods.size();
+            for (size_t i = 0; i < mod_count; ++i) {
+                const nx::mod_manager::ModInfo mod = g_mods[i];
                 if (i % size_t(cols) != 0) ImGui::SameLine(0, gap);
                 ImGui::PushID(mod.id.c_str());
 
@@ -1916,7 +1920,19 @@ void mods_popup() {
                     std::string err;
                     if (nx::mod_manager::set_enabled(g_build.data, mod.id, enabled, &err)) {
                         load_game_ini();
-                        refresh_mods();
+                        // Keep the tile put for this frame; reshuffle (disabled → bottom) after the grid,
+                        // and on gamepad only once FaceDown is released so activate cannot hit another tile.
+                        if (i < g_mods.size() && g_mods[i].id == mod.id) g_mods[i].enabled = enabled;
+                        g_mods_refresh = true;
+                        ImGuiContext& ctx = *ImGui::GetCurrentContext();
+                        if (ctx.NavInputSource == ImGuiInputSource_Gamepad) {
+                            g_mods_refresh_wait_pad = true;
+                            ctx.NavActivateId = 0;
+                            ctx.NavActivateDownId = 0;
+                            ctx.NavActivatePressedId = 0;
+                        } else {
+                            g_mods_refresh_wait_pad = false;
+                        }
                     } else
                         g_banner = trf("launcher.mods.toggle_failed", err);
                 }
@@ -1928,24 +1944,27 @@ void mods_popup() {
                 if (mod.has_exefs) ImGui::TextDisabled("%s", tr("launcher.mods.exefs_warn"));
 
                 ImGui::SetCursorPosY(tile_h - ImGui::GetStyle().WindowPadding.y - ImGui::GetFrameHeight() - S(4));
-                if (mod.enabled) {
-                    if (button(up_l, kWhite, true, action_w)) {
-                        std::string err;
-                        if (nx::mod_manager::move_enabled(g_build.data, mod.id, -1, &err)) {
-                            load_game_ini();
-                            refresh_mods();
-                        }
+                // Keep Up/Down in the nav tree even when off so tiles do not gain/lose targets on toggle.
+                if (button(up_l, kWhite, mod.enabled, action_w)) {
+                    std::string err;
+                    if (nx::mod_manager::move_enabled(g_build.data, mod.id, -1, &err)) {
+                        load_game_ini();
+                        g_mods_refresh = true;
+                        if (ImGui::GetCurrentContext()->NavInputSource == ImGuiInputSource_Gamepad)
+                            g_mods_refresh_wait_pad = true;
                     }
-                    ImGui::SameLine();
-                    if (button(down_l, kWhite, true, action_w)) {
-                        std::string err;
-                        if (nx::mod_manager::move_enabled(g_build.data, mod.id, 1, &err)) {
-                            load_game_ini();
-                            refresh_mods();
-                        }
-                    }
-                    ImGui::SameLine();
                 }
+                ImGui::SameLine();
+                if (button(down_l, kWhite, mod.enabled, action_w)) {
+                    std::string err;
+                    if (nx::mod_manager::move_enabled(g_build.data, mod.id, 1, &err)) {
+                        load_game_ini();
+                        g_mods_refresh = true;
+                        if (ImGui::GetCurrentContext()->NavInputSource == ImGuiInputSource_Gamepad)
+                            g_mods_refresh_wait_pad = true;
+                    }
+                }
+                ImGui::SameLine();
                 if (button(del_l, kRed, true, action_w)) g_mods_delete_id = mod.id;
 
                 ImGui::EndChild();
@@ -1959,6 +1978,14 @@ void mods_popup() {
             }
         }
         ImGui::EndChild();
+        if (g_mods_refresh) {
+            const bool pad_held = g_mods_refresh_wait_pad && ImGui::IsKeyDown(ImGuiKey_GamepadFaceDown);
+            if (!pad_held) {
+                g_mods_refresh = false;
+                g_mods_refresh_wait_pad = false;
+                refresh_mods();  // enabled stay on top; disabled move to the bottom
+            }
+        }
 
         if (!g_mods_delete_id.empty()) {
             ImGui::Dummy(ImVec2(0, S(6)));
