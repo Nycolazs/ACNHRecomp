@@ -421,13 +421,17 @@ int days_in_month(int year, int month) {
 }
 
 // A dropdown of the numbers lo..hi, not tied to config.ini (the time-travel pickers). `fmt` shows each one.
+// Registered like the other controls: d-pad moves between them, A opens the list, left/right on a keyboard changes it.
 bool int_dropdown(const char* id, int& value, int lo, int hi, const char* fmt, float width) {
     char text[16];
     std::snprintf(text, sizeof text, fmt, value);
     ImGui::PushID(id);
     ImGui::SetNextItemWidth(width);
+    ImGui::PushStyleColor(ImGuiCol_NavCursor, ImVec4(0, 0, 0, 0));
+    const bool open = ImGui::BeginCombo("##pick", text);
+    ImGui::PopStyleColor();
     bool changed = false;
-    if (ImGui::BeginCombo("##pick", text)) {
+    if (open) {
         for (int v = lo; v <= hi; v++) {
             std::snprintf(text, sizeof text, fmt, v);
             if (ImGui::Selectable(text, v == value)) value = v, changed = true;
@@ -435,6 +439,21 @@ bool int_dropdown(const char* id, int& value, int lo, int hi, const char* fmt, f
         }
         drag_scroll();
         ImGui::EndCombo();
+    }
+    page_nav_item();
+    if (ImGui::IsItemFocused()) {
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->AddRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), rgb(246, 170, 40), ImGui::GetStyle().FrameRounding, 0,
+                    2.5f * g_scale);
+        if (hi > lo) {
+            if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow, true)) {
+                value = value <= lo ? hi : value - 1;
+                changed = true;
+            } else if (ImGui::IsKeyPressed(ImGuiKey_RightArrow, true)) {
+                value = value >= hi ? lo : value + 1;
+                changed = true;
+            }
+        }
     }
     ImGui::PopID();
     return changed;
