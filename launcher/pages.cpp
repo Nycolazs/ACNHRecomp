@@ -552,8 +552,8 @@ bool button(const char* label, ImU32 color = kMint, bool enabled = true, float w
     const bool hot = enabled && (g.HoveredIdPreviousFrame == id || g.ActiveId == id ||
                                  (g.NavId == id && g.NavIdIsAlive && g.NavHighlightItemUnderNav));
     ImGui::PushStyleColor(ImGuiCol_Button, col4(color));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, col4(kYellow));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, col4(rgb(246, 196, 64)));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, col4(enabled ? kYellow : color));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, col4(enabled ? rgb(246, 196, 64) : color));
     ImGui::PushStyleColor(ImGuiCol_Text, col4(hot || light ? kInk : kWhite));
     bool r = ImGui::Button(label, ImVec2(w > 0 ? w : button_width(label), 0));
     nav_item();
@@ -2003,6 +2003,7 @@ void mods_popup() {
             int next = 1;
             for (size_t i = 0; i < g_mods.size(); ++i)
                 if (g_mods[i].enabled) order[i] = next++;
+            const int enabled_count = next - 1;
 
             float avail = ImGui::GetContentRegionAvail().x, gap = S(12);
             int cols = avail >= S(900) ? 3 : (avail >= S(520) ? 2 : 1);
@@ -2060,7 +2061,7 @@ void mods_popup() {
                 const float tile_h = tile_hs[i];
 
                 ImVec2 tile_min = ImGui::GetCursorScreenPos();
-                ImGui::PushStyleColor(ImGuiCol_ChildBg, col4(mod.enabled ? rgb(255, 244, 210) : rgb(255, 252, 242)));
+                ImGui::PushStyleColor(ImGuiCol_ChildBg, col4(rgb(255, 252, 242)));
                 ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, S(14));
                 ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(tile_pad_x, tile_pad_y));
                 ImGui::BeginChild("##tile", ImVec2(tile_w, tile_h),
@@ -2073,7 +2074,7 @@ void mods_popup() {
                 ImDrawList* tdl = ImGui::GetWindowDrawList();
                 ImVec2 row_min = ImGui::GetCursorScreenPos();
                 ImVec2 bc(row_min.x + br, row_min.y + fh * 0.5f);
-                tdl->AddCircleFilled(bc, br, mod.enabled ? kOrange : kGrey);
+                tdl->AddCircleFilled(bc, br, mod.enabled ? kOrange : kRed);
                 char num[8];
                 if (mod.enabled)
                     std::snprintf(num, sizeof num, "%d", order[i]);
@@ -2087,7 +2088,7 @@ void mods_popup() {
                 ImGui::SetCursorScreenPos(ImVec2(row_min.x + 2 * br + S(10), row_min.y));
                 const float row_top_y = ImGui::GetCursorPosY();
                 bool enabled = mod.enabled;
-                // Green when on, blue on hover — clearer than the cream frame + white mark.
+                // Green fill when on, blue on hover; white check mark for contrast.
                 if (mod.enabled) ImGui::PushStyleColor(ImGuiCol_FrameBg, col4(kGreen));
                 ImGui::PushStyleColor(ImGuiCol_CheckMark, col4(kWhite));
                 ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, col4(kBlue));
@@ -2144,32 +2145,34 @@ void mods_popup() {
                 }
 
                 // Bundled mods have no reorder / delete controls (settings-linked).
+                // Disabled mods keep Delete only — Up/Down apply to load order among enabled packs.
                 // Park actions at the bottom (SetCursorPos — Dummy would add ItemSpacing and clip past the tile).
                 if (!mod.managed) {
                     const float y_gap = ImGui::GetCursorPosY() + btn_gap;
                     const float y_bottom = ImGui::GetCursorPosY() + ImGui::GetContentRegionAvail().y - fh;
                     ImGui::SetCursorPosY(std::max(y_gap, y_bottom));
-                    // Keep Up/Down in the nav tree even when off so tiles do not gain/lose targets on toggle.
-                    if (button(up_l, kWhite, mod.enabled, action_w)) {
-                        std::string err;
-                        if (nx::mod_manager::move_enabled(g_build.data, mod.id, -1, &err)) {
-                            load_game_ini();
-                            g_mods_refresh = true;
-                            if (ImGui::GetCurrentContext()->NavInputSource == ImGuiInputSource_Gamepad)
-                                g_mods_refresh_wait_pad = true;
+                    if (mod.enabled) {
+                        if (button(up_l, kBlue, order[i] > 1, action_w)) {
+                            std::string err;
+                            if (nx::mod_manager::move_enabled(g_build.data, mod.id, -1, &err)) {
+                                load_game_ini();
+                                g_mods_refresh = true;
+                                if (ImGui::GetCurrentContext()->NavInputSource == ImGuiInputSource_Gamepad)
+                                    g_mods_refresh_wait_pad = true;
+                            }
                         }
-                    }
-                    ImGui::SameLine();
-                    if (button(down_l, kWhite, mod.enabled, action_w)) {
-                        std::string err;
-                        if (nx::mod_manager::move_enabled(g_build.data, mod.id, 1, &err)) {
-                            load_game_ini();
-                            g_mods_refresh = true;
-                            if (ImGui::GetCurrentContext()->NavInputSource == ImGuiInputSource_Gamepad)
-                                g_mods_refresh_wait_pad = true;
+                        ImGui::SameLine();
+                        if (button(down_l, kBlue, order[i] < enabled_count, action_w)) {
+                            std::string err;
+                            if (nx::mod_manager::move_enabled(g_build.data, mod.id, 1, &err)) {
+                                load_game_ini();
+                                g_mods_refresh = true;
+                                if (ImGui::GetCurrentContext()->NavInputSource == ImGuiInputSource_Gamepad)
+                                    g_mods_refresh_wait_pad = true;
+                            }
                         }
+                        ImGui::SameLine();
                     }
-                    ImGui::SameLine();
                     if (button(del_l, kRed, true, action_w)) g_mods_delete_id = mod.id;
                 }
 
