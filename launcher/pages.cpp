@@ -31,6 +31,8 @@
 #include "imgui.h"
 #include "imgui_internal.h"
 
+#include "save_profiles.h"
+
 #include "ui/i18n.h"
 #include "ui/theme.h"
 
@@ -163,6 +165,12 @@ std::string g_install;
 std::vector<Prereq> g_prereqs;
 Build g_build;
 const char* g_build_problem = "launcher.reason.none";  // "" when g_build is valid
+std::vector<nx::save_profiles::ProfileInfo> g_save_profiles;
+std::string g_save_profile_active;
+bool g_saves_open = false;
+double g_saves_since = 0;
+std::string g_saves_delete_id;
+void select_save_profile(const std::string& id);
 std::string g_banner;  // an error under the page title (a refused file or folder)
 std::string g_toast;
 double g_toast_until = 0;
@@ -180,7 +188,7 @@ ImVec2 g_drag_pos;
 ImVec2 g_page_min, g_page_max;  // the visible part of the page (it scrolls)
 
 // File dialogs answer on their own time (and maybe on another thread): queued here, applied in the frame.
-enum Target { kPickGame, kPickMod, kPickInstall, kPickBuild };
+enum Target { kPickGame, kPickMod, kPickInstall, kPickBuild, kPickSaveImport };
 struct Picked {
     int target;
     std::vector<std::string> paths;
@@ -244,11 +252,54 @@ void recheck_files() {
         for (Found& f : s.found) f.check = check_file(f.kind, f.path);
 }
 
+void refresh_save_profiles();
+
 void set_build(const std::string& folder, bool remember) {
     g_build = Build();
     g_build_problem = find_build(folder, g_build);
     if (*g_build_problem == 0 && remember) {
         settings().set("launcher.build", folder);
+        settings().save();
+    }
+    if (*g_build_problem == 0) refresh_save_profiles();
+}
+
+void refresh_save_profiles() {
+    g_save_profiles.clear();
+    g_save_profile_active.clear();
+    if (*g_build_problem != 0) return;
+    std::string err;
+    if (!nx::save_profiles::ensure_migrated(g_build.data, &err)) {
+        g_banner = trf("launcher.profiles.switch_failed", err);
+        return;
+    }
+    std::string want = settings().get("launcher.save_profile");
+    if (want.empty()) want = nx::save_profiles::read_active_id(g_build.data);
+    if (want.empty()) want = "default";
+    g_save_profiles = nx::save_profiles::list_profiles(g_build.data);
+    bool want_ok = false;
+    for (const nx::save_profiles::ProfileInfo& p : g_save_profiles)
+        if (p.id == want) want_ok = true;
+    if (!want_ok) {
+        want = nx::save_profiles::read_active_id(g_build.data);
+        if (want.empty()) want = "default";
+        settings().set("launcher.save_profile", want);
+        settings().save();
+    }
+    std::string active = nx::save_profiles::read_active_id(g_build.data);
+    if (want != active) {
+        if (!nx::save_profiles::activate_profile(g_build.data, want, &err)) {
+            g_banner = trf("launcher.profiles.switch_failed", err);
+            return;
+        }
+        settings().set("launcher.save_profile", want);
+        settings().save();
+    }
+    g_save_profile_active = nx::save_profiles::read_active_id(g_build.data);
+    if (g_save_profile_active.empty()) g_save_profile_active = want;
+    if (g_save_profiles.empty()) g_save_profiles = nx::save_profiles::list_profiles(g_build.data);
+    if (settings().get("launcher.save_profile").empty()) {
+        settings().set("launcher.save_profile", g_save_profile_active);
         settings().save();
     }
 }
@@ -286,6 +337,7 @@ void pick(Target t) {
             SDL_ShowOpenFolderDialog(on_picked, user, g_window, is_dir(g_install) ? g_install.c_str() : nullptr, false);
             break;
         case kPickBuild: SDL_ShowOpenFolderDialog(on_picked, user, g_window, nullptr, false); break;
+        case kPickSaveImport: SDL_ShowOpenFolderDialog(on_picked, user, g_window, where, false); break;
     }
 }
 
@@ -368,6 +420,21 @@ void apply_picks() {
         switch (p.target) {
             case kPickInstall: g_install = first, g_prereqs = check_prerequisites(g_install); break;
             case kPickBuild: use_build_folder(first); break;
+            case kPickSaveImport: {
+                std::string err;
+                std::string id = nx::save_profiles::create_empty_profile(g_build.data, &err);
+                if (id.empty()) {
+                    g_banner = trf("launcher.saves.import_failed", err);
+                    break;
+                }
+                if (nx::save_profiles::import_into_profile(g_build.data, id, first, &err)) {
+                    toast(tr("launcher.saves.import_ok"));
+                    select_save_profile(id);
+                    refresh_save_profiles();
+                } else
+                    g_banner = trf("launcher.saves.import_failed", err);
+                break;
+            }
             default:  // a card
                 use_file(slot_kind(p.target, first), first);
                 if (g_express && p.target == kPickGame) express_continue();
@@ -1250,6 +1317,12 @@ double g_opening_since = -1;
 void play() {
     if (g_opening_since >= 0) return;  // already starting
     std::string err;
+    std::string profile = settings().get("launcher.save_profile", g_save_profile_active);
+    if (profile.empty()) profile = "default";
+    if (!nx::save_profiles::activate_profile(g_build.data, profile, &err)) {
+        g_banner = trf("launcher.profiles.switch_failed", err);
+        return;
+    }
     if (launch_game(g_build, err, g_window))
         g_opening_since = ImGui::GetTime(), start_sound_play();
     else
@@ -1344,6 +1417,20 @@ void hero(int icon, ImU32 color, float r) {
     dl->AddCircleFilled(c, r, color);
     theme_icon(dl, icon, c, r * 0.6f, kWhite);
     ImGui::Dummy(ImVec2(w, 2 * r + S(14)));
+}
+
+void select_save_profile(const std::string& id) {
+    if (id == g_save_profile_active) return;
+    std::string err;
+    if (!nx::save_profiles::activate_profile(g_build.data, id, &err)) {
+        g_banner = trf("launcher.profiles.switch_failed", err);
+        return;
+    }
+    settings().set("launcher.save_profile", id);
+    settings().save();
+    g_save_profile_active = id;
+    g_save_profiles = nx::save_profiles::list_profiles(g_build.data);
+    g_banner.clear();
 }
 
 void play_block() {
@@ -1455,26 +1542,63 @@ float pill_width(const char* text) {
     return S(6) + 2 * r + S(10) + measure(g_body, fs, text, -1).x + S(16);
 }
 
-// Version and add-ons, side by side under the title (one under the other when they do not fit).
+std::string profile_save_folder(const std::string& id) {
+    std::string base = g_build.data + "/user/profiles/" + id;
+    std::string save = base + "/device_save";
+    return is_dir(save) ? save : base;
+}
+
+std::string active_island_pill_text() {
+    for (const nx::save_profiles::ProfileInfo& p : g_save_profiles) {
+        if (p.id != g_save_profile_active) continue;
+        if (p.has_save && !p.island_name.empty()) return trf("launcher.home.save_file", p.island_name);
+        return trf("launcher.home.save_file", tr("launcher.profiles.empty"));
+    }
+    return trf("launcher.home.save_file", tr("launcher.profiles.empty"));
+}
+
+// Version, add-ons, and save file under the title (stacked when they do not fit on one line).
 void contents_row() {
     const BuildContents& c = contents();
     std::string ver = c.version.empty() ? tr("launcher.home.version_unknown") : trf("launcher.home.version", c.version);
+    std::string save = active_island_pill_text();
     std::string add = c.addons.empty() ? tr("launcher.addons.none")
                                        : trf("launcher.addons.count", std::to_string(c.addons.size()));
     float avail = ImGui::GetContentRegionAvail().x, gap = S(10), x0 = ImGui::GetCursorScreenPos().x;
-    float w1 = pill_width(ver.c_str()), w2 = pill_width(add.c_str());
-    bool stack = w1 + gap + w2 > avail;
-    float y = ImGui::GetCursorScreenPos().y;
-    pill("##version", nx::ui::kIconLeaf, kMint, ver.c_str(), false, false,
-         x0 + std::floor((avail - (stack ? w1 : w1 + gap + w2)) * 0.5f));
+    float w1 = pill_width(ver.c_str()), w2 = pill_width(add.c_str()), w3 = pill_width(save.c_str());
+    bool one_row = w1 + gap + w2 + gap + w3 <= avail;
+    float row_w = one_row ? w1 + gap + w2 + gap + w3 : std::max({w1, w2, w3});
+    float y0 = ImGui::GetCursorScreenPos().y;
+    auto place_pill = [&](const char* id, int icon, ImU32 color, const char* text, bool clickable, bool dot,
+                          int row) {
+        float w = pill_width(text);
+        float x = x0 + std::floor((avail - (one_row ? row_w : w)) * 0.5f);
+        if (one_row) {
+            if (row == 1) x += w1 + gap;
+            if (row == 2) x += w1 + gap + w2 + gap;
+        } else
+            x = x0 + std::floor((avail - w) * 0.5f);
+        float y = y0 + (one_row ? 0 : float(row) * (S(38) + gap));
+        ImGui::SetCursorScreenPos(ImVec2(x, y));
+        return pill(id, icon, color, text, clickable, dot, x);
+    };
+    place_pill("##version", nx::ui::kIconLeaf, kMint, ver.c_str(), false, false, 0);
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", g_build.data.c_str());
-    if (!stack) ImGui::SetCursorScreenPos(ImVec2(x0, y));
-    float x2 = std::floor(stack ? x0 + (avail - w2) * 0.5f : x0 + (avail - w1 - gap - w2) * 0.5f + w1 + gap);
-    if (pill("##addons", nx::ui::kIconBox, c.addons.empty() ? kGrey : kPurple, add.c_str(), true, !c.addons.empty(), x2)) {
-        contents(true);  // read again: the setup may have added some since
+    if (place_pill("##addons", nx::ui::kIconBox, c.addons.empty() ? kGrey : kPurple, add.c_str(), true, !c.addons.empty(),
+                   1)) {
+        contents(true);
         g_addons_open = true, g_addons_since = ImGui::GetTime();
     }
-    ImGui::SetCursorScreenPos(ImVec2(x0, ImGui::GetCursorScreenPos().y));
+    bool has_save = false;
+    for (const nx::save_profiles::ProfileInfo& p : g_save_profiles)
+        if (p.id == g_save_profile_active && p.has_save) has_save = true;
+    if (place_pill("##savefile", nx::ui::kIconHouse, has_save ? kRed : kGrey, save.c_str(), true, has_save, 2)) {
+        refresh_save_profiles();
+        g_saves_open = true;
+        g_saves_since = ImGui::GetTime();
+    }
+    ImGui::SetCursorScreenPos(
+        ImVec2(x0, y0 + (one_row ? S(38) : 3 * (S(38) + gap)) + S(4)));
 }
 
 // The add-on content, one card each: its number, size and files, and that the game loads it.
@@ -1536,6 +1660,92 @@ void addons_popup() {
     ImGui::PopStyleVar();
 }
 
+void saves_popup() {
+    if (g_saves_open) ImGui::OpenPopup("saves");
+    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, out_cubic((ImGui::GetTime() - g_saves_since) / 0.18));
+    ImGui::SetNextWindowSize(ImVec2(std::min(ImGui::GetIO().DisplaySize.x * 0.9f, S(520)), 0));
+    if (ImGui::BeginPopupModal("saves", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize)) {
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        ImVec2 p = ImGui::GetCursorScreenPos();
+        float r = S(18);
+        dl->AddCircleFilled(ImVec2(p.x + r, p.y + r), r, kRed);
+        theme_icon(dl, nx::ui::kIconHouse, ImVec2(p.x + r, p.y + r), r * 0.6f, kWhite);
+        float fs = font_size(g_title) * 0.8f;
+        dl->AddText(g_title, fs, ImVec2(p.x + 2 * r + S(12), p.y + r - fs * 0.6f), kInk, tr("launcher.profiles.title"));
+        ImGui::Dummy(ImVec2(0, 2 * r + S(8)));
+        ImGui::PushStyleColor(ImGuiCol_Text, col4(kInkSoft));
+        ImGui::TextWrapped("%s", tr("launcher.profiles.hint"));
+        ImGui::PopStyleColor();
+        ImGui::Dummy(ImVec2(0, S(8)));
+        float list_h = std::min(S(240), ImGui::GetIO().DisplaySize.y * 0.4f);
+        ImGui::BeginChild("##saves_list", ImVec2(0, list_h), ImGuiChildFlags_Borders);
+        const bool only_one = g_save_profiles.size() <= 1;
+        if (g_save_profiles.empty()) {
+            ImGui::TextDisabled("%s", tr("launcher.profiles.empty"));
+        } else {
+            for (const nx::save_profiles::ProfileInfo& prof : g_save_profiles) {
+                ImGui::PushID(prof.id.c_str());
+                bool active = prof.id == g_save_profile_active;
+                std::string label =
+                    prof.has_save && !prof.island_name.empty() ? prof.island_name : tr("launcher.profiles.empty");
+                if (active) label += std::string(" (") + tr("launcher.profiles.active") + ")";
+                if (ImGui::Selectable(label.c_str(), active)) select_save_profile(prof.id);
+                nav_item();
+                if (prof.has_save && !prof.last_modified.empty())
+                    ImGui::TextDisabled("%s", trf("launcher.profiles.last_saved", prof.last_modified).c_str());
+                if (button(tr("launcher.saves.open"), kBlue)) open_folder(profile_save_folder(prof.id));
+                ImGui::SameLine();
+                ImGui::BeginDisabled(only_one);
+                if (button(tr("launcher.saves.delete"), kRed)) g_saves_delete_id = prof.id;
+                ImGui::EndDisabled();
+                ImGui::PopID();
+            }
+        }
+        ImGui::EndChild();
+        if (!g_saves_delete_id.empty()) {
+            ImGui::PushStyleColor(ImGuiCol_Text, col4(kInkSoft));
+            ImGui::TextWrapped("%s", tr("launcher.saves.delete_confirm"));
+            ImGui::PopStyleColor();
+            if (button(tr("launcher.saves.delete"), kRed)) {
+                std::string err;
+                std::string id = g_saves_delete_id;
+                g_saves_delete_id.clear();
+                if (nx::save_profiles::delete_profile(g_build.data, id, &err)) {
+                    refresh_save_profiles();
+                    settings().set("launcher.save_profile", g_save_profile_active);
+                    settings().save();
+                    toast(tr("launcher.saves.deleted"));
+                } else
+                    g_banner = trf("launcher.saves.delete_failed", err);
+            }
+            ImGui::SameLine();
+            if (button(tr("common.no"), kWhite)) g_saves_delete_id.clear();
+            ImGui::Dummy(ImVec2(0, S(4)));
+        }
+        ImGui::Dummy(ImVec2(0, S(8)));
+        const char* new_l = tr("launcher.profiles.new");
+        const char* import_l = tr("launcher.saves.import_new");
+        float pair_w = std::max(button_width(new_l), button_width(import_l));
+        if (button(new_l, kBlue, true, pair_w)) {
+            std::string err;
+            std::string id = nx::save_profiles::create_empty_profile(g_build.data, &err);
+            if (id.empty())
+                g_banner = trf("launcher.profiles.switch_failed", err);
+            else
+                select_save_profile(id);
+        }
+        ImGui::SameLine();
+        if (button(import_l, kBlue, true, pair_w)) pick(kPickSaveImport);
+        ImGui::Dummy(ImVec2(0, S(4)));
+        align_right({tr("launcher.addons.close")});
+        if (button(tr("launcher.addons.close"), kWhite) || ImGui::IsKeyPressed(ImGuiKey_Escape) ||
+            ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false))
+            g_saves_open = false, g_saves_delete_id.clear(), ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+    ImGui::PopStyleVar();
+}
+
 // A newer release on GitHub (desktop.cpp): what it is, and a button to its page.
 void update_notice() {
     const UpdateInfo u = update_info();
@@ -1578,7 +1788,7 @@ void page_home() {
         }
         ImGui::Dummy(ImVec2(0, S(6)));
         contents_row();
-        ImGui::Dummy(ImVec2(0, S(16)));
+        ImGui::Dummy(ImVec2(0, S(10)));
         play_block();
     }
     // Settings, Rebuild, Change build folder.
@@ -1887,6 +2097,7 @@ void popups() {
     }
     if (g_quit_after_stop && !setup_state().running) g_exit = true;
     addons_popup();
+    saves_popup();
 }
 
 }  // namespace
@@ -1979,7 +2190,7 @@ bool pages_draw(float scale, ImFont* title) {
     for (int key = ImGuiKey_GamepadStart; key <= ImGuiKey_GamepadRStickDown; ++key)
         if (ImGui::IsKeyPressed(ImGuiKey(key), false)) controller_navigation = true;
     const bool popup_before = popup_last_frame || ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) ||
-                              g_confirm_stop || g_confirm_quit || g_addons_open;
+                              g_confirm_stop || g_confirm_quit || g_addons_open || g_saves_open;
     auto direction = [](ImGuiKey dpad, ImGuiKey stick) {
         return ImGui::IsKeyPressed(dpad, true) || ImGui::IsKeyPressed(stick, true);
     };
@@ -2095,7 +2306,7 @@ bool pages_draw(float scale, ImFont* title) {
     }
     g_nav_section = -1;
     if (controller_navigation && !popup_before && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) &&
-        !g_confirm_stop && !g_confirm_quit && !g_addons_open &&
+        !g_confirm_stop && !g_confirm_quit && !g_addons_open && !g_saves_open &&
         drawn_page == g_page && !g_nav_items.empty()) {
         const bool page_changed = !nav_page_valid || nav_page != g_page;
         auto focused = std::find_if(g_nav_items.begin(), g_nav_items.end(), [&](const NavItem& item) { return item.id == ctx.NavId; });
@@ -2117,7 +2328,8 @@ bool pages_draw(float scale, ImFont* title) {
         saved_focus[int(g_page)] = ctx.NavId;
     }
     popups();
-    popup_last_frame = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) || g_confirm_stop || g_confirm_quit || g_addons_open;
+    popup_last_frame = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) || g_confirm_stop || g_confirm_quit ||
+                       g_addons_open || g_saves_open;
     opening_overlay();
     ImGui::End();
     return !g_exit;

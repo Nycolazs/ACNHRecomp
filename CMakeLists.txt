@@ -139,6 +139,9 @@ endif()
 # Dear ImGui: the settings screen and the launcher. tools/setup_acnh.py downloads it into private/third_party/imgui.
 set(NX_IMGUI_DIR "${CMAKE_SOURCE_DIR}/private/third_party/imgui" CACHE PATH "Dear ImGui sources")
 
+add_library(nx_save_storage STATIC runtime/src/save_storage.cpp runtime/src/save_profiles.cpp)
+target_include_directories(nx_save_storage PUBLIC ${CMAKE_SOURCE_DIR}/runtime/src)
+
 # The launcher (launcher/): the program a player opens first. It has no game code, so it builds from a plain
 # checkout (cmake --build <dir> --target acnhrecomp_launcher) and leaves the game's targets as they are.
 option(NX_LAUNCHER "Build the first-run launcher (acnhrecomp_launcher)" ON)
@@ -253,6 +256,7 @@ set(NX_RUNTIME_SOURCES
     runtime/src/hle_friends.cpp
     runtime/src/hle_ngc.cpp
     runtime/src/config.cpp
+    runtime/src/game_clock.cpp
     runtime/src/mod_fetch.cpp
     runtime/src/discord_presence.cpp
     runtime/src/glyphs.cpp
@@ -515,6 +519,7 @@ else()
     target_sources(${NX_GAME} PRIVATE runtime/src/ui/ui_stub.cpp)
 endif()
 target_sources(${NX_GAME} PRIVATE runtime/src/saves.cpp)
+target_link_libraries(${NX_GAME} PRIVATE nx_save_storage)
 find_package(ZLIB QUIET)
 if(ZLIB_FOUND)
     target_link_libraries(${NX_GAME} PRIVATE ZLIB::ZLIB)
@@ -592,6 +597,18 @@ if(VORBIS_FOUND)
 else()
     message(STATUS "libvorbis not found: movies use the SDK's Vorbis decoder")
     target_compile_definitions(${NX_GAME} PRIVATE NX_NO_VORBIS)
+endif()
+# Android: a libvpx cross-built with the NDK (decoder only) in private/third_party/libvpx-android, when present.
+set(NX_VPX_ANDROID "${CMAKE_SOURCE_DIR}/private/third_party/libvpx-android" CACHE PATH "libvpx built for Android")
+if(ANDROID AND NOT VPX_FOUND AND EXISTS "${NX_VPX_ANDROID}/lib/libvpx.a")
+    if(NOT TARGET nx_vpx)
+        add_library(nx_vpx STATIC IMPORTED)
+        set_target_properties(nx_vpx PROPERTIES IMPORTED_LOCATION "${NX_VPX_ANDROID}/lib/libvpx.a"
+                              INTERFACE_INCLUDE_DIRECTORIES "${NX_VPX_ANDROID}/include")
+    endif()
+    set(VPX_FOUND TRUE)
+    set(NX_VPX_TARGET nx_vpx)
+    message(STATUS "libvpx: ${NX_VPX_ANDROID}/lib/libvpx.a (Android)")
 endif()
 if(VPX_FOUND)
     target_link_libraries(${NX_GAME} PRIVATE ${NX_VPX_TARGET})

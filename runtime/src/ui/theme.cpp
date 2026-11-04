@@ -6,7 +6,7 @@
 #include <filesystem>
 #include <vector>
 
-#if __has_include(<nx/runtime.h>)
+#if __has_include(<nx/runtime.h>) && !defined(NX_LAUNCHER_UI)
 #include <nx/runtime.h>
 #define THEME_LOG(...) nx::log(__VA_ARGS__)
 #else  // the launcher: no runtime, stderr

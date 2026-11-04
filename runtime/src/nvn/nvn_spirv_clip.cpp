@@ -116,10 +116,15 @@ bool patch_clip_z(const std::vector<uint32_t>& in, std::vector<uint32_t>& out) {
 // linearization read half the distance (issue #50, DEBUG-2.md #67). NX_CLIP_Z_PATCH=1: the extension is not used and
 // the vertex shaders map z themselves (nvn_spirv_clip.cpp). (Doing it with the viewport depth range instead clipped
 // every 2D pass with z below 0: black frames.)
+// Without the extension (Arm Mali) Vulkan clips z below 0 and the 2D passes vanish: the shaders map z themselves
+// unless NX_CLIP_Z_PATCH=0.
 bool depth_remap() {
     static const bool on = [] {
         const char* e = std::getenv("NX_CLIP_Z_PATCH");
-        return e && e[0] == '1';
+        if (e) return e[0] == '1';
+        const bool remap = !vk_depth_clip_control();
+        if (remap) log("nvn/vk: no depth clip control: vertex shaders map clip z to 0..w");
+        return remap;
     }();
     return on;
 }

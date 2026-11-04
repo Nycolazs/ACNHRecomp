@@ -18,6 +18,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 #include <deque>
 #include <map>
 #include <mutex>
@@ -35,6 +36,10 @@
 #include "ui/settings.h"
 #include "ui/theme.h"
 #include "ui/ui_internal.h"
+
+namespace nx::nvn {
+std::mutex& vk_queue_mutex();  // nvn_vk.cpp: held around every use of the game's queue
+}
 
 namespace nx::ui {
 
@@ -161,11 +166,46 @@ VkRenderPass make_pass(VkFormat format) {
     return rp;
 }
 
-PFN_vkVoidFunction load(const char* name, void* user) {
-    (void)user;
+PFN_vkVoidFunction load_raw(const char* name) {
     auto gdpa = reinterpret_cast<PFN_vkGetDeviceProcAddr>(g_vk.gipa(g_vk.instance, "vkGetDeviceProcAddr"));
     if (PFN_vkVoidFunction f = gdpa ? gdpa(g_vk.device, name) : nullptr) return f;
     return g_vk.gipa(g_vk.instance, name);
+}
+
+// The queue is the game's: the replay thread submits and the presenter thread presents on it, both under
+// nvn::vk_queue_mutex(). ImGui's backend submits its font upload and waits for the queue (or the device) to idle on
+// its own: without the lock that raced the presenter's vkQueuePresentKHR (Vulkan wants a queue externally
+// synchronized) and lost the device when the settings screen opened (#36).
+PFN_vkQueueSubmit g_raw_submit = nullptr;
+PFN_vkQueueWaitIdle g_raw_queue_idle = nullptr;
+PFN_vkDeviceWaitIdle g_raw_device_idle = nullptr;
+
+VKAPI_ATTR VkResult VKAPI_CALL locked_submit(VkQueue q, uint32_t n, const VkSubmitInfo* si, VkFence f) {
+    std::lock_guard lk(nvn::vk_queue_mutex());
+    return g_raw_submit(q, n, si, f);
+}
+VKAPI_ATTR VkResult VKAPI_CALL locked_queue_idle(VkQueue q) {
+    std::lock_guard lk(nvn::vk_queue_mutex());
+    return g_raw_queue_idle(q);
+}
+VKAPI_ATTR VkResult VKAPI_CALL locked_device_idle(VkDevice d) {
+    std::lock_guard lk(nvn::vk_queue_mutex());
+    return g_raw_device_idle(d);
+}
+
+PFN_vkVoidFunction load(const char* name, void* user) {
+    (void)user;
+    PFN_vkVoidFunction f = load_raw(name);
+    if (!f) return f;
+    if (std::strcmp(name, "vkQueueSubmit") == 0)
+        return g_raw_submit = reinterpret_cast<PFN_vkQueueSubmit>(f), reinterpret_cast<PFN_vkVoidFunction>(locked_submit);
+    if (std::strcmp(name, "vkQueueWaitIdle") == 0)
+        return g_raw_queue_idle = reinterpret_cast<PFN_vkQueueWaitIdle>(f),
+               reinterpret_cast<PFN_vkVoidFunction>(locked_queue_idle);
+    if (std::strcmp(name, "vkDeviceWaitIdle") == 0)
+        return g_raw_device_idle = reinterpret_cast<PFN_vkDeviceWaitIdle>(f),
+               reinterpret_cast<PFN_vkVoidFunction>(locked_device_idle);
+    return f;
 }
 
 template <typename F>
