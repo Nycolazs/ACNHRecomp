@@ -521,11 +521,19 @@ float button_width(const char* label) { return std::max(S(120), ImGui::CalcTextS
 
 bool button(const char* label, ImU32 color = kMint, bool enabled = true, float w = 0) {
     ImGui::BeginDisabled(!enabled);
+    const bool light = color == kMint || color == kWhite;
+    ImGuiWindow* window = ImGui::GetCurrentWindow();
+    const ImGuiID id = window->GetID(label);
+    ImGuiContext& g = *ImGui::GetCurrentContext();
+    const bool hot = enabled && (g.HoveredIdPreviousFrame == id || g.ActiveId == id ||
+                                 (g.NavId == id && g.NavIdIsAlive && g.NavHighlightItemUnderNav));
     ImGui::PushStyleColor(ImGuiCol_Button, col4(color));
-    ImGui::PushStyleColor(ImGuiCol_Text, col4(color == kMint || color == kWhite ? kInk : kWhite));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, col4(kYellow));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, col4(rgb(246, 196, 64)));
+    ImGui::PushStyleColor(ImGuiCol_Text, col4(hot || light ? kInk : kWhite));
     bool r = ImGui::Button(label, ImVec2(w > 0 ? w : button_width(label), 0));
     nav_item();
-    ImGui::PopStyleColor(2);
+    ImGui::PopStyleColor(4);
     ImGui::EndDisabled();
     return r;
 }
@@ -1752,10 +1760,12 @@ void addons_popup() {
 void saves_popup() {
     if (g_saves_open) ImGui::OpenPopup("saves");
     ImGui::PushStyleVar(ImGuiStyleVar_Alpha, out_cubic((ImGui::GetTime() - g_saves_since) / 0.18));
-    // Hide ImGui's square nav outline for the whole popup; the profile rows draw a rounded focus outline below.
+    // Hide ImGui's square nav outline for the whole popup; tiles draw a rounded focus outline below.
     ImGui::PushStyleColor(ImGuiCol_NavCursor, ImVec4(0, 0, 0, 0));
-    ImGui::SetNextWindowSize(ImVec2(std::min(ImGui::GetIO().DisplaySize.x * 0.9f, S(520)), 0));
-    if (ImGui::BeginPopupModal("saves", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize)) {
+    const ImVec2 ds = ImGui::GetIO().DisplaySize;
+    ImGui::SetNextWindowSize(ImVec2(std::min(ds.x * 0.9f, S(720)), std::min(ds.y * 0.85f, S(520))));
+    if (ImGui::BeginPopupModal("saves", nullptr,
+                               ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove)) {
         ImDrawList* dl = ImGui::GetWindowDrawList();
         ImVec2 p = ImGui::GetCursorScreenPos();
         float r = S(18);
@@ -1767,62 +1777,125 @@ void saves_popup() {
         ImGui::PushStyleColor(ImGuiCol_Text, col4(kInkSoft));
         ImGui::TextWrapped("%s", tr("launcher.profiles.hint"));
         ImGui::PopStyleColor();
-        ImGui::Dummy(ImVec2(0, S(12)));
-        float list_h = std::min(S(240), ImGui::GetIO().DisplaySize.y * 0.4f);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(10), S(10)));
+        ImGui::Dummy(ImVec2(0, S(10)));
+
+        const char* new_l = tr("launcher.profiles.new");
+        const char* import_l = tr("launcher.saves.import_new");
+        const char* close_l = tr("launcher.addons.close");
+        float footer = S(56) + ImGui::GetFrameHeight();
+        if (!g_saves_delete_id.empty()) footer += S(72);
+        float grid_h = std::max(S(140), ImGui::GetContentRegionAvail().y - footer);
+
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(12), S(12)));
         ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, S(16));
-        ImGui::BeginChild("##saves_list", ImVec2(0, list_h),
+        ImGui::BeginChild("##saves_grid", ImVec2(0, grid_h),
                           ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
         ImGui::PopStyleVar(2);
+
         const bool only_one = g_save_profiles.size() <= 1;
         if (g_save_profiles.empty()) {
             ImGui::TextDisabled("%s", tr("launcher.profiles.empty"));
         } else {
-            for (const nx::save_profiles::ProfileInfo& prof : g_save_profiles) {
+            const char* open_l = tr("launcher.saves.open");
+            const char* del_l = tr("launcher.saves.delete");
+            float avail = ImGui::GetContentRegionAvail().x, gap = S(12);
+            const int cols = 2;
+            float tile_w = (avail - gap * float(cols - 1)) / float(cols);
+            // Size tiles so roughly two rows fit in the visible grid.
+            float tile_h = std::max(S(100), (grid_h - S(24) - gap) / 2.f);
+            float action_w = std::min(S(110), std::max(S(72), (tile_w - S(28)) / 2.f));
+
+            for (size_t i = 0; i < g_save_profiles.size(); ++i) {
+                const nx::save_profiles::ProfileInfo& prof = g_save_profiles[i];
+                if (i % size_t(cols) != 0) ImGui::SameLine(0, gap);
                 ImGui::PushID(prof.id.c_str());
-                bool active = prof.id == g_save_profile_active;
+
+                const bool active = prof.id == g_save_profile_active;
+                ImVec2 tile_min = ImGui::GetCursorScreenPos();
+                ImGui::PushStyleColor(ImGuiCol_ChildBg, col4(active ? rgb(255, 232, 160) : rgb(252, 246, 228)));
+                ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, S(14));
+                ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(12), S(10)));
+                ImGui::BeginChild("##tile", ImVec2(tile_w, tile_h),
+                                  ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
+                ImGui::PopStyleVar(2);
+                ImGui::PopStyleColor();
+
                 std::string label =
                     prof.has_save && !prof.island_name.empty() ? prof.island_name : tr("launcher.profiles.empty");
-                if (active) label += std::string(" (") + tr("launcher.profiles.active") + ")";
-                ImDrawList* list_draw = ImGui::GetWindowDrawList();
-                list_draw->ChannelsSplit(2);
-                list_draw->ChannelsSetCurrent(1);
                 ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0, 0, 0, 0));
                 ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0, 0, 0, 0));
                 ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0, 0, 0, 0));
                 ImGui::PushStyleColor(ImGuiCol_NavCursor, ImVec4(0, 0, 0, 0));
-                bool selected = ImGui::Selectable(label.c_str(), active);
-                const bool highlighted = ImGui::IsItemHovered() || ImGui::IsItemFocused();
+                // Content area above the action row selects / activates the profile.
+                const float actions_h = ImGui::GetFrameHeight() + S(4);
+                const float select_h =
+                    std::max(ImGui::GetTextLineHeightWithSpacing() * 1.5f,
+                             tile_h - ImGui::GetStyle().WindowPadding.y * 2.f - actions_h - S(4));
+                bool selected = ImGui::Selectable("##pick", active, ImGuiSelectableFlags_None, ImVec2(0, select_h));
+                ImVec2 sel_min = ImGui::GetItemRectMin();
                 ImGui::PopStyleColor(4);
-                if (active) {
-                    list_draw->ChannelsSetCurrent(0);
-                    list_draw->AddRectFilled(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(),
-                                             rgb(255, 232, 160), S(10));
-                } else {
-                    list_draw->ChannelsSetCurrent(0);
-                    list_draw->AddRectFilled(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(),
-                                             rgb(252, 246, 228), S(10));
-                }
-                if (highlighted) {
-                    list_draw->ChannelsSetCurrent(1);
-                    list_draw->AddRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(),
-                                       rgb(246, 170, 40), S(10), 0, S(2));
-                }
-                list_draw->ChannelsMerge();
                 if (selected) select_save_profile(prof.id);
                 nav_item();
-                if (prof.has_save && !prof.last_modified.empty())
-                    ImGui::TextDisabled("%s", trf("launcher.profiles.last_saved", prof.last_modified).c_str());
-                if (button(tr("launcher.saves.open"), kBlue)) open_folder(profile_save_folder(prof.id));
+
+                ImDrawList* tdl = ImGui::GetWindowDrawList();
+                float name_fs = font_size(g_body);
+                const float tile_pad = ImGui::GetStyle().WindowPadding.x;
+                ImVec2 name_pos(sel_min.x + S(4), sel_min.y + S(4));
+                ImVec2 name_sz = measure(g_body, name_fs, label.c_str(), -1);
+                float name_right = tile_min.x + tile_w - tile_pad;
+                if (active) {
+                    std::string active_mark = std::string("(") + tr("launcher.profiles.active") + ")";
+                    float active_fs = font_size(g_title) * 0.7f;
+                    ImVec2 as = measure(g_title, active_fs, active_mark.c_str(), -1);
+                    // Same row as the island name: right-aligned, vertically centered to the name.
+                    ImVec2 active_pos(tile_min.x + tile_w - tile_pad - as.x, name_pos.y + (name_sz.y - as.y) * 0.5f);
+                    tdl->AddText(g_title, active_fs, active_pos, kInk, active_mark.c_str());
+                    name_right = active_pos.x - S(8);
+                }
+                tdl->AddText(g_body, name_fs, name_pos, kInk, label.c_str(), nullptr, name_right - name_pos.x);
+                float y = name_pos.y + name_sz.y + S(4);
+                if (prof.has_save && !prof.last_modified.empty()) {
+                    std::string meta = trf("launcher.profiles.last_saved", prof.last_modified);
+                    tdl->AddText(g_body, font_size(g_body) * 0.8f, ImVec2(sel_min.x + S(4), y), kInkSoft, meta.c_str());
+                }
+
+                ImGui::SetCursorPosY(tile_h - ImGui::GetStyle().WindowPadding.y - ImGui::GetFrameHeight() - S(4));
+                if (button(open_l, kBlue, true, action_w)) open_folder(profile_save_folder(prof.id));
                 ImGui::SameLine();
                 ImGui::BeginDisabled(only_one);
-                if (button(tr("launcher.saves.delete"), kRed)) g_saves_delete_id = prof.id;
+                if (button(del_l, kRed, true, action_w)) g_saves_delete_id = prof.id;
                 ImGui::EndDisabled();
+
+                ImGuiWindow* tile_win = ImGui::GetCurrentWindow();
+                ImGuiContext& gui = *ImGui::GetCurrentContext();
+                ImGui::EndChild();
+                ImVec2 a = tile_min, b(tile_min.x + tile_w, tile_min.y + tile_h);
+                // Unclipped hit test — IsMouseHoveringRect(..., clip=true) against the grid
+                // ClipRect was missing the tiles after the open animation settled.
+                const ImVec2 mp = ImGui::GetIO().MousePos;
+                const bool mouse_over = mp.x >= a.x && mp.x < b.x && mp.y >= a.y && mp.y < b.y;
+                const bool nav_here = gui.NavInputSource == ImGuiInputSource_Gamepad && gui.NavIdIsAlive &&
+                                     gui.NavWindow == tile_win;
+                float e = out_cubic((ImGui::GetTime() - g_saves_since - 0.03 * double(i)) / 0.2);
+                if (e < 1.f) {
+                    ImGui::GetWindowDrawList()->AddRectFilled(a, b, rgb(248, 239, 214, int(180 * (1 - e))), S(14));
+                }
+                if (mouse_over || nav_here) {
+                    const float thick = S(2);
+                    const float inset = ImGui::GetStyle().ChildBorderSize + thick * 0.5f;
+                    const float round = std::max(0.f, S(14) - inset);
+                    // Foreground so the stroke is not covered by later tiles / fade.
+                    ImGui::GetForegroundDrawList()->AddRect(ImVec2(a.x + inset, a.y + inset),
+                                                           ImVec2(b.x - inset, b.y - inset), rgb(246, 170, 40), round, 0,
+                                                           thick);
+                }
                 ImGui::PopID();
             }
         }
         ImGui::EndChild();
+
         if (!g_saves_delete_id.empty()) {
+            ImGui::Dummy(ImVec2(0, S(6)));
             ImGui::PushStyleColor(ImGuiCol_Text, col4(kInkSoft));
             ImGui::TextWrapped("%s", tr("launcher.saves.delete_confirm"));
             ImGui::PopStyleColor();
@@ -1840,11 +1913,9 @@ void saves_popup() {
             }
             ImGui::SameLine();
             if (button(tr("common.no"), kWhite)) g_saves_delete_id.clear();
-            ImGui::Dummy(ImVec2(0, S(4)));
         }
+
         ImGui::Dummy(ImVec2(0, S(8)));
-        const char* new_l = tr("launcher.profiles.new");
-        const char* import_l = tr("launcher.saves.import_new");
         float pair_w = std::max(button_width(new_l), button_width(import_l));
         if (button(new_l, kBlue, true, pair_w)) {
             std::string err;
@@ -1856,9 +1927,8 @@ void saves_popup() {
         }
         ImGui::SameLine();
         if (button(import_l, kBlue, true, pair_w)) pick(kPickSaveImport);
-        ImGui::Dummy(ImVec2(0, S(4)));
-        align_right({tr("launcher.addons.close")});
-        if (button(tr("launcher.addons.close"), kWhite) || ImGui::IsKeyPressed(ImGuiKey_Escape) ||
+        align_right({close_l});
+        if (button(close_l, kWhite) || ImGui::IsKeyPressed(ImGuiKey_Escape) ||
             ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false))
             g_saves_open = false, g_saves_delete_id.clear(), ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
