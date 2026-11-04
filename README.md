@@ -138,6 +138,7 @@ GPU; see [docs/STATUS.md](docs/STATUS.md) for the full, regularly updated log.
 - Some villagers (birds) may render with part of the head black. Starting villagers are random, so it does not
   always reproduce.
 - The first save only happens at the end of the first in-game day, and that path has not been verified end to end
+- 60 fps - When shooting down a balloon game will fatal crash, fix is to switch to 30fps for any balloon challenges or DIYs.
   in a full playthrough. Back up and be prepared for surprises.
 - Nintendo's online services are not available: the game sees a console with no internet connection. Visits between
   PCs go through Local Play instead (page Online in the settings, [docs/LOCAL_PLAY.md](docs/LOCAL_PLAY.md)).
