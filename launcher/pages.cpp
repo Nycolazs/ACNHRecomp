@@ -1961,6 +1961,12 @@ void saves_popup() {
     ImGui::PopStyleVar();
 }
 
+const char* managed_mod_text(const std::string& id) {
+    if (id == "ptbr") return tr("launcher.mods.managed.language");
+    if (id == "speedfix60") return tr("launcher.mods.managed.fps");
+    return tr("launcher.mods.managed");
+}
+
 void mods_popup() {
     if (g_mods_open) ImGui::OpenPopup("mods");
     ImGui::PushStyleVar(ImGuiStyleVar_Alpha, out_cubic((ImGui::GetTime() - g_mods_since) / 0.18));
@@ -2035,7 +2041,7 @@ void mods_popup() {
                 name_h = std::min(name_h, line_h * 2.f);
                 float content = std::max(fh, name_h);
                 if (m.managed)
-                    content += item_sp + ImGui::CalcTextSize(tr("launcher.mods.managed"), nullptr, false, inner_w).y;
+                    content += item_sp + ImGui::CalcTextSize(managed_mod_text(m.id), nullptr, false, inner_w).y;
                 if (m.has_exefs)
                     content += item_sp + ImGui::CalcTextSize(tr("launcher.mods.exefs_warn"), nullptr, false, inner_w).y;
                 // Button row + spacing; extra item_sp so actions stay inside bottom padding.
@@ -2135,7 +2141,7 @@ void mods_popup() {
                 }
                 if (mod.managed) {
                     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-                    ImGui::TextWrapped("%s", tr("launcher.mods.managed"));
+                    ImGui::TextWrapped("%s", managed_mod_text(mod.id));
                     ImGui::PopStyleColor();
                 }
                 if (mod.has_exefs) {
