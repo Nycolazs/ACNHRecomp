@@ -1973,6 +1973,8 @@ void mods_popup() {
     ImGui::PushStyleColor(ImGuiCol_NavCursor, ImVec4(0, 0, 0, 0));
     const ImVec2 ds = ImGui::GetIO().DisplaySize;
     ImGui::SetNextWindowSize(ImVec2(std::min(ds.x * 0.94f, S(1180)), std::min(ds.y * 0.9f, S(700))));
+    // Keep the fixed modal centered when the display size changes (for example, entering fullscreen).
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     if (ImGui::BeginPopupModal("mods", nullptr,
                                ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove)) {
         ImDrawList* dl = ImGui::GetWindowDrawList();
