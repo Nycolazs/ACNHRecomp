@@ -4,6 +4,7 @@
 // Without a device the same pacing runs on a timer. Audio input reports no devices. SDK 16 games (Wonder) use the
 // AudioRenderer instead, rendered in process; its final mix goes to the same device (see below).
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -17,6 +18,7 @@
 #include <thread>
 #include <vector>
 
+#include "audio_mix_ring.h"
 #include "config.h"
 #include "kernel.h"
 #include "platform.h"
@@ -24,6 +26,8 @@
 namespace nx {
 
 namespace {
+
+int active_output_channels();  // defined below; Android is always stereo
 
 constexpr uint64_t kBytesPerSecond = 48000 * 2 * 2;
 constexpr uint32_t kMaxInFlight = 4;  // buffers queued in the device (4 x ~21 ms)
@@ -58,7 +62,7 @@ void out_stats() {
 // added into the renderer's final mix instead of queued after it. Bounded to 200 ms so a stalled renderer cannot
 // make it grow.
 std::mutex g_out_mix_lock;
-std::deque<int16_t> g_out_mix;
+AudioMixRing g_out_mix;
 bool renderer_running();
 
 void release(void* ctx) {
@@ -83,13 +87,15 @@ void device_done(void* ctx) {
 }
 
 bool device_open() {
-    static const bool ok = plat::audio_open(device_done);
+    static const bool ok = plat::audio_open(device_done, active_output_channels());
     return ok;
 }
 
 void player() {
     bool device = device_open();
-    log("audio: %s", device ? "device output (48 kHz stereo s16)" : "no audio device, timer pacing");
+    int chans = active_output_channels();
+    log("audio: %s", device ? (chans == 6 ? "device output (48 kHz 5.1 s16)" : "device output (48 kHz stereo s16)")
+                            : "no audio device, timer pacing");
     using clock = std::chrono::steady_clock;
     auto next = clock::now();
     for (;;) {
@@ -111,12 +117,35 @@ void player() {
         if (mix) {
             const int16_t* pcm = reinterpret_cast<const int16_t*>(ld<uint64_t>(buf));
             std::lock_guard lk(g_out_mix_lock);
-            for (uint64_t k = 0; k < size / 2; k++) g_out_mix.push_back(int16_t(float(pcm[k]) * g_out_volume));
-            while (g_out_mix.size() > 48000 * 2 / 5) g_out_mix.pop_front();
+            for (uint64_t k = 0; k < size / 2; k++) g_out_mix.push(int16_t(float(pcm[k]) * g_out_volume));
         }
-        if (!mix && device && plat::audio_submit(reinterpret_cast<const void*>(ld<uint64_t>(buf)), size,
-                                         reinterpret_cast<void*>(buf)))
-            continue;
+        if (!mix && device) {
+            const void* send = reinterpret_cast<const void*>(ld<uint64_t>(buf));
+            size_t send_size = size;
+            if (active_output_channels() == 6) {  // the game's AudioOut buffer is stereo; the device is 6ch
+                const int16_t* src = static_cast<const int16_t*>(send);
+                size_t frames = size / 4;
+                // Reuse allocations; direct AudioOut keeps at most kMaxInFlight buffers queued.
+                static std::array<std::vector<int16_t>, 32> g_upmix;
+                static size_t next_upmix = 0;
+                auto& block = g_upmix[next_upmix];
+                block.resize(frames * 6);
+                for (size_t s = 0; s < frames; s++) {
+                    int16_t l = src[2 * s], r = src[2 * s + 1];
+                    block[s * 6 + 0] = l;                         // FL
+                    block[s * 6 + 1] = r;                         // FR
+                    block[s * 6 + 2] = int16_t((int32_t(l) + r) / 2);  // FC
+                    block[s * 6 + 3] = 0;                         // LFE
+                    block[s * 6 + 4] = l;                         // RL
+                    block[s * 6 + 5] = r;                         // RR
+                }
+                send = block.data();
+                send_size = block.size() * sizeof(int16_t);
+                next_upmix = (next_upmix + 1) % g_upmix.size();
+            }
+            if (plat::audio_submit(send, send_size, reinterpret_cast<void*>(buf)))
+                continue;
+        }
         next = std::max(next, clock::now() - std::chrono::milliseconds(50));
         next += std::chrono::microseconds(size * 1000000 / kBytesPerSecond);
         std::this_thread::sleep_until(next);
@@ -151,8 +180,8 @@ void OpenDefaultAudioOut(CPU& c) {  // (AudioOut*, os::SystemEvent*, const Audio
     call(c, attach);
     for (int k = 0; k < 8; k++) c.x[k] = saved[k];
     }
-    log("audio: AudioOut opened (%u Hz, %u channels asked; 48 kHz stereo s16 given)", ld<uint32_t>(c.x[2]),
-        ld<uint16_t>(c.x[2] + 4));
+    log("audio: AudioOut opened (%u Hz, %u channels asked; %d output channels)", ld<uint32_t>(c.x[2]),
+        ld<uint16_t>(c.x[2] + 4), active_output_channels());
     {
         std::lock_guard lk(g_out.lock);
         g_out.queued.clear(), g_out.released.clear();
@@ -192,7 +221,7 @@ void OpenDefaultAudioOutNoEvent(CPU& c) {
     OpenDefaultAudioOut(c);
 }
 void GetAudioOutSampleRate(CPU& c) { c.x[0] = 48000; }
-void GetAudioOutChannelCount(CPU& c) { c.x[0] = 2; }
+void GetAudioOutChannelCount(CPU& c) { c.x[0] = active_output_channels(); }
 void GetAudioOutSampleFormat(CPU& c) { c.x[0] = 2; }  // SampleFormat_PcmInt16
 void SetAudioOutVolume(CPU& c) { g_out_volume = std::clamp(c.v[0].f32[0], 0.0f, 2.0f); }
 void GetAudioOutBufferDataSize(CPU& c) { c.x[0] = ld<uint64_t>(c.x[0] + 16); }
@@ -353,11 +382,24 @@ constexpr int kBlocks = 64;          // 320 ms of output blocks
 constexpr uint32_t kMaxQueued = 12;  // 60 ms in the device queue: past that, frames are dropped
 constexpr size_t kPrime = 4;         // after an underrun, 20 ms are gathered before playing again
 
+// The output the game sees at startup: Windows/Linux/macOS report 6 channels (FL FR FC LFE RL RR) when
+// audio.surround is on; Android always reports 2. The setting applies on the next device open/restart.
+int active_output_channels() {
+#if defined(__ANDROID__)
+    return 2;  // Android's AAudio backend is stereo-only.
+#else
+    static const int ch = config_get_bool("audio.surround", false) ? 6 : 2;
+    return ch;
+#endif
+}
+
+constexpr int kMaxChannels = 6;
+
 struct RenderOut {
     std::mutex lock;
-    int32_t mix[kFrame * 2] = {};
+    int32_t mix[kFrame * kMaxChannels] = {};
     bool mixed = false;
-    int16_t blocks[kBlocks][kFrame * 2];
+    int16_t blocks[kBlocks][kFrame * kMaxChannels];
     std::vector<int> free, held;
     bool priming = true;
     // statistics since the last log, and the optional dump (NX_AUDIO_DUMP=file.wav: 10 s from the first sound)
@@ -378,7 +420,7 @@ bool render_owns(void* ctx) {
 
 void render_block_done(void* ctx) {
     std::lock_guard lk(g_render.lock);
-    g_render.free.push_back(int((static_cast<int16_t*>(ctx) - g_render.blocks[0]) / (kFrame * 2)));
+    g_render.free.push_back(int((static_cast<int16_t*>(ctx) - g_render.blocks[0]) / (kFrame * 6)));
 }
 
 void capture_device_sink(uint64_t proc) {  // proc: nn::audio::dsp::CommandListProcessor after Process
@@ -405,15 +447,31 @@ void capture_device_sink(uint64_t proc) {  // proc: nn::audio::dsp::CommandListP
         };
         const int32_t* l = ch(0);
         const int32_t* r = inputs > 1 ? ch(1) : l;
-        // Six channels without the sdk's own downmix (FL FR FC LFE RL RR): fold them to stereo here.
-        const int32_t *c = nullptr, *rl = nullptr, *rr = nullptr;
-        if (inputs >= 6 && !downmixed) c = ch(2), rl = ch(4), rr = ch(5);
+        // Surround mode keeps six channels discrete. Stereo folds center/rears down, unless the sdk already did so.
+        const int32_t *c2 = nullptr, *lfe = nullptr, *rl = nullptr, *rr = nullptr;
+        bool discrete = active_output_channels() == 6;
+        if (discrete) {  // the mix may carry fewer than 6 buffers; only bind the ones it has
+            c2  = inputs > 2 ? ch(2) : nullptr;
+            lfe = inputs > 3 ? ch(3) : nullptr;
+            rl  = inputs > 4 ? ch(4) : nullptr;
+            rr  = inputs > 5 ? ch(5) : nullptr;
+        }
         std::lock_guard lk(g_render.lock);
         for (int s = 0; s < kFrame; s++) {
+            if (discrete) {
+                g_render.mix[6 * s + 0] += int32_t(std::clamp<int64_t>(l[s], INT32_MIN, INT32_MAX));
+                g_render.mix[6 * s + 1] += int32_t(std::clamp<int64_t>(r[s], INT32_MIN, INT32_MAX));
+                g_render.mix[6 * s + 2] += c2 ? int32_t(std::clamp<int64_t>(c2[s], INT32_MIN, INT32_MAX)) : 0;
+                g_render.mix[6 * s + 3] += lfe ? int32_t(std::clamp<int64_t>(lfe[s], INT32_MIN, INT32_MAX)) : 0;
+                g_render.mix[6 * s + 4] += rl ? int32_t(std::clamp<int64_t>(rl[s], INT32_MIN, INT32_MAX)) : 0;
+                g_render.mix[6 * s + 5] += rr ? int32_t(std::clamp<int64_t>(rr[s], INT32_MIN, INT32_MAX)) : 0;
+                continue;
+            }
+            if (inputs >= 6 && !downmixed) c2 = ch(2), rl = ch(4), rr = ch(5);
             int64_t a = l[s], b = r[s];
-            if (c) {
-                a += (int64_t(c[s]) + rl[s]) * 707 / 1000;
-                b += (int64_t(c[s]) + rr[s]) * 707 / 1000;
+            if (c2) {
+                a += (int64_t(c2[s]) + rl[s]) * 707 / 1000;
+                b += (int64_t(c2[s]) + rr[s]) * 707 / 1000;
             }
             g_render.mix[2 * s] += int32_t(std::clamp<int64_t>(a, INT32_MIN, INT32_MAX));
             g_render.mix[2 * s + 1] += int32_t(std::clamp<int64_t>(b, INT32_MIN, INT32_MAX));
@@ -464,17 +522,18 @@ void CommandListProcessorProcess(CPU& c) {
     capture_device_sink(proc);
 }
 
-void write_wav(const char* path, const std::vector<int16_t>& pcm) {
+void write_wav(const char* path, const std::vector<int16_t>& pcm, int channels) {
     FILE* f = std::fopen(path, "wb");
     if (!f) return;
     auto u32 = [&](uint32_t v) { std::fwrite(&v, 4, 1, f); };
     auto u16 = [&](uint16_t v) { std::fwrite(&v, 2, 1, f); };
     uint32_t bytes = uint32_t(pcm.size() * 2);
     std::fwrite("RIFF", 1, 4, f), u32(36 + bytes), std::fwrite("WAVEfmt ", 1, 8, f);
-    u32(16), u16(1), u16(2), u32(48000), u32(48000 * 4), u16(4), u16(16);
+    u32(16), u16(1), u16(uint16_t(channels)), u32(48000), u32(uint32_t(48000 * channels * 2)), u16(uint16_t(channels * 2)),
+        u16(16);
     std::fwrite("data", 1, 4, f), u32(bytes), std::fwrite(pcm.data(), 2, pcm.size(), f);
     std::fclose(f);
-    log("audio: wrote %s (%zu frames)", path, pcm.size() / 2);
+    log("audio: wrote %s (%zu frames)", path, pcm.size() / size_t(channels));
 }
 
 // Called by the render thread after each 5 ms frame.
@@ -485,16 +544,35 @@ void render_submit() {
     RenderOut& o = g_render;
     if (!o.mixed) return;
     o.mixed = false;
-    int16_t pcm[kFrame * 2];
+    int chans = active_output_channels();
+    int n = chans == 6 ? kFrame * 6 : kFrame * 2;
+    int16_t pcm[kFrame * kMaxChannels];
     bool any = false;
     {
+        static int last_chans = 0;  // a live stereo <-> surround switch must not scramble the mix source
+        if (last_chans != chans) {
+            last_chans = chans;
+            std::lock_guard mk(g_out_mix_lock);
+            g_out_mix.clear();
+        }
         std::lock_guard mk(g_out_mix_lock);
-        for (int s = 0; s < kFrame * 2 && !g_out_mix.empty(); s++) {
-            o.mix[s] += g_out_mix.front();
-            g_out_mix.pop_front();
+        if (chans == 6) {
+            for (int s = 0; s < kFrame; s++) {
+                if (g_out_mix.size() < 2) break;
+                int16_t l = 0, r = 0;
+                g_out_mix.pop_front(l);
+                g_out_mix.pop_front(r);
+                o.mix[6 * s + 0] += int64_t(l);
+                o.mix[6 * s + 1] += int64_t(r);
+            }
+        } else {
+            int16_t sample = 0;
+            for (int s = 0; s < kFrame * 2 && g_out_mix.pop_front(sample); s++) {
+                o.mix[s] += sample;
+            }
         }
     }
-    for (int s = 0; s < kFrame * 2; s++) {
+    for (int s = 0; s < n; s++) {
         int v = std::clamp(o.mix[s], -32768, 32767);
         pcm[s] = int16_t(v);
         o.mix[s] = 0;
@@ -503,13 +581,13 @@ void render_submit() {
         any |= v != 0;
     }
     o.silent += !any;
-    if (dump_path && o.dump.size() < 48000 * 2 * 10 && (any || !o.dump.empty())) {
-        o.dump.insert(o.dump.end(), pcm, pcm + kFrame * 2);
-        if (o.dump.size() >= 48000 * 2 * 10) write_wav(dump_path, o.dump);
+    if (dump_path && o.dump.size() < size_t(48000 * chans * 10) && (any || !o.dump.empty())) {
+        o.dump.insert(o.dump.end(), pcm, pcm + n);
+        if (o.dump.size() >= size_t(48000 * chans * 10)) write_wav(dump_path, o.dump, chans);
     }
     if (++o.frames % 2000 == 0) {
         log("audio: mix out: peak %d, rms %.0f, %llu of 2000 frames silent, %llu dropped, %llu underruns, queue %u",
-            o.peak, std::sqrt(o.sum_sq / (2000.0 * kFrame * 2)), (unsigned long long)o.silent,
+            o.peak, std::sqrt(o.sum_sq / (2000.0 * n)), (unsigned long long)o.silent,
             (unsigned long long)o.dropped, (unsigned long long)o.underruns, device ? plat::audio_queued() : 0);
         o.peak = 0, o.sum_sq = 0, o.silent = o.dropped = o.underruns = 0;
     }
@@ -522,11 +600,12 @@ void render_submit() {
     if (queued == 0 && !o.priming) o.priming = true, o.underruns++;
     int k = o.free.back();
     o.free.pop_back();
-    std::memcpy(o.blocks[k], pcm, sizeof pcm);
+    size_t block_bytes = size_t(kFrame) * size_t(chans) * 2;
+    std::memcpy(o.blocks[k], pcm, block_bytes);
     o.held.push_back(k);
     if (o.priming && o.held.size() < kPrime) return;
     o.priming = false;
-    for (int h : o.held) plat::audio_submit(o.blocks[h], sizeof pcm, o.blocks[h]);
+    for (int h : o.held) plat::audio_submit(o.blocks[h], block_bytes, o.blocks[h]);
     o.held.clear();
 }
 
@@ -671,7 +750,7 @@ void GetActiveAudioOutputDeviceName(CPU& c) {  // (AudioDeviceName*)
     c.x[0] = 0;
 }
 
-void two(CPU& c) { c.x[0] = 2; }
+void two(CPU& c) { c.x[0] = active_output_channels(); }
 
 }  // namespace
 

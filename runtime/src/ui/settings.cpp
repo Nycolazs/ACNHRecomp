@@ -949,6 +949,9 @@ void page_video() {
 void page_audio() {
     row("audio.volume", nullptr, [&](float w) { slider("audio.volume", 0, 100, 100, "%d%%", w); });
     row("audio.reverb", "audio.reverb.desc", [&](float w) { toggle("audio.reverb", true, w); });
+#if !defined(__ANDROID__)
+    row("audio.surround", "audio.surround.desc", [&](float w) { toggle("audio.surround", false, w); });
+#endif
     row("audio.background", nullptr, [&](float w) { toggle("audio.mute_background", false, w); });
 }
 
