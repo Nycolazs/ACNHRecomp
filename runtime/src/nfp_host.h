@@ -28,8 +28,7 @@ constexpr size_t kNfpDataSize = 0x298;
 constexpr size_t kRegisterInfoSize = 0x100;
 constexpr size_t kRegisterInfoPrivateSize = 0x120;
 
-// Loads an NTAG215 Amiibo .bin dump. The NFP reader uses its clear UID/model ID; encrypted settings and app data are
-// not consumed by ACNHRecomp.
+// Loads an NTAG215 Amiibo .bin dump.
 bool load_tag_file(const std::string& path, std::string* err = nullptr);
 void clear_tag();
 
