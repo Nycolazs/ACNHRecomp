@@ -6,6 +6,7 @@
 // Anything that touches the window (creating it, its Vulkan surface) is done on the main thread; the game's threads
 // ask for it and wait. Input is sampled on the main thread into a snapshot read_pad() copies.
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cctype>
 #include <cerrno>
@@ -33,6 +34,7 @@
 #include "platform.h"
 #include "platform_sdl.h"
 #include "sdl_audio_frame.h"
+#include "sdl_audio_queue.h"
 #include "nfp_host.h"
 #include "ui/amiibo_importer.h"
 #include "ui/ui.h"
@@ -481,15 +483,10 @@ void read_pad(PadState& p) {
 // ---- audio: SDL3 stream, s16 stereo 48 kHz, fed from the queue of submitted buffers ----------------------------
 
 namespace {
-struct Pending {
-    const uint8_t* data;
-    size_t size, pos;
-    void* ctx;
-};
 AudioDone g_done = nullptr;
 SDL_AudioStream* g_stream = nullptr;
 std::mutex g_audio;
-std::deque<Pending> g_pending;
+SdlAudioQueue g_pending;
 int g_audio_frame_bytes = 4;
 
 // Master volume (settings screen, live) and the mute while the window is in the background (audio.mute_background).
@@ -513,17 +510,18 @@ void SDLCALL audio_cb(void*, SDL_AudioStream* s, int additional, int) {
     while (additional > 0) {
         int n = sdl_audio_frame_chunk(additional, max_chunk, g_audio_frame_bytes);
         int filled = 0;
-        std::vector<void*> finished;
+        std::array<void*, SdlAudioQueue::kCapacity> finished;
+        size_t finished_count = 0;
         {
             std::lock_guard lk(g_audio);
             while (filled < n && !g_pending.empty()) {
-                Pending& p = g_pending.front();
+                AudioPending& p = g_pending.front();
                 size_t take = std::min(size_t(n - filled), p.size - p.pos);
                 std::memcpy(buf + filled, p.data + p.pos, take);
                 filled += int(take);
                 p.pos += take;
                 if (p.pos == p.size) {
-                    finished.push_back(p.ctx);
+                    finished[finished_count++] = p.ctx;
                     g_pending.pop_front();
                 }
             }
@@ -531,7 +529,7 @@ void SDLCALL audio_cb(void*, SDL_AudioStream* s, int additional, int) {
         if (filled < n) std::memset(buf + filled, 0, size_t(n - filled));  // underrun: silence
         apply_gain(reinterpret_cast<int16_t*>(buf), n / 2);
         if (!SDL_PutAudioStreamData(s, buf, n)) log("audio: SDL_PutAudioStreamData: %s", SDL_GetError());
-        for (void* ctx : finished) g_done(ctx);
+        for (size_t i = 0; i < finished_count; i++) g_done(finished[i]);
         additional -= n;
     }
 }
@@ -555,7 +553,10 @@ bool audio_open(AudioDone done, int channels) {
 bool audio_submit(const void* data, size_t bytes, void* ctx) {
     if (!g_stream) return false;
     std::lock_guard lk(g_audio);
-    g_pending.push_back({static_cast<const uint8_t*>(data), bytes, 0, ctx});
+    if (!g_pending.push_back({static_cast<const uint8_t*>(data), bytes, 0, ctx})) {
+        log("audio: SDL pending queue full");
+        return false;
+    }
     return true;
 }
 

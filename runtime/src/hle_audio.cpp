@@ -605,7 +605,12 @@ void render_submit() {
     o.held.push_back(k);
     if (o.priming && o.held.size() < kPrime) return;
     o.priming = false;
-    for (int h : o.held) plat::audio_submit(o.blocks[h], block_bytes, o.blocks[h]);
+    for (int h : o.held) {
+        if (!plat::audio_submit(o.blocks[h], block_bytes, o.blocks[h])) {
+            o.free.push_back(h);
+            o.dropped++;
+        }
+    }
     o.held.clear();
 }
 

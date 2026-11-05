@@ -238,7 +238,7 @@ bool pick_result(std::string& path);           // true once, when an answer came
 // when a submitted buffer has been played.
 using AudioDone = void (*)(void* ctx);
 bool audio_open(AudioDone done, int channels);
-bool audio_submit(const void* data, size_t bytes, void* ctx);  // false: no device (caller paces itself)
+bool audio_submit(const void* data, size_t bytes, void* ctx);  // false: buffer was not queued; caller reclaims it
 uint32_t audio_queued();
 void audio_pause(bool paused);  // app in the background
 
