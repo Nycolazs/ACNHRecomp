@@ -2328,8 +2328,10 @@ void page_home() {
         if (col.empty()) return 0.f;
         float card_h = 0;
         for (const A& a : col) card_h = std::max(card_h, action_height(a.title, a.desc, col_w));
+        const float top = ImGui::GetCursorPosY();
         for (size_t i = 0; i < col.size(); ++i) {
-            if (i) ImGui::Dummy(ImVec2(0, gap));
+            // Exact rows (a Dummy gap also took ItemSpacing twice): the column ends where Play does.
+            ImGui::SetCursorPosY(top + float(i) * (card_h + gap));
             const A& a = col[i];
             if (action_card(a.id, a.icon, a.color, a.title, a.desc, ImVec2(col_w, card_h), a.enabled))
                 run_action(a.action);
@@ -2353,9 +2355,11 @@ void page_home() {
         side_h = side_h * float(std::max(left.size(), right.size())) +
                  gap * float(std::max(size_t(1), std::max(left.size(), right.size())) - 1);
         float play_w = std::min(mid_w, play_w_cap);
-        float row_h = std::max(side_h, play_h);
+        // Play spans the side columns exactly: its top and bottom in line with theirs.
+        const float row_play_h = side_h > 0 ? side_h : play_h;
+        float row_h = std::max(side_h, row_play_h);
         float side_pad = std::max(0.f, (row_h - side_h) * 0.5f);
-        float play_pad = std::max(0.f, (row_h - play_h) * 0.5f);
+        float play_pad = std::max(0.f, (row_h - row_play_h) * 0.5f);
         float play_inset = std::max(0.f, (mid_w - play_w) * 0.5f);
 
         ImGui::BeginGroup();
@@ -2367,7 +2371,7 @@ void page_home() {
         if (valid) {
             if (play_pad > 0) ImGui::Dummy(ImVec2(mid_w, play_pad));
             if (play_inset > 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + play_inset);
-            play_button(play_w, play_h);
+            play_button(play_w, row_play_h);
             ImGui::Dummy(ImVec2(mid_w, 0));
         }
         ImGui::EndGroup();
