@@ -2242,17 +2242,27 @@ void mods_popup() {
     ImGui::PopStyleVar();
 }
 
-// A newer release on GitHub (desktop.cpp): what it is, and a button to its page.
+// A newer release on GitHub (desktop.cpp): a centred paper pill, warning mark, "New update detected" and a
+// button to its page.
 void update_notice() {
     const UpdateInfo u = update_info();
     if (!u.available) return;
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, col4(kPaper));
-    ImGui::BeginChild("##update", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
-    ImGui::TextWrapped("%s", trf("launcher.update.available", u.version).c_str());
-    text_small(trf("launcher.version", current_version()).c_str());
-    if (button(tr("launcher.update.get"), kGreen)) SDL_OpenURL(u.url.c_str());
-    ImGui::EndChild();
-    ImGui::PopStyleColor();
+    const std::string msg = trf("launcher.update.available", u.version);
+    const char* get = tr("launcher.update.get");
+    const float r = S(11), pad = S(12), vpad = S(6), gap = ImGui::GetStyle().ItemSpacing.x;
+    const float h = ImGui::GetFrameHeight() + 2 * vpad;
+    const float w = pad + 2 * r + gap + ImGui::CalcTextSize(msg.c_str()).x + gap + button_width(get) + pad;
+    const ImVec2 at = ImGui::GetCursorScreenPos();
+    const ImVec2 p(at.x + std::max(0.0f, (ImGui::GetContentRegionAvail().x - w) * 0.5f), at.y);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), kPaper, h * 0.5f);
+    status_mark(dl, ImVec2(p.x + pad + r, p.y + h * 0.5f), r, Status::Warning);
+    ImGui::SetCursorScreenPos(ImVec2(p.x + pad + 2 * r + gap, p.y + vpad));
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(msg.c_str());
+    ImGui::SameLine();
+    if (button(get, kGreen)) SDL_OpenURL(u.url.c_str());
+    ImGui::SetCursorScreenPos(ImVec2(at.x, p.y + h));
     ImGui::Dummy(ImVec2(0, S(6)));
 }
 
@@ -2265,7 +2275,6 @@ void page_home() {
         heading("", "");
     }
     ImGui::Dummy(ImVec2(0, S(6)));
-    update_notice();
     if (valid) {
         contents_row();
         ImGui::Dummy(ImVec2(0, S(10)));
@@ -2915,6 +2924,13 @@ bool pages_draw(float scale, ImFont* title) {
     static float content_h[int(Page::Credits) + 1] = {};
     const int pi = int(g_page);
     const bool center = g_page == Page::Welcome || g_page == Page::Done || g_page == Page::Home;
+    // Home's update notice floats at the top of the card, in the space above the centred page: it moves nothing
+    // when it appears.
+    if (g_page == Page::Home) {
+        const ImVec2 at = ImGui::GetCursorPos();
+        update_notice();
+        ImGui::SetCursorPos(at);
+    }
     const float avail_h = ImGui::GetContentRegionAvail().y, top = ImGui::GetCursorPosY();
     if (center && content_h[pi] > 0 && content_h[pi] < avail_h)
         ImGui::SetCursorPosY(std::floor(top + (avail_h - content_h[pi]) * 0.4f));
