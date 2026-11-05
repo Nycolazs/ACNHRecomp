@@ -5,6 +5,8 @@
 #include <memory>
 #include <string>
 
+#include "amiibo_decode.h"
+
 namespace nx {
 struct CPU;
 struct EventState;
@@ -21,13 +23,13 @@ void sync_activate_event_after_attach();
 constexpr uint32_t kVirtualNpadId = 0;
 constexpr uint64_t kVirtualDeviceHandle = kVirtualNpadId;
 
-constexpr uint32_t kApplicationAreaSize = 0xD8;
+constexpr uint32_t kApplicationAreaSize = uint32_t(amiibo::kApplicationAreaDataSize);
 constexpr size_t kNfpDataSize = 0x298;
 constexpr size_t kRegisterInfoSize = 0x100;
 constexpr size_t kRegisterInfoPrivateSize = 0x120;
 
-// Loads a 540-byte (or 532/520) Amiibo .bin dump.
-// Settings → Amiibo.
+// Loads an NTAG215 Amiibo .bin dump. The NFP reader uses its clear UID/model ID; encrypted settings and app data are
+// not consumed by ACNHRecomp.
 bool load_tag_file(const std::string& path, std::string* err = nullptr);
 void clear_tag();
 
