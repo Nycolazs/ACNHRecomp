@@ -488,6 +488,30 @@ ImVec2 measure(ImFont* f, float size, const char* text, float wrap) {
     return f->CalcTextSizeA(size, FLT_MAX, wrap, text);
 }
 
+// Wrap to at most `max_lines` (ellipsis if longer). Used for mod tile titles.
+std::string fit_wrapped_lines(const char* text, float wrap_w, int max_lines) {
+    if (!text || !*text || max_lines < 1) return {};
+    ImFont* font = ImGui::GetFont();
+    const float fs = ImGui::GetFontSize();
+    const float line_h = ImGui::GetTextLineHeight();
+    const float limit = line_h * float(max_lines) + 0.5f;
+    if (font->CalcTextSizeA(fs, FLT_MAX, wrap_w, text).y <= limit) return text;
+    const std::string src(text);
+    size_t lo = 0, hi = src.size();
+    while (lo < hi) {
+        const size_t mid = (lo + hi + 1) / 2;
+        const std::string cand = src.substr(0, mid) + "...";
+        if (font->CalcTextSizeA(fs, FLT_MAX, wrap_w, cand.c_str()).y <= limit) lo = mid;
+        else hi = mid - 1;
+    }
+    // Prefer cutting on a space when the ellipsis still fits.
+    size_t cut = lo;
+    while (cut > 0 && src[cut - 1] != ' ') --cut;
+    if (cut < lo / 2) cut = lo;
+    while (cut > 0 && src[cut - 1] == ' ') --cut;
+    return src.substr(0, cut) + "...";
+}
+
 // The background: mint to leaf green with a soft dot pattern, as the game's menus.
 void draw_background(ImVec2 ds) {
     ImDrawList* dl = ImGui::GetBackgroundDrawList();
@@ -528,8 +552,8 @@ bool button(const char* label, ImU32 color = kMint, bool enabled = true, float w
     const bool hot = enabled && (g.HoveredIdPreviousFrame == id || g.ActiveId == id ||
                                  (g.NavId == id && g.NavIdIsAlive && g.NavHighlightItemUnderNav));
     ImGui::PushStyleColor(ImGuiCol_Button, col4(color));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, col4(kYellow));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, col4(rgb(246, 196, 64)));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, col4(enabled ? kYellow : color));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, col4(enabled ? rgb(246, 196, 64) : color));
     ImGui::PushStyleColor(ImGuiCol_Text, col4(hot || light ? kInk : kWhite));
     bool r = ImGui::Button(label, ImVec2(w > 0 ? w : button_width(label), 0));
     nav_item();
@@ -1937,13 +1961,22 @@ void saves_popup() {
     ImGui::PopStyleVar();
 }
 
+const char* managed_mod_text(const std::string& id) {
+    if (id == "ptbr") return tr("launcher.mods.managed.language");
+    if (id == "speedfix60") return tr("launcher.mods.managed.fps");
+    return tr("launcher.mods.managed");
+}
+
 void mods_popup() {
     if (g_mods_open) ImGui::OpenPopup("mods");
     ImGui::PushStyleVar(ImGuiStyleVar_Alpha, out_cubic((ImGui::GetTime() - g_mods_since) / 0.18));
     ImGui::PushStyleColor(ImGuiCol_NavCursor, ImVec4(0, 0, 0, 0));
     const ImVec2 ds = ImGui::GetIO().DisplaySize;
     ImGui::SetNextWindowSize(ImVec2(std::min(ds.x * 0.94f, S(1180)), std::min(ds.y * 0.9f, S(700))));
-    if (ImGui::BeginPopupModal("mods", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize)) {
+    // Keep the fixed modal centered when the display size changes (for example, entering fullscreen).
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal("mods", nullptr,
+                               ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove)) {
         ImDrawList* dl = ImGui::GetWindowDrawList();
         ImVec2 p = ImGui::GetCursorScreenPos();
         float r = S(18);
@@ -1978,11 +2011,21 @@ void mods_popup() {
             int next = 1;
             for (size_t i = 0; i < g_mods.size(); ++i)
                 if (g_mods[i].enabled) order[i] = next++;
+            const int enabled_count = next - 1;
 
             float avail = ImGui::GetContentRegionAvail().x, gap = S(12);
             int cols = avail >= S(900) ? 3 : (avail >= S(520) ? 2 : 1);
             float tile_w = (avail - gap * float(cols - 1)) / float(cols);
-            float tile_h = S(128);
+            const float tile_pad_x = S(12), tile_pad_y = S(10);
+            const float br = S(14);
+            const float fh = ImGui::GetFrameHeight();
+            const float line_h = ImGui::GetTextLineHeight();
+            const float item_sp = ImGui::GetStyle().ItemSpacing.y;
+            const float border = ImGui::GetStyle().ChildBorderSize;
+            const float inner_w = std::max(1.f, tile_w - 2.f * tile_pad_x - 2.f * border);
+            const float name_wrap =
+                std::max(1.f, inner_w - (2.f * br + S(10)) - fh - ImGui::GetStyle().ItemSpacing.x);
+            const float btn_gap = S(4);
             const char* up_l = tr("launcher.mods.up");
             const char* down_l = tr("launcher.mods.down");
             const char* del_l = tr("launcher.mods.delete");
@@ -1990,26 +2033,56 @@ void mods_popup() {
 
             // Snapshot ids so toggles cannot reshuffle g_mods while this frame still walks the grid.
             const size_t mod_count = g_mods.size();
+            // Per-tile content height, then equalize within each grid row for a consistent band.
+            std::vector<float> tile_hs(mod_count, 0.f);
+            std::vector<std::string> name_labels(mod_count);
+            for (size_t i = 0; i < mod_count; ++i) {
+                const nx::mod_manager::ModInfo& m = g_mods[i];
+                name_labels[i] = fit_wrapped_lines(m.id.c_str(), name_wrap, 2);
+                float name_h = ImGui::CalcTextSize(name_labels[i].c_str(), nullptr, false, name_wrap).y;
+                name_h = std::min(name_h, line_h * 2.f);
+                float content = std::max(fh, name_h);
+                if (m.managed)
+                    content += item_sp + ImGui::CalcTextSize(managed_mod_text(m.id), nullptr, false, inner_w).y;
+                if (m.has_exefs)
+                    content += item_sp + ImGui::CalcTextSize(tr("launcher.mods.exefs_warn"), nullptr, false, inner_w).y;
+                // Button row + spacing; extra item_sp so actions stay inside bottom padding.
+                if (!m.managed) content += item_sp + btn_gap + fh + item_sp;
+                tile_hs[i] = 2.f * tile_pad_y + 2.f * border + content;
+            }
+            for (size_t row = 0; row < mod_count; row += size_t(cols)) {
+                const size_t row_end = std::min(row + size_t(cols), mod_count);
+                float row_max = 0.f;
+                for (size_t i = row; i < row_end; ++i) row_max = std::max(row_max, tile_hs[i]);
+                for (size_t i = row; i < row_end; ++i) tile_hs[i] = row_max;
+            }
+
             for (size_t i = 0; i < mod_count; ++i) {
                 const nx::mod_manager::ModInfo mod = g_mods[i];
                 if (i % size_t(cols) != 0) ImGui::SameLine(0, gap);
                 ImGui::PushID(mod.id.c_str());
 
+                const std::string& name_label = name_labels[i];
+                float name_h = ImGui::CalcTextSize(name_label.c_str(), nullptr, false, name_wrap).y;
+                name_h = std::min(name_h, line_h * 2.f);
+                const float title_h = std::max(fh, name_h);
+                const float tile_h = tile_hs[i];
+
                 ImVec2 tile_min = ImGui::GetCursorScreenPos();
-                ImGui::PushStyleColor(ImGuiCol_ChildBg, col4(mod.enabled ? rgb(255, 244, 210) : rgb(255, 252, 242)));
+                ImGui::PushStyleColor(ImGuiCol_ChildBg, col4(rgb(255, 252, 242)));
                 ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, S(14));
-                ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(12), S(10)));
+                ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(tile_pad_x, tile_pad_y));
                 ImGui::BeginChild("##tile", ImVec2(tile_w, tile_h),
-                                  ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
+                                  ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding,
+                                  ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
                 ImGui::PopStyleVar(2);
                 ImGui::PopStyleColor();
 
-                // Load-order badge (1-based among enabled mods).
+                // Load-order badge (1-based among enabled mods), centred on the checkbox.
                 ImDrawList* tdl = ImGui::GetWindowDrawList();
-                ImVec2 badge = ImGui::GetCursorScreenPos();
-                float br = S(14);
-                ImVec2 bc(badge.x + br, badge.y + br);
-                tdl->AddCircleFilled(bc, br, mod.enabled ? kOrange : kGrey);
+                ImVec2 row_min = ImGui::GetCursorScreenPos();
+                ImVec2 bc(row_min.x + br, row_min.y + fh * 0.5f);
+                tdl->AddCircleFilled(bc, br, mod.enabled ? kOrange : kRed);
                 char num[8];
                 if (mod.enabled)
                     std::snprintf(num, sizeof num, "%d", order[i]);
@@ -2019,9 +2092,18 @@ void mods_popup() {
                 tdl->AddText(g_body, font_size(g_body) * 0.85f, ImVec2(bc.x - ns.x * 0.5f, bc.y - ns.y * 0.5f), kWhite,
                              num);
 
-                ImGui::SetCursorScreenPos(ImVec2(badge.x + 2 * br + S(10), badge.y));
+                // Checkbox + name share the top of the row; wrapped lines grow downward.
+                ImGui::SetCursorScreenPos(ImVec2(row_min.x + 2 * br + S(10), row_min.y));
+                const float row_top_y = ImGui::GetCursorPosY();
                 bool enabled = mod.enabled;
-                if (ImGui::Checkbox("##on", &enabled)) {
+                // Green fill when on, blue on hover; white check mark for contrast.
+                if (mod.enabled) ImGui::PushStyleColor(ImGuiCol_FrameBg, col4(kGreen));
+                ImGui::PushStyleColor(ImGuiCol_CheckMark, col4(kWhite));
+                ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, col4(kBlue));
+                ImGui::PushStyleColor(ImGuiCol_FrameBgActive, col4(kBlue));
+                // Bundled mods (ptbr / speedfix60) are driven by language / 60 FPS settings — not toggled here.
+                ImGui::BeginDisabled(mod.managed);
+                if (ImGui::Checkbox("##on", &enabled) && !mod.managed) {
                     std::string err;
                     if (nx::mod_manager::set_enabled(g_build.data, mod.id, enabled, &err)) {
                         load_game_ini();
@@ -2041,36 +2123,66 @@ void mods_popup() {
                     } else
                         g_banner = trf("launcher.mods.toggle_failed", err);
                 }
+                ImGui::EndDisabled();
+                ImGui::PopStyleColor(3 + (mod.enabled ? 1 : 0));
                 nav_item();
-                ImGui::SameLine();
-                ImGui::AlignTextToFramePadding();
-                ImGui::TextUnformatted(mod.id.c_str());
-                if (mod.managed) ImGui::TextDisabled("%s", tr("launcher.mods.managed"));
-                if (mod.has_exefs) ImGui::TextDisabled("%s", tr("launcher.mods.exefs_warn"));
+                // Max two lines; first line flush with the top of the checkbox (not its baseline).
+                // SameLine+Text would apply CurrLineTextBaseOffset and drop the name to the bottom of the box.
+                {
+                    const ImVec2 check_max = ImGui::GetItemRectMax();
+                    ImGuiWindow* tw = ImGui::GetCurrentWindow();
+                    tw->DC.CursorPos = ImVec2(check_max.x + ImGui::GetStyle().ItemInnerSpacing.x, row_min.y);
+                    tw->DC.CursorMaxPos = ImMax(tw->DC.CursorMaxPos, tw->DC.CursorPos);
+                    tw->DC.CurrLineSize = ImVec2(0, 0);
+                    tw->DC.CurrLineTextBaseOffset = 0.f;
+                    const float name_x = ImGui::GetCursorPosX();
+                    ImGui::PushTextWrapPos(name_x + name_wrap);
+                    ImGui::TextUnformatted(name_label.c_str());
+                    ImGui::PopTextWrapPos();
+                    ImGui::SetCursorPosY(std::max(ImGui::GetCursorPosY(), row_top_y + title_h));
+                }
+                if (mod.managed) {
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+                    ImGui::TextWrapped("%s", managed_mod_text(mod.id));
+                    ImGui::PopStyleColor();
+                }
+                if (mod.has_exefs) {
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+                    ImGui::TextWrapped("%s", tr("launcher.mods.exefs_warn"));
+                    ImGui::PopStyleColor();
+                }
 
-                ImGui::SetCursorPosY(tile_h - ImGui::GetStyle().WindowPadding.y - ImGui::GetFrameHeight() - S(4));
-                // Keep Up/Down in the nav tree even when off so tiles do not gain/lose targets on toggle.
-                if (button(up_l, kWhite, mod.enabled, action_w)) {
-                    std::string err;
-                    if (nx::mod_manager::move_enabled(g_build.data, mod.id, -1, &err)) {
-                        load_game_ini();
-                        g_mods_refresh = true;
-                        if (ImGui::GetCurrentContext()->NavInputSource == ImGuiInputSource_Gamepad)
-                            g_mods_refresh_wait_pad = true;
+                // Bundled mods have no reorder / delete controls (settings-linked).
+                // Disabled mods keep Delete only — Up/Down apply to load order among enabled packs.
+                // Park actions at the bottom (SetCursorPos — Dummy would add ItemSpacing and clip past the tile).
+                if (!mod.managed) {
+                    const float y_gap = ImGui::GetCursorPosY() + btn_gap;
+                    const float y_bottom = ImGui::GetCursorPosY() + ImGui::GetContentRegionAvail().y - fh;
+                    ImGui::SetCursorPosY(std::max(y_gap, y_bottom));
+                    if (mod.enabled) {
+                        if (button(up_l, kBlue, order[i] > 1, action_w)) {
+                            std::string err;
+                            if (nx::mod_manager::move_enabled(g_build.data, mod.id, -1, &err)) {
+                                load_game_ini();
+                                g_mods_refresh = true;
+                                if (ImGui::GetCurrentContext()->NavInputSource == ImGuiInputSource_Gamepad)
+                                    g_mods_refresh_wait_pad = true;
+                            }
+                        }
+                        ImGui::SameLine();
+                        if (button(down_l, kBlue, order[i] < enabled_count, action_w)) {
+                            std::string err;
+                            if (nx::mod_manager::move_enabled(g_build.data, mod.id, 1, &err)) {
+                                load_game_ini();
+                                g_mods_refresh = true;
+                                if (ImGui::GetCurrentContext()->NavInputSource == ImGuiInputSource_Gamepad)
+                                    g_mods_refresh_wait_pad = true;
+                            }
+                        }
+                        ImGui::SameLine();
                     }
+                    if (button(del_l, kRed, true, action_w)) g_mods_delete_id = mod.id;
                 }
-                ImGui::SameLine();
-                if (button(down_l, kWhite, mod.enabled, action_w)) {
-                    std::string err;
-                    if (nx::mod_manager::move_enabled(g_build.data, mod.id, 1, &err)) {
-                        load_game_ini();
-                        g_mods_refresh = true;
-                        if (ImGui::GetCurrentContext()->NavInputSource == ImGuiInputSource_Gamepad)
-                            g_mods_refresh_wait_pad = true;
-                    }
-                }
-                ImGui::SameLine();
-                if (button(del_l, kRed, true, action_w)) g_mods_delete_id = mod.id;
 
                 ImGui::EndChild();
                 // Soft settle animation like the add-ons cards.
