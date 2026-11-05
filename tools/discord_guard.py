@@ -7,11 +7,12 @@ whoever fell into the trap:
 - #no-chat-spam-trap: a channel nobody has a reason to write in. Any message there is blocked and its author timed
   out for 28 days at once (so a spam bot cannot go on to the other channels); this script then bans the account and
   deletes its last day of messages. The rule is exempt from every other channel, kept in step here when channels
-  are added.
+  are added. A channel is only exempt from the next run on: run the workflow by hand after creating one. Anyone caught
+  in such a channel meanwhile is released here, not banned.
 - Discord's own spam filter and scam phrases (fake Nitro / Steam gifts): blocked, alert in #mod-log. Mass mentions
   stay with the server's built-in "Block Mention Spam" rule (Discord's preset; the API cannot edit it).
 
-Staff roles are never affected. Alerts arrive in #mod-log; one that led to a ban gets a hammer reaction.
+Staff roles are never affected. Alerts arrive in #mod-log; one that was dealt with gets a hammer reaction.
 
 DISCORD_BOT_TOKEN in the environment. --dry-run prints what it would do.
 """
@@ -127,6 +128,17 @@ def ban_trapped():
         if any(r.get("me") and r["emoji"]["name"] == "\U0001F528" for r in m.get("reactions", [])):
             continue  # already banned
         user = m["author"]
+        if fields.get("channel_id") != TRAP:
+            # A channel created since the last run is not exempt yet, so the rule caught someone talking in a normal
+            # channel: undo the timeout. Never a ban, whatever the alert says.
+            print(f"not the trap: lift the timeout of {user['username']} ({user['id']})")
+            if not DRY:
+                st, r = call("PATCH", f"/guilds/{GUILD}/members/{user['id']}", {"communication_disabled_until": None},
+                             "spam trap: caught in a new channel, not the trap")
+                print("  ", st, "" if st in (200, 404) else r)
+                if st in (200, 404):
+                    call("PUT", f"/channels/{MOD_LOG}/messages/{m['id']}/reactions/{HAMMER}/@me")
+            continue
         print(f"ban {user['username']} ({user['id']})")
         if DRY:
             continue
