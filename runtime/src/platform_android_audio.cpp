@@ -98,7 +98,6 @@ bool audio_open(AudioDone done, int) {
     bool ok = AAudioStreamBuilder_openStream(b, &g_stream) == AAUDIO_OK && AAudioStream_requestStart(g_stream) == AAUDIO_OK;
     AAudioStreamBuilder_delete(b);
     if (!ok && g_stream) AAudioStream_requestStop(g_stream), AAudioStream_close(g_stream), g_stream = nullptr;
-    if (ok) nx::log("audio: stereo output (2 channels)");
     return ok;
 }
 
