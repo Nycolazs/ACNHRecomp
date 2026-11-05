@@ -221,7 +221,10 @@ def analyze(m, log=print, patched=()):
                 elif mn == "br":
                     tg = _jump_table(an, f, a)
                     if tg is not None:
-                        an.jump_tables[a] = tg
+                        # Keep every function's view: the table is cut to each function's bounds, and a function
+                        # that overlaps this br must not lose the targets another one saw (issue #58, the SpeedFix's
+                        # entry 0x10cac40 in the middle of a table: a lost case became a call into a function's middle).
+                        an.jump_tables[a] = sorted(set(an.jump_tables.get(a, ())) | set(tg))
         # Functions that share a tail share its jump tables (keyed by the br), and a table can reach back before
         # a later entry (ACNH main: the entry 0x3aeaf14 runs into br 0x3aeb000, whose case 0 is 0x3aeaf0c).
         # Such targets become entries, so the emitter can tail-call them.
