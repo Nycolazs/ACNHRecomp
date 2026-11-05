@@ -505,8 +505,17 @@ bool present_pass_wanted() {
 #if defined(__ANDROID__)
         return !e || e[0] != '0';
 #else
+#if defined(_WIN32)
+        constexpr bool windows = true;
+#else
+        constexpr bool windows = false;
+#endif
+        // AMD on Windows shows black blocks at the top of the picture with the blit, and none with this pass (#71).
+        VkPhysicalDeviceProperties props{};
+        p_vkGetPhysicalDeviceProperties(vk_physical(), &props);
+        const bool by_default = windows && props.vendorID == 0x1002;
         // FSR, FXAA and HDR are passes of this one
-        return (e && e[0] == '1') || fsr_on() || fxaa_on() || hdr_requested() != HdrOutput::Off;
+        return (e ? e[0] == '1' : by_default) || fsr_on() || fxaa_on() || hdr_requested() != HdrOutput::Off;
 #endif
     }();
     return on;
