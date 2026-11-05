@@ -29,6 +29,9 @@ const std::string& ui_language();
 // The pointer stays valid for the whole run. Safe to call from any thread.
 const char* tr(const char* key);
 
+// Every menu string of `code` (its native name included), for the font atlas. `code` null visits every language.
+void ui_visit_texts(const char* code, void (*fn)(const char* utf8, void* ctx), void* ctx);
+
 // tr() with the first "{}" replaced by arg.
 std::string trf(const char* key, const std::string& arg);
 

@@ -551,7 +551,7 @@ endif()
 # config.ini still works.
 if(EXISTS "${NX_IMGUI_DIR}/imgui.cpp")
     target_sources(${NX_GAME} PRIVATE runtime/src/ui/ui.cpp runtime/src/ui/settings.cpp runtime/src/ui/amiibo_importer.cpp
-        runtime/src/ui/i18n.cpp runtime/src/ui/theme.cpp ${NX_IMGUI_DIR}/imgui.cpp ${NX_IMGUI_DIR}/imgui_draw.cpp ${NX_IMGUI_DIR}/imgui_tables.cpp
+        runtime/src/ui/i18n.cpp runtime/src/ui/theme.cpp runtime/src/ui/ui_cjk_font.cpp ${NX_IMGUI_DIR}/imgui.cpp ${NX_IMGUI_DIR}/imgui_draw.cpp ${NX_IMGUI_DIR}/imgui_tables.cpp
         ${NX_IMGUI_DIR}/imgui_widgets.cpp ${NX_IMGUI_DIR}/backends/imgui_impl_vulkan.cpp)
     target_include_directories(${NX_GAME} PRIVATE ${NX_IMGUI_DIR})
     target_compile_definitions(${NX_GAME} PRIVATE IMGUI_IMPL_VULKAN_NO_PROTOTYPES $<$<NOT:$<BOOL:${ANDROID}>>:NX_HAVE_SDL3>)

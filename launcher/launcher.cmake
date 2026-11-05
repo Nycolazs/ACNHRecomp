@@ -21,7 +21,7 @@ add_executable(acnhrecomp_launcher WIN32
     launcher/cpu_check.cpp
     runtime/src/ldn_upnp.cpp
     launcher/save_log_stub.cpp
-    runtime/src/ui/theme.cpp runtime/src/ui/i18n.cpp runtime/src/app_icon.cpp
+    runtime/src/ui/theme.cpp runtime/src/ui/i18n.cpp runtime/src/ui/ui_cjk_font.cpp runtime/src/app_icon.cpp
     $<$<PLATFORM_ID:Windows>:${CMAKE_SOURCE_DIR}/assets/acnhrecomp.rc>
     $<$<PLATFORM_ID:Windows>:${CMAKE_SOURCE_DIR}/assets/acnhrecomp.manifest>
     ${NX_LAUNCHER_IMGUI}/imgui.cpp ${NX_LAUNCHER_IMGUI}/imgui_draw.cpp ${NX_LAUNCHER_IMGUI}/imgui_tables.cpp
