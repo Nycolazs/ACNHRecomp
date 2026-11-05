@@ -22,7 +22,6 @@
 #include <unistd.h>
 
 #include <algorithm>
-#include <atomic>
 #include <cerrno>
 #include <cmath>
 #include <cstring>
@@ -85,7 +84,7 @@ aaudio_data_callback_result_t audio_cb(AAudioStream*, void*, void* out, int32_t 
 }
 }  // namespace
 
-bool audio_open(AudioDone done) {
+bool audio_open(AudioDone done, int) {
     g_done = done;
     // NX_MUTE=1 (and headless test runs): no device, the callers pace themselves with a timer (as on Windows and macOS).
     if (headless() || std::getenv("NX_MUTE")) return false;
@@ -98,6 +97,7 @@ bool audio_open(AudioDone done) {
     AAudioStreamBuilder_setDataCallback(b, audio_cb, nullptr);
     bool ok = AAudioStreamBuilder_openStream(b, &g_stream) == AAUDIO_OK && AAudioStream_requestStart(g_stream) == AAUDIO_OK;
     AAudioStreamBuilder_delete(b);
+    if (!ok && g_stream) AAudioStream_requestStop(g_stream), AAudioStream_close(g_stream), g_stream = nullptr;
     return ok;
 }
 
