@@ -134,6 +134,7 @@ const Mapping kMappings[] = {
     {"video.hdr", "NX_HDR", off_empty, true},  // scrgb / hdr10 (nvn_present.cpp); the brightness keys are read live
     {"video.shader_prepare", "NX_PIPE_PREWARM", off_is_zero, true},
     {"audio.reverb", "NX_AUDIO_REVERB", off_is_zero, false},  // also read live (hle_audio.cpp)
+    {"audio.surround", "NX_AUDIO_SURROUND", off_is_zero, true},  // next device open/restart; ignored on Android
     {"video.root_clocks", "NX_ROOT_CLOCKS", on_off, true},  // Android, rooted phones (perf_hint.cpp)
 };
 

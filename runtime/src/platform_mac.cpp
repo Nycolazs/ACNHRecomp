@@ -55,6 +55,7 @@
 #include "ui/ui.h"
 #include "bug_report.h"
 #include "platform.h"
+#include "sdl_audio_frame.h"
 
 namespace nx {
 void boot();
@@ -686,6 +687,7 @@ AudioDone g_done = nullptr;
 SDL_AudioStream* g_stream = nullptr;
 std::mutex g_audio;
 std::deque<Pending> g_pending;
+int g_audio_frame_bytes = 4;
 
 // Master volume (settings screen, live) and the mute while the window is in the background (audio.mute_background).
 void apply_gain(int16_t* pcm, int count) {
@@ -703,8 +705,10 @@ void apply_gain(int16_t* pcm, int count) {
 
 void SDLCALL audio_cb(void*, SDL_AudioStream* s, int additional, int) {
     uint8_t buf[4096];
+    // SDL rejects partial source frames; S16 5.1 frames are 12 bytes, not 4096-byte aligned.
+    const int max_chunk = int(sizeof buf) - int(sizeof buf) % g_audio_frame_bytes;
     while (additional > 0) {
-        int n = std::min<int>(additional, sizeof buf);
+        int n = sdl_audio_frame_chunk(additional, max_chunk, g_audio_frame_bytes);
         int filled = 0;
         std::vector<void*> finished;
         {
@@ -723,18 +727,19 @@ void SDLCALL audio_cb(void*, SDL_AudioStream* s, int additional, int) {
         }
         if (filled < n) std::memset(buf + filled, 0, size_t(n - filled));  // underrun: silence
         apply_gain(reinterpret_cast<int16_t*>(buf), n / 2);
-        SDL_PutAudioStreamData(s, buf, n);
+        if (!SDL_PutAudioStreamData(s, buf, n)) log("audio: SDL_PutAudioStreamData: %s", SDL_GetError());
         for (void* ctx : finished) g_done(ctx);
         additional -= n;
     }
 }
 }  // namespace
 
-bool audio_open(AudioDone done) {
+bool audio_open(AudioDone done, int channels) {
     g_done = done;
     // Headless test runs (and NX_MUTE=1) are silent: no device, the callers pace themselves with a timer.
     if (headless() || std::getenv("NX_MUTE")) return false;
-    SDL_AudioSpec spec{SDL_AUDIO_S16LE, 2, 48000};
+    g_audio_frame_bytes = channels * int(sizeof(int16_t));
+    SDL_AudioSpec spec{SDL_AUDIO_S16LE, Uint8(channels), 48000};
     g_stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, audio_cb, nullptr);
     if (!g_stream) return false;
     SDL_ResumeAudioStreamDevice(g_stream);

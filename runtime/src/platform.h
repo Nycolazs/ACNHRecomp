@@ -234,9 +234,10 @@ void pick_path(bool zip, const std::string& title);
 void pick_file(const std::string& title, const char* extension);  // a single file (e.g. Amiibo .bin)
 bool pick_result(std::string& path);           // true once, when an answer came ("" = cancelled)
 
-// Audio: s16 stereo 48 kHz. `done` is called (on any thread) when a submitted buffer has been played.
+// Audio: interleaved s16 at 48 kHz; channels is 2 or 6 (Android always opens stereo). `done` is called on any thread
+// when a submitted buffer has been played.
 using AudioDone = void (*)(void* ctx);
-bool audio_open(AudioDone done);
+bool audio_open(AudioDone done, int channels);
 bool audio_submit(const void* data, size_t bytes, void* ctx);  // false: no device (caller paces itself)
 uint32_t audio_queued();
 void audio_pause(bool paused);  // app in the background
