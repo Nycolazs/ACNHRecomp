@@ -430,6 +430,53 @@ bool read_asset(const std::string& path, std::string& out) {
     return true;
 }
 
+std::string device_locale() {
+    if (!g_app || !g_app->activity || !g_app->activity->vm) return "";
+    JNIEnv* env = nullptr;
+    if (g_app->activity->vm->AttachCurrentThread(&env, nullptr) != JNI_OK || !env) return "";
+    jclass cls = env->FindClass("java/util/Locale");
+    if (!cls) {
+        env->ExceptionClear();
+        return "";
+    }
+    jmethodID get_default = env->GetStaticMethodID(cls, "getDefault", "()Ljava/util/Locale;");
+    jmethodID language = env->GetMethodID(cls, "getLanguage", "()Ljava/lang/String;");
+    jmethodID script = env->GetMethodID(cls, "getScript", "()Ljava/lang/String;");
+    jmethodID country = env->GetMethodID(cls, "getCountry", "()Ljava/lang/String;");
+    if (!get_default || !language || !script || !country) {
+        env->ExceptionClear();
+        env->DeleteLocalRef(cls);
+        return "";
+    }
+    jobject loc = env->CallStaticObjectMethod(cls, get_default);
+    if (env->ExceptionCheck() || !loc) {
+        env->ExceptionClear();
+        env->DeleteLocalRef(cls);
+        return "";
+    }
+    auto part = [&](jmethodID method) {
+        std::string out;
+        jstring s = static_cast<jstring>(env->CallObjectMethod(loc, method));
+        if (env->ExceptionCheck() || !s) {
+            env->ExceptionClear();
+            return out;
+        }
+        const char* chars = env->GetStringUTFChars(s, nullptr);
+        if (chars) out = chars;
+        env->ReleaseStringUTFChars(s, chars);
+        env->DeleteLocalRef(s);
+        return out;
+    };
+    std::string lang = part(language), scr = part(script), region = part(country);
+    env->DeleteLocalRef(loc);
+    env->DeleteLocalRef(cls);
+    if (lang.empty()) return "";
+    std::string tag = lang;
+    if (!scr.empty()) tag += "-" + scr;
+    if (!region.empty()) tag += "-" + region;
+    return tag;
+}
+
 std::string setting(const std::string& key) {
     // config.txt read once (again only if the data folder changes): window_size asks for two settings every frame,
     // and each read of the file (on shared storage, through FUSE) took milliseconds on the replay thread.

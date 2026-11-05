@@ -221,6 +221,8 @@ std::string data_root() {
 
 
 
+std::string device_locale() { return ""; }
+
 std::string setting(const std::string& key) {
     std::string env = "NX_";
     for (char ch : key) env += char(std::toupper(static_cast<unsigned char>(ch)));
