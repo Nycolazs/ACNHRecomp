@@ -1,15 +1,14 @@
 #include "nfp_host.h"
 
-#include <algorithm>
+#include <array>
 #include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <mutex>
-#include <vector>
+#include <utility>
 
 #include <nx/runtime.h>
 
-#include "amiibo_decode.h"
 #include "kernel.h"
 #include "kernel_state.h"
 #include "platform.h"
@@ -29,7 +28,6 @@ namespace {
 std::mutex g_lock;
 DeviceState g_state = DeviceState::Initialized;
 amiibo::DecodedTag g_decoded{};
-std::vector<uint8_t> g_tag_raw;
 std::string g_path;
 bool g_app_area_open = false;
 uint32_t g_open_access_id = 0;
@@ -55,10 +53,10 @@ bool nfp_trace_enabled() {
 
 void log_state(const char* reason) {
     if (!nfp_trace_enabled()) return;
-    log("nfp: state %u (%s) tag=%d", unsigned(g_state), reason, g_tag_raw.empty() ? 0 : 1);
+    log("nfp: state %u (%s) tag=%d", unsigned(g_state), reason, amiibo::decoded_tag_valid(g_decoded) ? 1 : 0);
 }
 
-bool tag_data_ready_locked() { return !g_tag_raw.empty() && amiibo::decoded_tag_valid(g_decoded); }
+bool tag_data_ready_locked() { return amiibo::decoded_tag_valid(g_decoded); }
 
 void promote_tag_found_locked() {
     if (g_state != DeviceState::SearchingForTag || !tag_data_ready_locked()) return;
@@ -94,10 +92,6 @@ void write_guest_date(uint8_t* dest, const uint8_t* src) {
     dest[3] = src[3];
 }
 
-constexpr size_t kPlainMinRegister = 0x84;
-constexpr size_t kPlainMinAdmin = 0xBA;
-constexpr size_t kPlainMinCommon = 0x2B;
-
 }  // namespace
 
 void ensure_nfc_services_ready(nx::CPU& c) {
@@ -121,24 +115,21 @@ bool load_tag_file(const std::string& path, std::string* err) {
         if (err) *err = "Could not open file.";
         return false;
     }
-    std::vector<uint8_t> buf;
-    buf.resize(amiibo::kTagSize);
+    std::array<uint8_t, amiibo::kTagSize> buf{};
     size_t n = fread(buf.data(), 1, buf.size(), f);
     fclose(f);
-    if (n < 532) {
+    if (n < amiibo::kMinTagSize) {
         if (err) *err = "Not a valid Amiibo dump size.";
         return false;
     }
-    buf.resize(n);
     amiibo::DecodedTag decoded;
     std::string why;
-    if (!amiibo::decode_tag_dump(buf.data(), buf.size(), decoded, &why)) {
+    if (!amiibo::decode_tag_dump(buf.data(), n, decoded, &why)) {
         if (err) *err = why;
         return false;
     }
     std::lock_guard lk(g_lock);
-    g_tag_raw = std::move(buf);
-    g_decoded = std::move(decoded);
+    g_decoded = decoded;
     g_path = path;
     g_app_area_open = false;
     begin_tag_present_wait_locked();
@@ -151,7 +142,6 @@ void clear_tag() {
     std::lock_guard lk(g_lock);
     const bool was_present =
         g_state == DeviceState::TagFound || g_state == DeviceState::TagMounted;
-    g_tag_raw.clear();
     g_decoded = {};
     g_path.clear();
     g_app_area_open = false;
@@ -165,7 +155,7 @@ void clear_tag() {
 
 bool has_tag() {
     std::lock_guard lk(g_lock);
-    return !g_tag_raw.empty();
+    return amiibo::decoded_tag_valid(g_decoded);
 }
 
 const std::string& tag_path() {
@@ -243,10 +233,8 @@ void fill_tag_info(void* out) {
     auto* p = static_cast<uint8_t*>(out);
     // nn::nfp::TagInfo (yuzu / Ryujinx): u8 uuid[10], u8 uuid_length, reserved[0x15], u32 protocol, u32 tag_type.
     // ACNH (main_01D23A50) reads uuid_length at +0xA and formats that many uuid bytes.
-    uint8_t len = g_decoded.uid_length ? g_decoded.uid_length : 7;
-    if (len > 10) len = 10;
-    const uint8_t* uid_src = g_decoded.uid_length ? g_decoded.uid : g_tag_raw.data();
-    std::memcpy(p, uid_src, len);
+    const uint8_t len = g_decoded.uid_length;
+    std::memcpy(p, g_decoded.uid, len);
     p[0xA] = len;
     st<uint32_t>(reinterpret_cast<uint64_t>(p + 0x20), 1u);  // NfcProtocol TypeA
     st<uint32_t>(reinterpret_cast<uint64_t>(p + 0x24), 2u);  // TagType Type2 (NTAG215)
@@ -276,41 +264,39 @@ void fill_register_info(void* out) {
     if (!out) return;
     std::memset(out, 0, kRegisterInfoSize);
     std::lock_guard lk(g_lock);
-    if (!tag_data_ready_locked() || g_decoded.plain.size() < kPlainMinRegister) return;
+    if (!tag_data_ready_locked()) return;
     const uint8_t* pl = g_decoded.plain.data();
     auto* p = static_cast<uint8_t*>(out);
     // nn::nfp::RegisterInfo: CharInfo 0x60, Date firstWriteDate, ArrayString name, fontRegion.
     std::memcpy(p, pl + 0x30, 0x60);
-    if (g_decoded.plain.size() >= 0x58) write_guest_date(p + 0x60, pl + 0x54);
+    write_guest_date(p + 0x60, pl + 0x54);
     std::memcpy(p + 0x64, pl + 0x70, 0x14);
-    if (g_decoded.plain.size() > 0x84) p[0x78] = pl[0x84];
+    p[0x78] = pl[0x84];
 }
 
 void fill_register_info_private(void* out) {
     if (!out) return;
     std::memset(out, 0, kRegisterInfoPrivateSize);
     std::lock_guard lk(g_lock);
-    if (!tag_data_ready_locked() || g_decoded.plain.size() < kPlainMinRegister) return;
+    if (!tag_data_ready_locked()) return;
     const uint8_t* pl = g_decoded.plain.data();
     auto* p = static_cast<uint8_t*>(out);
     std::memcpy(p, pl + 0x30, 0x60);
-    if (g_decoded.plain.size() >= 0x58) write_guest_date(p + 0x60, pl + 0x54);
+    write_guest_date(p + 0x60, pl + 0x54);
     std::memcpy(p + 0x64, pl + 0x70, 0x14);
-    if (g_decoded.plain.size() > 0x84) p[0x78] = pl[0x84];
-    if (g_decoded.plain.size() >= 0x100)
-        std::memcpy(p + kRegisterInfoSize, pl + 0x90,
-                    std::min<size_t>(0x20, kRegisterInfoPrivateSize - kRegisterInfoSize));
+    p[0x78] = pl[0x84];
+    std::memcpy(p + kRegisterInfoSize, pl + 0x90, kRegisterInfoPrivateSize - kRegisterInfoSize);
 }
 
 void fill_common_info(void* out) {
     if (!out) return;
     std::memset(out, 0, 0x40);
     std::lock_guard lk(g_lock);
-    if (!tag_data_ready_locked() || g_decoded.plain.size() < kPlainMinCommon) return;
+    if (!tag_data_ready_locked()) return;
     const uint8_t* pl = g_decoded.plain.data();
     auto* p = static_cast<uint8_t*>(out);
     // nn::nfp::CommonInfo: last_write_date, write_counter u16, version, pad, application_area_size.
-    if (g_decoded.plain.size() >= 0x5C) write_guest_date(p, pl + 0x58);
+    write_guest_date(p, pl + 0x58);
     st<uint16_t>(reinterpret_cast<uint64_t>(p + 4), uint16_t(uint16_t(pl[0x29]) << 8) | pl[0x2A]);
     st<uint16_t>(reinterpret_cast<uint64_t>(p + 6), 1);  // version (Ryujinx VirtualAmiibo default)
     st<uint32_t>(reinterpret_cast<uint64_t>(p + 8), kApplicationAreaSize);
@@ -325,55 +311,49 @@ void fill_admin_info(void* out) {
     if (!out) return;
     std::memset(out, 0, 0x20);
     std::lock_guard lk(g_lock);
-    if (!tag_data_ready_locked() || g_decoded.plain.size() < kPlainMinAdmin) return;
+    if (!tag_data_ready_locked()) return;
     auto* p = static_cast<uint8_t*>(out);
     uint64_t program_id = 0;
-    if (g_decoded.plain.size() >= 0xB4) {
-        const uint8_t* pid = g_decoded.plain.data() + 0xAC;
-        for (int i = 0; i < 8; i++) program_id = (program_id << 8) | pid[i];
-    }
+    const uint8_t* pid = g_decoded.plain.data() + 0xAC;
+    for (int i = 0; i < 8; i++) program_id = (program_id << 8) | pid[i];
     st<uint64_t>(reinterpret_cast<uint64_t>(p), program_id);
     st<uint32_t>(reinterpret_cast<uint64_t>(p + 8), g_decoded.application_area_id);
-    uint8_t flags = 0;
-    if (g_decoded.plain.size() > 0x2C) flags = uint8_t((g_decoded.plain[0x2C] >> 4) & 0x0F);
+    uint8_t flags = uint8_t((g_decoded.plain[0x2C] >> 4) & 0x0F);
     if (flags == 0) flags = 0x02;
     if (g_decoded.app_area_initialized) flags |= 0x01;
     p[0x0E] = flags;
     p[0x0F] = 0x02;
-    if (g_decoded.plain.size() > 0x2E) p[0x10] = g_decoded.plain[0x2E];
+    p[0x10] = g_decoded.plain[0x2E];
 }
 
 void fill_nfp_data(void* out) {
     if (!out) return;
     std::memset(out, 0, kNfpDataSize);
     std::lock_guard lk(g_lock);
-    if (!tag_data_ready_locked() || g_decoded.plain.size() < 0xB8) return;
+    if (!tag_data_ready_locked()) return;
     const uint8_t* pl = g_decoded.plain.data();
     auto* nd = static_cast<uint8_t*>(out);
     nd[0] = 0xA5;
-    if (g_decoded.plain.size() >= 0x2C) {
-        write_be16(nd + 0x2, uint16_t(uint16_t(pl[0x29]) << 8) | pl[0x2A]);
-        write_be32(nd + 0x4, uint32_t(uint32_t(pl[0x2B]) << 24) | (uint32_t(pl[0x2C] & 0x0F) << 20));
-    }
-    if (g_decoded.plain.size() >= 0x5C) write_guest_date(nd + 0x40, pl + 0x58);
+    write_be16(nd + 0x2, uint16_t(uint16_t(pl[0x29]) << 8) | pl[0x2A]);
+    write_be32(nd + 0x4, uint32_t(uint32_t(pl[0x2B]) << 24) | (uint32_t(pl[0x2C] & 0x0F) << 20));
+    write_guest_date(nd + 0x40, pl + 0x58);
     write_be16(nd + 0x44, uint16_t(uint16_t(pl[0x29]) << 8) | pl[0x2A]);
     nd[0x46] = 0;
     nd[0x47] = 0;
     st<uint32_t>(reinterpret_cast<uint64_t>(nd + 0x48), kApplicationAreaSize);
     std::memcpy(nd + 0x80, pl + 0x30, 0x60);
-    if (g_decoded.plain.size() >= 0x58) write_guest_date(nd + 0xE8, pl + 0x54);
+    write_guest_date(nd + 0xE8, pl + 0x54);
     std::memcpy(nd + 0xEC, pl + 0x70, 0x14);
-    if (g_decoded.plain.size() > 0x84) nd[0x102] = pl[0x84];
-    if (g_decoded.plain.size() >= 0xB4) std::memcpy(nd + 0x180, pl + 0xAC, 8);
+    nd[0x102] = pl[0x84];
+    std::memcpy(nd + 0x180, pl + 0xAC, 8);
     write_be32(nd + 0x188, g_decoded.application_area_id);
     uint8_t admin_flags = uint8_t((pl[0x2C] >> 4) & 0x0F);
     if (admin_flags == 0) admin_flags = 0x02;
     if (g_decoded.app_area_initialized) admin_flags |= 0x01;
     nd[0x18E] = admin_flags;
     nd[0x18F] = 0x02;
-    if (g_decoded.plain.size() > 0x2E) nd[0x190] = pl[0x2E];
-    std::memcpy(nd + 0x1C0, g_decoded.application_area.data(),
-                std::min<size_t>(kApplicationAreaSize, g_decoded.application_area.size()));
+    nd[0x190] = pl[0x2E];
+    std::memcpy(nd + 0x1C0, g_decoded.application_area.data(), kApplicationAreaSize);
 }
 
 bool read_application_area(void* out, uint32_t size) {
@@ -382,8 +362,7 @@ bool read_application_area(void* out, uint32_t size) {
     if (g_state != DeviceState::TagMounted) return false;
     if (!g_app_area_open) g_app_area_open = true;
     if (size > kApplicationAreaSize) size = kApplicationAreaSize;
-    std::memset(out, 0, size);
-    std::memcpy(out, g_decoded.application_area.data(), std::min<size_t>(size, g_decoded.application_area.size()));
+    std::memcpy(out, g_decoded.application_area.data(), size);
     return true;
 }
 
@@ -391,9 +370,7 @@ void write_application_area(const void* data, uint32_t size) {
     if (!data || !size) return;
     std::lock_guard lk(g_lock);
     if (!g_app_area_open) return;
-    size = std::min(size, kApplicationAreaSize);
-    if (g_decoded.application_area.size() < kApplicationAreaSize)
-        g_decoded.application_area.resize(kApplicationAreaSize);
+    if (size > kApplicationAreaSize) size = kApplicationAreaSize;
     std::memcpy(g_decoded.application_area.data(), data, size);
 }
 
