@@ -22,6 +22,7 @@
 namespace nx {
 
 bool g_trace = false;
+bool g_trace_net = false;  // DIAG: HLE calls minus the per-frame noise (set from svc_account.cpp)
 std::atomic<uint64_t> g_frame{0};
 
 namespace {
@@ -425,6 +426,13 @@ inline uint32_t cache_slot(uint64_t rel) {
     uint64_t off = t - kThunkBase;
     if (off < kThunkSize && off / 16 < g_thunks.size()) {
         const Thunk& th = g_thunks[off / 16];
+        if (g_trace_net) {
+            static const char* const kNoise[] = {"_ZN2nn2os", "_ZN2nn5audio", "mem", "str", "nvn", "_ZN2nn3hid",
+                                                 "_ZN2nn3nfp", "_ZN2nn2fs", "_ZN2nn4time", "_ZN2nn2vi", "_ZN2nn3oe"};
+            bool noise = false;
+            for (const char* n : kNoise) noise |= th.name.rfind(n, 0) == 0;
+            if (!noise) log("hle %s", th.name.c_str());
+        }
         if (th.leaf && !g_trace) {
             th.fn(c);
             return;

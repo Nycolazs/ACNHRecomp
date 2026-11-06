@@ -1,6 +1,23 @@
 # Nextendo Online
 
-ACNHRecomp can use [Nextendo Network](https://nextendo.network) for Animal Crossing’s **Online** features (Dodo Codes and Search for a friend). Nintendo’s servers are never contacted. The recompiled game still speaks NEX/Pia itself; the runtime supplies sockets, DNS redirects, account tokens, and friends like a Switch on Nextendo.
+ACNHRecomp can use [Nextendo Network](https://nextendo.network) for Animal Crossing’s online features. Nintendo’s servers are never contacted. The recompiled game still speaks NEX, Pia and its own HTTPS services itself; the runtime supplies what a Switch on Nextendo would: sockets, DNS redirects, TLS, the account token and friends.
+
+## What works, and how
+
+Nextendo supports ACNH **3.0.3** fully online: island visits (friends and Dodo Codes), best friends and their messages, Orville’s letters and gifts, Luna’s dreams, Custom and Pro Designs, Happy Home Network and NookLink (see the [game page](https://wiki.nextendo.network/games/animal-crossing-new-horizons)). The runtime pieces behind them:
+
+| Piece | File | What it does |
+|---|---|---|
+| Account sign-in | `nextendo.cpp` | OAuth 2.0 PKCE in the system browser, loopback redirect on `127.0.0.1`. Tokens refresh before they expire (access token 1 h, game token 24 h). |
+| Game identity | `nextendo_token.cpp`, `svc_account.cpp` | `EnsureIdTokenCacheAsync` renews the tokens; `LoadIdTokenCache` returns an RS256 BAAS `id_token` whose `nnex` claim holds the game token from `GET /api/nex-token`. The server checks that token at NEX login and on the island services. |
+| Account id | `nextendo.cpp` | The network service account id is the account’s baasUserID (`nsa` from `GET /api/me`), the id a Switch on the same account announces. ACNH matches it against friend lists, so emulator and Switch players recognise each other. |
+| Friends | `hle_friends.cpp` | `GET /api/friends`, cached (20 s), mapped to `nn::friends::Friend` with each friend’s baasUserID, presence and favourite flag. |
+| Presence | `nextendo.cpp` | `POST /api/presence` every 60 s while online (the server shows a player offline after 90 s), status 2 inside an online session. |
+| DNS | `nextendo.cpp`, `hle_hostnet.cpp` | Nintendo names resolve to the Nextendo server; the NAT-check names to the second NAT address. Other names resolve normally. |
+| Sockets | `hle_hostnet.cpp` | Host TCP/UDP sockets with the Switch’s ABI: option numbers, errno values, poll, non-blocking I/O. |
+| TLS | `hle_ssl.cpp` | `nn::ssl` (libcurl’s C API and NEX’s C++ calls) on [Mbed TLS](https://github.com/Mbed-TLS/mbedtls) 3.6, fetched by CMake. SNI is the host the game named, or the one its address was resolved from. Certificates are not verified (Nextendo presents certificates for Nintendo names). ALPN offers `http/1.1` only. |
+
+Not yet on Nextendo’s side (server updates): best friends between an emulator and a real Switch, and Island Backup.
 
 ## Modes (`online.mode` in `config.ini`)
 
@@ -11,13 +28,13 @@ ACNHRecomp can use [Nextendo Network](https://nextendo.network) for Animal Cross
 
 ## Requirements
 
-- Game version **3.0.3** (Nextendo’s ACNH gate). Other versions can still use Local mode.
-- A Nextendo account and a registered **public OAuth (PKCE)** application for ACNHRecomp.
-- `curl` on `PATH` (same as the launcher’s update check) for HTTPS to the account API.
+- Game version **3.0.3** exactly. Nextendo refuses other versions online (error 2306-0819). Other versions can still use Local mode.
+- A Nextendo account in good standing: confirmed e-mail, linked Discord account. A login is refused, with a generic game error, otherwise, or while the account is online elsewhere.
+- `curl` on `PATH` (as for the launcher’s update check) for the account API.
 
 ## Setup
 
-1. ACNHRecomp ships with a registered public PKCE app (`nxc_t63scKVq2hF1`). To use your own app instead, create one at [nextendo.network/developers](https://nextendo.network/developers) (public / PKCE, loopback `http://127.0.0.1:*/callback`) and set:
+1. ACNHRecomp ships with a registered public OAuth (PKCE) application (`nxc_t63scKVq2hF1`). To use your own, register one at [nextendo.network/developers](https://nextendo.network/developers) (public, redirect `http://127.0.0.1/callback`) and set:
 
 ```ini
 [online]
@@ -25,27 +42,29 @@ mode = nextendo
 nextendo.client_id = nxc_your_client_id
 ```
 
-   Or set `NEXTENDO_CLIENT_ID` in the environment. Leave `nextendo.client_id` unset to use the built-in id.
+   Or set `NEXTENDO_CLIENT_ID` in the environment.
 
-3. In the launcher or in-game Online settings, choose **Nextendo Online** and **Sign in**. A browser opens; the password never reaches ACNHRecomp.
-4. Launch **3.0.3** and use Dodo Codes / Search for a friend as on a Switch linked to Nextendo.
+2. In the launcher or the in-game Online settings, choose **Nextendo Online** and **Sign in**. A browser opens on nextendo.network; approve the permissions (`identity friends presence game.matchmaking`). The password never reaches ACNHRecomp.
+3. Launch **3.0.3** and play online as on a Switch linked to Nextendo.
 
-Session tokens are stored in `<data root>/nextendo_account.json`. Do not share that file (it holds bearer tokens). The Network ID (pid) is never shown in the UI or logs.
+Tokens are stored in `<data root>/nextendo_account.json`. Do not share that file. The pid and the baasUserID are never shown in the UI or logs.
 
 ## Environment overrides
 
 | Variable | Purpose | Default |
 |---|---|---|
 | `NEXTENDO_CLIENT_ID` | OAuth client id | `nxc_t63scKVq2hF1` |
-| `NEXTENDO_API` | Account + token API base | `https://nextendo.network` |
-| `NEXTENDO_AUTH` | Browser authorize host | same as `NEXTENDO_API` |
-| `NEXTENDO_SERVER_IP` | Main hostname redirect target | `51.178.29.194` |
-| `NEXTENDO_NAT_IP` | Second NAT-check vantage | `164.132.111.120` |
-| `NEXTENDO_BAAS_SIGNING_KEY` | Optional PEM path/contents for local BAAS `id_token` signing | (use `/api/nex-token` instead) |
+| `NEXTENDO_API` | Account API base. Only `https://*.nextendo.network` or a loopback address is accepted: every request carries the account token. | `https://nextendo.network` |
+| `NEXTENDO_AUTH` | Browser authorize host (same rule) | same as `NEXTENDO_API` |
+| `NEXTENDO_SERVER_IP` | Address the Nintendo names resolve to | `51.178.29.194` |
+| `NEXTENDO_NAT_IP` | Second NAT-check address (must differ from the server’s) | `164.132.111.120` |
+| `NEXTENDO_BAAS_SIGNING_KEY` | RSA key (PEM text or a path) to sign the `id_token`; also read from `<data root>/nextendo_baas.pem` | a key generated for each run |
+
+ACNH only forwards the `id_token`; the server trusts the `nnex` game token inside it, so the generated key is enough.
 
 ## Clean-room policy
 
-Client code in this tree is original (MIT). It was written against public Nextendo documentation and published **server** behaviour. Do not copy Ryujinx-Nextendo (PolyForm Shield), Citron-Nextendo (GPL), Prelude, or other Nextendo client trees into this project.
+Client code in this tree is original (MIT). It was written against the public Nextendo documentation ([wiki.nextendo.network](https://wiki.nextendo.network/developers)) and published server behaviour. Do not copy Ryujinx-Nextendo (PolyForm Shield), Citron-Nextendo (GPL), Prelude, or other Nextendo client trees into this project.
 
 ## Kill switch
 

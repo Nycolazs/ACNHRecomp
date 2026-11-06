@@ -4,6 +4,7 @@
 
 #include "game_clock.h"
 #include "ipc.h"
+#include "nextendo.h"
 
 namespace nx {
 
@@ -13,6 +14,9 @@ namespace {
 constexpr uint64_t kSourceLo = 0x4E58525443524543ull, kSourceHi = 0x484144455354494Dull;
 
 int64_t unix_now() { return game_clock_unix_seconds(); }
+// The network clock: real UTC while Nextendo online is active (a console's is synced; the island services compare
+// token times against it), else the game clock as before, so time travel offline is unchanged.
+int64_t network_now() { return nextendo::online_services_active() ? game_clock_real_unix_seconds() : unix_now(); }
 
 int64_t steady_seconds() { return int64_t(system_tick() / 19200000); }
 
@@ -60,11 +64,10 @@ std::shared_ptr<KSharedMemory> time_shared_memory() {
             st<uint64_t>(p + 0x18 + k * 0x18, kSourceHi);
         }
         // Local (0x38) and network (0x80) system clocks: {s64 offset; {s64 time_point; uuid}}
-        int64_t offset = unix_now() - steady_seconds();
         for (uint64_t base : {0x38ull, 0x80ull})
             for (int k = 0; k < 2; k++) {
                 uint64_t v = p + base + 8 + k * 0x20;
-                st<int64_t>(v, offset);
+                st<int64_t>(v, (base == 0x80 ? network_now() : unix_now()) - steady_seconds());
                 st<int64_t>(v + 8, 0);
                 st<uint64_t>(v + 16, kSourceLo);
                 st<uint64_t>(v + 24, kSourceHi);
@@ -75,11 +78,12 @@ std::shared_ptr<KSharedMemory> time_shared_memory() {
     return shm;
 }
 
-std::shared_ptr<Service> system_clock() {
+std::shared_ptr<Service> system_clock(bool network = false) {
     auto s = std::make_shared<Service>("ISystemClock");
-    s->cmds[0] = [](IpcCtx& c) { c.push<int64_t>(unix_now()); return 0u; };  // GetCurrentTime
-    s->cmds[2] = [](IpcCtx& c) {                                              // GetSystemClockContext
-        c.push<int64_t>(unix_now() - steady_seconds());
+    auto now = network ? network_now : unix_now;
+    s->cmds[0] = [now](IpcCtx& c) { c.push<int64_t>(now()); return 0u; };  // GetCurrentTime
+    s->cmds[2] = [now](IpcCtx& c) {                                         // GetSystemClockContext
+        c.push<int64_t>(now() - steady_seconds());
         c.push<int64_t>(0);
         c.push<uint64_t>(kSourceLo);
         c.push<uint64_t>(kSourceHi);
@@ -151,11 +155,11 @@ std::shared_ptr<Service> time_zone() {
 
 void time_static(Service& s) {
     s.cmds[0] = [](IpcCtx& c) { c.push_object(system_clock()); return 0u; };  // GetStandardUserSystemClock
-    s.cmds[1] = [](IpcCtx& c) { c.push_object(system_clock()); return 0u; };  // GetStandardNetworkSystemClock
+    s.cmds[1] = [](IpcCtx& c) { c.push_object(system_clock(true)); return 0u; };  // GetStandardNetworkSystemClock
     s.cmds[2] = [](IpcCtx& c) { c.push_object(steady_clock()); return 0u; };  // GetStandardSteadyClock
     s.cmds[3] = [](IpcCtx& c) { c.push_object(time_zone()); return 0u; };     // GetTimeZoneService
     s.cmds[4] = [](IpcCtx& c) { c.push_object(system_clock()); return 0u; };  // GetStandardLocalSystemClock
-    s.cmds[5] = [](IpcCtx& c) { c.push_object(system_clock()); return 0u; };  // GetEphemeralNetworkSystemClock
+    s.cmds[5] = [](IpcCtx& c) { c.push_object(system_clock(true)); return 0u; };  // GetEphemeralNetworkSystemClock
     s.cmds[20] = [](IpcCtx& c) {                                              // GetSharedMemoryNativeHandle
         c.out_copy.push_back(handle_add(time_shared_memory()));
         return 0u;
@@ -173,9 +177,9 @@ ServiceRegistrar r_time_s("time:s", [] { auto s = std::make_shared<Service>("tim
 void nx_time_refresh_shared_clocks() {
     if (!g_time_shm_live) return;
     const uint64_t p = time_shared_memory()->host;
-    const int64_t offset = unix_now() - steady_seconds();
     for (uint64_t base : {0x38ull, 0x80ull})
-        for (int k = 0; k < 2; k++) st<int64_t>(p + base + 8 + k * 0x20, offset);
+        for (int k = 0; k < 2; k++)
+            st<int64_t>(p + base + 8 + k * 0x20, (base == 0x80 ? network_now() : unix_now()) - steady_seconds());
 }
 
 }  // namespace nx

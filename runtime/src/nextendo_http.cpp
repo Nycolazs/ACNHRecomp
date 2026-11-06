@@ -49,11 +49,20 @@ std::string read_file(const std::string& path) {
     return ss.str();
 }
 
+// Request files hold the bearer token: owner-only on POSIX (/tmp is shared); %TEMP% is per-user on Windows.
 bool write_file(const std::string& path, const std::string& data) {
+#if !defined(_WIN32)
+    const int fd = open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0600);
+    if (fd < 0) return false;
+    const bool ok = write(fd, data.data(), data.size()) == ssize_t(data.size());
+    close(fd);
+    return ok;
+#else
     std::ofstream f(path, std::ios::binary);
     if (!f) return false;
     f.write(data.data(), std::streamsize(data.size()));
     return true;
+#endif
 }
 
 // Last HTTP status from a curl -D dump (follows -L redirects).
@@ -139,13 +148,19 @@ HttpResponse http_request(const std::string& method, const std::string& url,
     // Use -D for status (not -w %{http_code}): cmd-free CreateProcess still avoids % pitfalls if PATH wraps curl.
     std::vector<std::string> argv = {"curl", "-sS", "-L", "--connect-timeout", "15", "--max-time", "45",
                                      "-D", hdr_path, "-o", out_path, "-X", method};
-    for (const auto& [k, v] : headers) {
+    // Headers go through a file (-H @file): on the command line the bearer token would be readable by any process
+    // that lists command lines.
+    std::string header_lines;
+    for (const auto& [k, v] : headers) header_lines += k + ": " + v + "\n";
+    if (!content_type.empty()) header_lines += "Content-Type: " + content_type + "\n";
+    const std::string req_hdr_path = temp_path("nx_http_req_");
+    if (!header_lines.empty()) {
+        if (!write_file(req_hdr_path, header_lines)) {
+            r.error = "could not write request headers";
+            return r;
+        }
         argv.push_back("-H");
-        argv.push_back(k + ": " + v);
-    }
-    if (!content_type.empty()) {
-        argv.push_back("-H");
-        argv.push_back("Content-Type: " + content_type);
+        argv.push_back("@" + req_hdr_path);
     }
     if (!body.empty()) {
         argv.push_back("--data-binary");
@@ -159,6 +174,7 @@ HttpResponse http_request(const std::string& method, const std::string& url,
     fs::remove(body_path, ec);
     fs::remove(out_path, ec);
     fs::remove(hdr_path, ec);
+    fs::remove(req_hdr_path, ec);
     if (exit_code < 0) {
         r.error = "curl could not start (is curl on PATH?)";
         return r;

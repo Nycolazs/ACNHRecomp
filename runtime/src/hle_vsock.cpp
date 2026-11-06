@@ -2,6 +2,7 @@
 // addresses of the LDN subnet, which only exist here. Sockets are a table of queues; datagrams go through hle_ldn.cpp.
 // Errors are the Switch's (Linux numbers), as are the socket options. Stream sockets are not carried yet.
 // Outside a local play session every call fails, as on a console with no network (hle_net.cpp).
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdio>
@@ -105,7 +106,12 @@ void trace(const char* what, int fd, uint64_t a, uint64_t b) {
 }
 
 void Socket_(CPU& c) {
-    if (hostnet_active()) return hostnet_Socket(c);
+    if (hostnet_active()) {
+        hostnet_Socket(c);
+        static std::atomic<int> n{0};
+        if (n++ < 100) log("hostnet: Socket(type %d) -> %lld", int(c.x[1]), (long long)int64_t(c.x[0]));
+        return;
+    }
     const int type = int(c.x[1]) & 0xFF;
     log("vsock: Socket(family %d, type %d, protocol %d)", int(c.x[0]), int(c.x[1]), int(c.x[2]));
     if (!ldn_enabled()) return ret(c, fail(kENETDOWN));
@@ -307,6 +313,7 @@ void SetSockOpt_(CPU& c) {
 }
 
 void GetSockOpt_(CPU& c) {
+    if (hostnet_owns_fd(int(c.x[0]))) return hostnet_GetSockOpt(c);
     if (!ldn_enabled()) return ret(c, fail(kENETDOWN));
     const int level = int(c.x[1]), name = int(c.x[2]);
     std::lock_guard lk(g_mu);
@@ -330,6 +337,7 @@ void GetSockOpt_(CPU& c) {
 }
 
 void GetSockName_(CPU& c) {
+    if (hostnet_owns_fd(int(c.x[0]))) return hostnet_GetSockName(c);
     if (!ldn_enabled()) return ret(c, fail(kENETDOWN));
     std::lock_guard lk(g_mu);
     const Sock* s = get(int(c.x[0]));
@@ -339,6 +347,7 @@ void GetSockName_(CPU& c) {
 }
 
 void GetPeerName_(CPU& c) {
+    if (hostnet_owns_fd(int(c.x[0]))) return hostnet_GetPeerName(c);
     if (!ldn_enabled()) return ret(c, fail(kENETDOWN));
     std::lock_guard lk(g_mu);
     const Sock* s = get(int(c.x[0]));

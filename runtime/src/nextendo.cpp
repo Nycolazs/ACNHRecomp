@@ -7,12 +7,14 @@
 #include <atomic>
 #include <cctype>
 #include <chrono>
+#include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <map>
 #include <mutex>
 #include <sstream>
 #include <thread>
@@ -48,6 +50,7 @@ namespace nx::nextendo {
 
 // Defined below; used from sign_in_start.
 bool fetch_nex_token();
+bool ensure_online_identity();
 
 namespace {
 
@@ -93,6 +96,104 @@ std::string json_get_string(const std::string& json, const char* key) {
 
 uint64_t json_get_u64(const std::string& json, const char* key) {
     return std::strtoull(json_get_string(json, key).c_str(), nullptr, 10);
+}
+
+// End of the JSON value (object, array or string) starting at i: one past its closing character, npos if cut.
+size_t json_value_end(const std::string& j, size_t i) {
+    if (i >= j.size()) return std::string::npos;
+    if (j[i] == '"') {
+        for (size_t k = i + 1; k < j.size(); k++) {
+            if (j[k] == '\\')
+                k++;
+            else if (j[k] == '"')
+                return k + 1;
+        }
+        return std::string::npos;
+    }
+    int depth = 0;
+    for (size_t k = i; k < j.size(); k++) {
+        const char ch = j[k];
+        if (ch == '"') {
+            k = json_value_end(j, k);
+            if (k == std::string::npos) return k;
+            k--;
+        } else if (ch == '{' || ch == '[') {
+            depth++;
+        } else if (ch == '}' || ch == ']') {
+            if (--depth == 0) return k + 1;
+        }
+    }
+    return std::string::npos;
+}
+
+// The raw value of a member of an object at its top level (nested objects are skipped), "" if absent.
+std::string json_member(const std::string& obj, const char* key) {
+    const std::string pat = std::string("\"") + key + "\"";
+    int depth = 0;
+    for (size_t k = 0; k < obj.size(); k++) {
+        const char ch = obj[k];
+        if (ch == '{' || ch == '[') {
+            depth++;
+        } else if (ch == '}' || ch == ']') {
+            depth--;
+        } else if (ch == '"') {
+            if (depth == 1 && obj.compare(k, pat.size(), pat) == 0) {
+                size_t v = obj.find(':', k + pat.size());
+                if (v == std::string::npos) return {};
+                v = obj.find_first_not_of(" \t\r\n", v + 1);
+                if (v == std::string::npos) return {};
+                const bool nested = obj[v] == '{' || obj[v] == '[' || obj[v] == '"';
+                const size_t e = nested ? json_value_end(obj, v) : obj.find_first_of(",}]", v);
+                return e == std::string::npos ? std::string() : obj.substr(v, e - v);
+            }
+            const size_t e = json_value_end(obj, k);
+            if (e == std::string::npos) return {};
+            k = e - 1;
+        }
+    }
+    return {};
+}
+
+// A member as text: strings unquoted (simple escapes dropped), numbers and literals as written.
+std::string json_str(const std::string& obj, const char* key) {
+    std::string v = trim(json_member(obj, key));
+    if (v.size() >= 2 && v.front() == '"') {
+        std::string out;
+        for (size_t k = 1; k + 1 < v.size(); k++) {
+            if (v[k] == '\\' && k + 2 < v.size()) k++;
+            out += v[k];
+        }
+        return out;
+    }
+    return v == "null" ? std::string() : v;
+}
+
+uint64_t json_u64(const std::string& obj, const char* key) {
+    return std::strtoull(json_str(obj, key).c_str(), nullptr, 10);
+}
+
+// The objects of an array value.
+std::vector<std::string> json_objects(const std::string& arr) {
+    std::vector<std::string> out;
+    for (size_t k = 1; k < arr.size();) {
+        k = arr.find('{', k);
+        if (k == std::string::npos) break;
+        const size_t e = json_value_end(arr, k);
+        if (e == std::string::npos) break;
+        out.push_back(arr.substr(k, e - k));
+        k = e;
+    }
+    return out;
+}
+
+uint64_t parse_hex16(const std::string& v) {
+    if (v.size() != 16 || v.find_first_not_of("0123456789abcdefABCDEF") != std::string::npos) return 0;
+    return std::strtoull(v.c_str(), nullptr, 16);
+}
+
+uint64_t now_unix() {
+    return uint64_t(
+        std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count());
 }
 
 std::string data_root() {
@@ -294,7 +395,7 @@ bool oauth_listen(const std::string& expect_state, std::string& code_out, int ti
 }
 
 bool exchange_token(const std::string& form, Account& out) {
-    auto r = http_request("POST", api_base() + "/oauth/token",
+    auto r = http_request("POST", api_base() + "/api/oauth/token",
                           {{"X-Nextendo-Client-Id", client_id()}, {"Accept", "application/json"}}, form,
                           "application/x-www-form-urlencoded");
     if (r.status != 200) {
@@ -306,13 +407,11 @@ bool exchange_token(const std::string& form, Account& out) {
         set_error(err);
         return false;
     }
-    out.access_token = json_get_string(r.body, "access_token");
-    out.refresh_token = json_get_string(r.body, "refresh_token");
-    uint64_t expires = json_get_u64(r.body, "expires_in");
-    out.access_expires_unix =
-        uint64_t(std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch())
-                     .count()) +
-        (expires ? expires : 3600);
+    out.access_token = json_str(r.body, "access_token");
+    // Each refresh rotates the refresh token (the old one stops working a minute later): always keep the new one.
+    if (std::string rt = json_str(r.body, "refresh_token"); !rt.empty()) out.refresh_token = rt;
+    const uint64_t expires = json_u64(r.body, "expires_in");
+    out.access_expires_unix = now_unix() + (expires ? expires : 3600);
     out.signed_in = !out.access_token.empty();
     if (!out.signed_in) {
         set_error("token response missing access_token");
@@ -322,12 +421,12 @@ bool exchange_token(const std::string& form, Account& out) {
                            {{"Authorization", "Bearer " + out.access_token},
                             {"X-Nextendo-Client-Id", client_id()},
                             {"Accept", "application/json"}});
-    if (ui.status == 200) {
-        out.username = json_get_string(ui.body, "username");
-        if (out.username.empty()) out.username = json_get_string(ui.body, "name");
-        out.friend_code = json_get_string(ui.body, "friend_code");
-        out.pid = json_get_u64(ui.body, "pid");
-        if (!out.pid) out.pid = json_get_u64(ui.body, "id");
+    if (ui.status == 200) {  // fills what it has; a refresh keeps the identity already known
+        std::string name = json_str(ui.body, "username");
+        if (name.empty()) name = json_str(ui.body, "name");
+        if (!name.empty()) out.username = name;
+        if (std::string fc = json_str(ui.body, "friend_code"); !fc.empty()) out.friend_code = fc;
+        if (uint64_t pid = json_u64(ui.body, "pid")) out.pid = pid;
     }
     return true;
 }
@@ -416,6 +515,8 @@ void load_account() {
     a.nex_token = json_get_string(j, "nex_token");
     a.pid = json_get_u64(j, "pid");
     a.access_expires_unix = json_get_u64(j, "access_expires_unix");
+    a.nex_expires_unix = json_get_u64(j, "nex_expires_unix");
+    a.nsa = parse_hex16(json_get_string(j, "nsa"));
     a.signed_in = !a.access_token.empty();
     std::lock_guard lk(g_mu);
     g_account = std::move(a);
@@ -423,6 +524,8 @@ void load_account() {
 
 bool save_account() {
     Account a = account();
+    char nsa_hex[17] = {};
+    if (a.nsa) std::snprintf(nsa_hex, sizeof nsa_hex, "%016llx", (unsigned long long)a.nsa);
     std::ostringstream j;
     j << "{\n"
       << "  \"access_token\": \"" << a.access_token << "\",\n"
@@ -431,7 +534,9 @@ bool save_account() {
       << "  \"friend_code\": \"" << a.friend_code << "\",\n"
       << "  \"nex_token\": \"" << a.nex_token << "\",\n"
       << "  \"pid\": " << a.pid << ",\n"
-      << "  \"access_expires_unix\": " << a.access_expires_unix << "\n"
+      << "  \"access_expires_unix\": " << a.access_expires_unix << ",\n"
+      << "  \"nex_expires_unix\": " << a.nex_expires_unix << ",\n"
+      << "  \"nsa\": \"" << nsa_hex << "\"\n"
       << "}\n";
 #if !defined(NX_LAUNCHER_UI)
     plat::make_dirs(data_root());
@@ -487,18 +592,33 @@ std::string client_id() {
     return kDefaultClientId;
 }
 
-std::string api_base() {
-    // Account + OAuth live on nextendo.network (api.nextendo.network does not resolve).
-    std::string b = env_or("NEXTENDO_API", "https://nextendo.network");
+// Every account request carries the bearer token, so an override may only name Nextendo over https, or this machine
+// (a developer's test server). Anything else falls back to the real server, loudly.
+static std::string checked_base(const char* var, const std::string& fallback) {
+    std::string b = env_or(var, fallback);
     while (!b.empty() && b.back() == '/') b.pop_back();
-    return b;
+    if (b == fallback) return b;
+    std::string host;
+    bool https = false;
+    if (b.rfind("https://", 0) == 0) {
+        host = b.substr(8), https = true;
+    } else if (b.rfind("http://", 0) == 0) {
+        host = b.substr(7);
+    }
+    host = host.substr(0, host.find_first_of(":/"));
+    for (char& ch : host) ch = char(std::tolower(unsigned(ch)));
+    const bool loopback = host == "127.0.0.1" || host == "localhost" || host == "[::1]";
+    const bool nextendo = host == "nextendo.network" ||
+                          (host.size() > 17 && host.compare(host.size() - 17, 17, ".nextendo.network") == 0);
+    if (loopback || (https && nextendo)) return b;
+    log("nextendo: ignoring %s=%s (only https://*.nextendo.network or loopback); using %s", var, b.c_str(),
+        fallback.c_str());
+    return fallback;
 }
 
-std::string auth_base() {
-    std::string b = env_or("NEXTENDO_AUTH", api_base());
-    while (!b.empty() && b.back() == '/') b.pop_back();
-    return b;
-}
+std::string api_base() { return checked_base("NEXTENDO_API", "https://nextendo.network"); }
+
+std::string auth_base() { return checked_base("NEXTENDO_AUTH", api_base()); }
 
 std::string server_ip() { return env_or("NEXTENDO_SERVER_IP", "51.178.29.194"); }
 std::string nat_ip() { return env_or("NEXTENDO_NAT_IP", "164.132.111.120"); }
@@ -540,7 +660,7 @@ void sign_in_start() {
         if (!oauth_listen(state, code, 180, [&](uint16_t port) {
                 redirect_uri = "http://127.0.0.1:" + std::to_string(port) + "/callback";
                 const std::string url =
-                    auth_base() + "/oauth/authorize?client_id=" + percent_encode(cid) +
+                    auth_base() + "/api/oauth/authorize?client_id=" + percent_encode(cid) +
                     "&redirect_uri=" + percent_encode(redirect_uri) + "&response_type=code&scope=" +
                     percent_encode("identity friends presence game.matchmaking") + "&state=" + percent_encode(state) +
                     "&code_challenge=" + percent_encode(challenge) + "&code_challenge_method=S256";
@@ -557,8 +677,8 @@ void sign_in_start() {
         if (!exchange_token(form, a)) return;
         set_account(a);
         save_account();
-        fetch_nex_token();
-        log("nextendo: signed in as %s", a.username.c_str());
+        ensure_online_identity();
+        log("nextendo: signed in as %s", account().username.c_str());
     }).detach();
 }
 
@@ -567,89 +687,192 @@ bool refresh_session() {
     if (a.refresh_token.empty()) return signed_in();
     const std::string form = "grant_type=refresh_token&client_id=" + percent_encode(client_id()) +
                              "&refresh_token=" + percent_encode(a.refresh_token);
-    Account n;
+    Account n = a;  // identity, nex token and nsa survive a refresh
     if (!exchange_token(form, n)) return false;
-    if (n.refresh_token.empty()) n.refresh_token = a.refresh_token;
     set_account(n);
     save_account();
     return true;
 }
 
+namespace {
+
+std::map<std::string, std::string> bearer(const std::string& token) {
+    return {{"Authorization", "Bearer " + token}, {"X-Nextendo-Client-Id", client_id()}, {"Accept", "application/json"}};
+}
+
+// GET with the access token; one refresh and retry on 401.
+HttpResponse api_get(const std::string& path) {
+    auto r = http_request("GET", api_base() + path, bearer(account().access_token));
+    if (r.status == 401 && refresh_session()) r = http_request("GET", api_base() + path, bearer(account().access_token));
+    return r;
+}
+
+}  // namespace
+
+// GET /api/nex-token (scope game.matchmaking): {nex_token, pid, friend_code, username, expires_in}; 24 h.
 bool fetch_nex_token() {
+    if (account().access_token.empty()) return false;
+    auto r = api_get("/api/nex-token");
+    if (r.status != 200) {
+        set_error(r.status == 403 ? "Nextendo refused a game token (approve the game.matchmaking permission, or check "
+                                    "the account: confirmed e-mail, linked Discord)."
+                                  : "Could not get a Nextendo game token (HTTP " + std::to_string(r.status) + ").");
+        return false;
+    }
     Account a = account();
-    if (a.access_token.empty()) return false;
-    auto r = http_request("GET", api_base() + "/api/nex-token",
-                          {{"Authorization", "Bearer " + a.access_token},
-                           {"X-Nextendo-Client-Id", client_id()},
-                           {"Accept", "application/json"}});
-    if (r.status != 200) return false;
-    a.nex_token = json_get_string(r.body, "token");
-    if (a.nex_token.empty()) a.nex_token = json_get_string(r.body, "nex_token");
+    a.nex_token = json_str(r.body, "nex_token");
+    if (a.nex_token.empty()) a.nex_token = json_str(r.body, "token");
+    if (uint64_t pid = json_u64(r.body, "pid")) a.pid = pid;
+    if (std::string fc = json_str(r.body, "friend_code"); !fc.empty()) a.friend_code = fc;
+    if (std::string u = json_str(r.body, "username"); !u.empty()) a.username = u;
+    const uint64_t ttl = json_u64(r.body, "expires_in");
+    a.nex_expires_unix = now_unix() + (ttl ? ttl : 24 * 3600);
     set_account(a);
     save_account();
     return !a.nex_token.empty();
 }
 
+// GET /api/me: "nsa" is the account's baasUserID (16 hex digits), the id a Switch on this account announces. ACNH
+// compares the id each player announces with its friend list, so emulator and Switch must use the same one.
+static bool fetch_nsa() {
+    auto r = api_get("/api/me");
+    if (r.status != 200) return false;
+    const uint64_t nsa = parse_hex16(json_str(r.body, "nsa"));
+    if (!nsa) return false;
+    Account a = account();
+    a.nsa = nsa;
+    set_account(a);
+    save_account();
+    return true;
+}
+
+bool ensure_online_identity() {
+    if (!signed_in()) return false;
+    const uint64_t now = now_unix();
+    Account a = account();
+    if (a.access_expires_unix && a.access_expires_unix < now + 120 && !refresh_session()) return false;
+    a = account();
+    if ((a.nex_token.empty() || a.nex_expires_unix < now + 600) && !fetch_nex_token()) return false;
+    if (!account().nsa) fetch_nsa();  // optional: without it the pid stands in, as on servers without the field
+    return true;
+}
+
+// GET /api/friends: {"friends":[{pid, name, nsa, favorite, presence:{status, app_id, ...}}, ...]}.
 bool fetch_friends(std::vector<Friend>& out) {
     out.clear();
-    Account a = account();
-    if (a.access_token.empty()) return false;
-    auto r = http_request("GET", api_base() + "/api/friends",
-                          {{"Authorization", "Bearer " + a.access_token},
-                           {"X-Nextendo-Client-Id", client_id()},
-                           {"Accept", "application/json"}});
+    if (account().access_token.empty()) return false;
+    auto r = api_get("/api/friends");
     if (r.status != 200) return false;
-    size_t i = 0;
-    while ((i = r.body.find('{', i)) != std::string::npos) {
-        size_t j = r.body.find('}', i);
-        if (j == std::string::npos) break;
-        std::string obj = r.body.substr(i, j - i + 1);
+    for (const std::string& o : json_objects(json_member(r.body, "friends"))) {
         Friend f;
-        f.pid = json_get_u64(obj, "pid");
-        f.name = json_get_string(obj, "name");
-        if (f.name.empty()) f.name = json_get_string(obj, "username");
-        f.friend_code = json_get_string(obj, "friend_code");
-        f.status = int(json_get_u64(obj, "status"));
-        if (f.pid || !f.name.empty()) out.push_back(f);
-        i = j + 1;
+        f.pid = json_u64(o, "pid");
+        f.nsa = parse_hex16(json_str(o, "nsa"));
+        f.name = json_str(o, "name");
+        if (f.name.empty()) f.name = json_str(o, "username");
+        f.friend_code = json_str(o, "friend_code");
+        f.favorite = json_str(o, "favorite") == "true";
+        const std::string pres = json_member(o, "presence");
+        if (!pres.empty()) {
+            f.status = int(json_u64(pres, "status"));
+            f.app_id = json_str(pres, "app_id");
+        }
+        if (f.pid || f.nsa) out.push_back(std::move(f));
     }
     return true;
 }
 
-bool fetch_online_status(std::string& message) {
-    message.clear();
-    Account a = account();
-    if (a.access_token.empty()) {
-        message = "Not signed in to Nextendo.";
-        return false;
-    }
-    auto r = http_request("GET", api_base() + "/api/online-status",
-                          {{"Authorization", "Bearer " + a.access_token},
-                           {"X-Nextendo-Client-Id", client_id()},
-                           {"Accept", "application/json"}});
-    if (r.status != 200) {
-        message = r.error.empty() ? "Could not reach Nextendo." : r.error;
-        return false;
-    }
-    message = json_get_string(r.body, "message");
-    if (message.empty()) message = json_get_string(r.body, "reason");
-    std::string ok = json_get_string(r.body, "ok");
-    if (ok == "false" || ok == "0") return false;
-    return true;
+namespace {
+std::mutex g_friends_mu;
+std::vector<Friend> g_friends;
+std::chrono::steady_clock::time_point g_friends_at{};
+std::atomic<bool> g_friends_busy{false};
+}  // namespace
+
+std::vector<Friend> friends_cached() {
+    friends_refresh_async();
+    std::lock_guard lk(g_friends_mu);
+    return g_friends;
 }
 
-bool publish_presence(int status, uint64_t app_id) {
-    Account a = account();
-    if (a.access_token.empty()) return false;
-    char body[128];
-    std::snprintf(body, sizeof body, "{\"status\":%d,\"app_id\":%llu}", status, (unsigned long long)app_id);
-    auto r = http_request("POST", api_base() + "/api/presence",
-                          {{"Authorization", "Bearer " + a.access_token},
-                           {"X-Nextendo-Client-Id", client_id()},
-                           {"Accept", "application/json"}},
-                          body, "application/json");
+void friends_refresh_async() {
+    {
+        std::lock_guard lk(g_friends_mu);
+        if (g_friends_at.time_since_epoch().count() &&
+            std::chrono::steady_clock::now() - g_friends_at < std::chrono::seconds(20))
+            return;
+    }
+    if (g_friends_busy.exchange(true)) return;
+    std::thread([] {
+        std::vector<Friend> list;
+        const bool ok = fetch_friends(list);
+        {
+            std::lock_guard lk(g_friends_mu);
+            if (ok) g_friends = std::move(list);
+            g_friends_at = std::chrono::steady_clock::now();  // a failure also waits 20 s before the next try
+        }
+        g_friends_busy = false;
+    }).detach();
+}
+
+void friends_refresh_blocking() {
+    std::vector<Friend> list;
+    if (!fetch_friends(list)) return;
+    std::lock_guard lk(g_friends_mu);
+    g_friends = std::move(list);
+    g_friends_at = std::chrono::steady_clock::now();
+}
+
+// ---- presence -------------------------------------------------------------------------------------------------
+
+namespace {
+std::atomic<bool> g_presence_running{false}, g_playing{false};
+std::mutex g_presence_mu;
+std::condition_variable g_presence_cv;
+
+// POST /api/presence {status, app_field, app_id, app_detail}: 1 online, 2 in an online session.
+bool post_presence(int status) {
+    char body[160];
+    std::snprintf(body, sizeof body, "{\"status\":%d,\"app_field\":\"\",\"app_id\":\"%016llX\",\"app_detail\":\"\"}",
+                  status, (unsigned long long)kAcnhTitleId);
+    auto r = http_request("POST", api_base() + "/api/presence", bearer(account().access_token), body,
+                          "application/json");
+    if (r.status == 401 && refresh_session())
+        r = http_request("POST", api_base() + "/api/presence", bearer(account().access_token), body,
+                         "application/json");
     return r.status >= 200 && r.status < 300;
 }
+
+void presence_thread() {
+    while (g_presence_running) {
+        if (online_services_active()) {
+            ensure_online_identity();  // keeps the access and nex tokens fresh during long sessions
+            post_presence(g_playing ? 2 : 1);
+        }
+        std::unique_lock lk(g_presence_mu);
+        g_presence_cv.wait_for(lk, std::chrono::seconds(60), [] { return !g_presence_running.load(); });
+    }
+}
+}  // namespace
+
+void presence_start() {
+    if (g_presence_running.exchange(true)) return;
+    std::thread(presence_thread).detach();
+}
+
+void presence_stop() {
+    g_presence_running = false;
+    g_presence_cv.notify_all();
+}
+
+void presence_set_playing(bool playing) {
+    if (g_playing.exchange(playing) == playing) return;
+    g_presence_cv.notify_all();  // publish the change now, not at the next minute
+    if (g_presence_running) std::thread([playing] {
+        if (online_services_active()) post_presence(playing ? 2 : 1);
+    }).detach();
+}
+
+// ---- DNS redirect ---------------------------------------------------------------------------------------------
 
 static bool in_domain(const std::string& host, const char* domain) {
     if (host == domain) return true;
@@ -657,14 +880,16 @@ static bool in_domain(const std::string& host, const char* domain) {
     return host.size() > n && host.compare(host.size() - n, n, domain) == 0 && host[host.size() - n - 1] == '.';
 }
 
+// Most specific first: the NAT-check names go to the second vantage point (it must be a distinct address, or the
+// game's NAT check never completes), then every Nintendo domain to the main server so no name leaks to Nintendo.
 RedirectTarget classify_host(const std::string& host_in) {
     std::string host = host_in;
     while (!host.empty() && host.back() == '.') host.pop_back();
     for (char& c : host) c = char(std::tolower(unsigned(c)));
     if (host.rfind("nncs2-", 0) == 0 && in_domain(host, "n.n.srv.nintendo.net")) return RedirectTarget::Nat;
-    if (host == "g2b309e01-lp1.s.n.srv.nintendo.net") return RedirectTarget::Nat;
-    static const char* domains[] = {"nintendo.net", "nintendo.com", "nintendowifi.net", "nintendo.co.jp",
-                                    "demonware.net"};
+    if (host == "g2b309e01-lp1.s.n.srv.nintendo.net" || host == "g2df33d01-lp1.p.srv.nintendo.net")
+        return RedirectTarget::Nat;
+    static const char* domains[] = {"nintendo.net", "nintendo.com", "nintendowifi.net", "nintendo.co.jp"};
     for (const char* d : domains)
         if (in_domain(host, d)) return RedirectTarget::Server;
     return RedirectTarget::None;
@@ -687,7 +912,8 @@ bool redirect_host(const std::string& host, std::string& out_ip) {
 
 void remember_sni(uint32_t ip_be, const std::string& host) {
     std::lock_guard lk(g_mu);
-    g_ip_host[ip_be] = host;
+    // Several names share the server address; the first stays, as a connection by IP is rare and any of them routes.
+    g_ip_host.emplace(ip_be, host);
 }
 
 std::string host_for_ip(uint32_t ip_be) {
@@ -698,21 +924,8 @@ std::string host_for_ip(uint32_t ip_be) {
 
 uint64_t network_service_account_id() {
     Account a = account();
+    if (a.nsa) return a.nsa;
     return a.pid ? a.pid : 0x1234ABCD5678EF90ull;
-}
-
-std::string sign_baas_id_token(uint64_t nsaid, uint64_t title_id, uint32_t title_version) {
-    (void)title_version;
-    Account a = account();
-    if (!a.nex_token.empty()) return a.nex_token;
-    (void)std::getenv("NEXTENDO_BAAS_SIGNING_KEY");
-    char payload[256];
-    std::snprintf(payload, sizeof payload,
-                  "{\"sub\":\"%016llx\",\"typ\":\"id_token\",\"nintendo\":{\"ai\":\"%016llx\"}}",
-                  (unsigned long long)nsaid, (unsigned long long)title_id);
-    const char* header = "{\"alg\":\"none\",\"typ\":\"JWT\"}";
-    return b64url(reinterpret_cast<const uint8_t*>(header), std::strlen(header)) + "." +
-           b64url(reinterpret_cast<const uint8_t*>(payload), std::strlen(payload)) + ".";
 }
 
 }  // namespace nx::nextendo

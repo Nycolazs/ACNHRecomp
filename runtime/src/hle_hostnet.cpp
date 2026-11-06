@@ -1,11 +1,18 @@
-// Real host sockets for Nextendo Online (Dodo / Search). LDN keeps using hle_vsock virtual datagrams.
+// Real host sockets for Nextendo Online (NEX, Pia, HTTPS). LDN keeps using hle_vsock virtual datagrams.
+// The guest sees the Switch's ABI: BSD socket option numbers, Linux errno values, sockaddr {len, family, port be,
+// addr be}, pollfd {int fd; s16 events; s16 revents}. Everything below translates between that and the host.
 #include "hle_hostnet.h"
 
 #include "ldn_net.h"
 #include "nextendo.h"
 
+#include <atomic>
+#include <chrono>
+#include <thread>
+#include <cerrno>
 #include <cstring>
 #include <mutex>
+#include <string>
 #include <vector>
 
 #include <nx/runtime.h>
@@ -19,8 +26,25 @@ namespace {
 
 constexpr int kFdBase = 256;  // above vsock's 3..130
 constexpr int kMaxSocks = 256;
-enum { kEBADF = 9, kEAGAIN = 11, kEINVAL = 22, kENETDOWN = 50, kECONNREFUSED = 111, kEINPROGRESS = 115 };
-enum { kSockStream = 1, kSockDgram = 2, kNonblock = 0x800 };
+
+// Switch errno (Linux numbering).
+enum {
+    kEPIPE = 32, kEBADF = 9, kEAGAIN = 11, kEINVAL = 22, kEMSGSIZE = 90, kEPROTONOSUPPORT = 93,
+    kEADDRINUSE = 98, kEADDRNOTAVAIL = 99, kENETDOWN = 50, kENETUNREACH = 101, kECONNABORTED = 103,
+    kECONNRESET = 104, kEISCONN = 106, kENOTCONN = 107, kETIMEDOUT = 110, kECONNREFUSED = 111,
+    kEHOSTUNREACH = 113, kEALREADY = 114, kEINPROGRESS = 115, kENOTSOCK = 88,
+};
+enum { kSockStream = 1, kSockDgram = 2, kNonblock = 0x800, kGetFl = 3, kSetFl = 4 };
+// Switch socket options (BSD numbering) and SO_NONBLOCK, Nintendo's own.
+enum { kSolSocket = 0xFFFF, kIpprotoIp = 0, kIpprotoTcp = 6 };
+enum {
+    kSoReuseAddr = 0x4, kSoKeepAlive = 0x8, kSoBroadcast = 0x20, kSoLinger = 0x80, kSoReusePort = 0x200,
+    kSoSndBuf = 0x1001, kSoRcvBuf = 0x1002, kSoSndTimeo = 0x1005, kSoRcvTimeo = 0x1006, kSoError = 0x1007,
+    kSoType = 0x1008, kSoNonblock = 0x1100, kTcpNoDelay = 1,
+};
+enum { kMsgPeek = 2, kMsgWaitAll = 0x40, kMsgDontWait = 0x80 };
+enum { kPollIn = 1, kPollPri = 2, kPollOut = 4, kPollErr = 8, kPollHup = 0x10, kPollNval = 0x20, kPollRdNorm = 0x40,
+       kPollWrNorm = 0x100 };
 
 struct HostSock {
     bool used = false;
@@ -38,76 +62,195 @@ int fail(int e) {
     return -1;
 }
 
-void ret(CPU& c, int r) { c.x[0] = uint64_t(int64_t(r)); }
+void ret(CPU& c, int64_t r) { c.x[0] = uint64_t(r); }
 
-HostSock* get(int fd) {
-    const int i = fd - kFdBase;
-    return i >= 0 && i < kMaxSocks && g_socks[i].used ? &g_socks[i] : nullptr;
+// The host's last socket error as a Switch errno.
+int host_errno() {
+#ifdef _WIN32
+    switch (WSAGetLastError()) {
+    case WSAEWOULDBLOCK: return kEAGAIN;
+    case WSAEINPROGRESS: return kEINPROGRESS;
+    case WSAEALREADY: return kEALREADY;
+    case WSAECONNREFUSED: return kECONNREFUSED;
+    case WSAECONNRESET: return kECONNRESET;
+    case WSAECONNABORTED: return kECONNABORTED;
+    case WSAETIMEDOUT: return kETIMEDOUT;
+    case WSAENOTCONN: return kENOTCONN;
+    case WSAEISCONN: return kEISCONN;
+    case WSAEADDRINUSE: return kEADDRINUSE;
+    case WSAEADDRNOTAVAIL: return kEADDRNOTAVAIL;
+    case WSAENETDOWN: return kENETDOWN;
+    case WSAENETUNREACH: return kENETUNREACH;
+    case WSAEHOSTUNREACH: return kEHOSTUNREACH;
+    case WSAEMSGSIZE: return kEMSGSIZE;
+    case WSAESHUTDOWN: return kEPIPE;
+    case WSAENOTSOCK: return kENOTSOCK;
+    default: return kEINVAL;
+    }
+#else
+    switch (errno) {
+    case EAGAIN:
+#if EWOULDBLOCK != EAGAIN
+    case EWOULDBLOCK:
+#endif
+        return kEAGAIN;
+    case EINPROGRESS: return kEINPROGRESS;
+    case EALREADY: return kEALREADY;
+    case ECONNREFUSED: return kECONNREFUSED;
+    case ECONNRESET: return kECONNRESET;
+    case ECONNABORTED: return kECONNABORTED;
+    case ETIMEDOUT: return kETIMEDOUT;
+    case ENOTCONN: return kENOTCONN;
+    case EISCONN: return kEISCONN;
+    case EADDRINUSE: return kEADDRINUSE;
+    case EADDRNOTAVAIL: return kEADDRNOTAVAIL;
+    case ENETDOWN: return kENETDOWN;
+    case ENETUNREACH: return kENETUNREACH;
+    case EHOSTUNREACH: return kEHOSTUNREACH;
+    case EMSGSIZE: return kEMSGSIZE;
+    case EPIPE: return kEPIPE;
+    case ENOTSOCK: return kENOTSOCK;
+    default: return kEINVAL;
+    }
+#endif
 }
 
-bool read_sockaddr(uint64_t addr, uint64_t len, sockaddr_storage& ss, socklen_t& sslen) {
+int host_fail() { return fail(host_errno()); }
+
+void udp_trace(const char* what, int fd, const sockaddr_in* a, int64_t r);
+
+// The host socket behind a guest fd (copied out under the lock), or kBadSock.
+sock_t lookup(int fd, HostSock* out = nullptr) {
+    std::lock_guard lk(g_mu);
+    const int i = fd - kFdBase;
+    if (i < 0 || i >= kMaxSocks || !g_socks[i].used) return kBadSock;
+    if (out) *out = g_socks[i];
+    return g_socks[i].s;
+}
+
+// Switch SockAddr: length, family, port and address big-endian (both already network order in memory).
+bool read_sockaddr(uint64_t addr, uint64_t len, sockaddr_in& in) {
     if (!addr || len < 8) return false;
-    std::memset(&ss, 0, sizeof ss);
-    // Switch sockaddr: family u8, port u16 be, addr...
     const uint8_t* p = reinterpret_cast<const uint8_t*>(addr);
-    uint8_t family = p[1];  // nn::socket::SockAddr layout often has len then family
-    // Try both BSD style (family at 0) and nn style (len, family).
-    uint16_t port = 0;
-    uint32_t ip = 0;
-    if (p[0] == 2 || p[1] == 2) {  // AF_INET
-        if (p[0] == 2) {
-            std::memcpy(&port, p + 2, 2);
-            std::memcpy(&ip, p + 4, 4);
-        } else {
-            std::memcpy(&port, p + 2, 2);
-            std::memcpy(&ip, p + 4, 4);
-        }
-        sockaddr_in* in = reinterpret_cast<sockaddr_in*>(&ss);
-        in->sin_family = AF_INET;
-        in->sin_port = port;
-        in->sin_addr.s_addr = ip;
-        sslen = sizeof(sockaddr_in);
+    if (p[1] != 2) return false;  // AF_INET only: the Switch has no IPv6
+    std::memset(&in, 0, sizeof in);
+    in.sin_family = AF_INET;
+    std::memcpy(&in.sin_port, p + 2, 2);
+    std::memcpy(&in.sin_addr.s_addr, p + 4, 4);
+    return true;
+}
+
+// Writes a SockAddr; plen (u32*, may be null) holds the room on entry and the written size on return.
+void write_sockaddr(uint64_t addr, uint64_t plen, const sockaddr_in& in) {
+    if (!addr) return;
+    uint8_t b[16] = {16, 2};
+    std::memcpy(b + 2, &in.sin_port, 2);
+    std::memcpy(b + 4, &in.sin_addr.s_addr, 4);
+    auto* len = reinterpret_cast<uint32_t*>(plen);
+    const uint32_t room = len ? *len : 16;
+    std::memcpy(reinterpret_cast<void*>(addr), b, room < 16 ? room : 16);
+    if (len) *len = 16;
+}
+
+// Guest memory for resolver results. kernel_alloc never frees and rounds to pages, so one arena is cut into slots.
+// shortcut: a slot is reused after kSlots lookups, so a result held past that many resolves is overwritten; give
+// FreeAddrInfo a real allocator if a game ever keeps results that long.
+constexpr size_t kSlotSize = 256, kSlots = 64;
+uint64_t resolver_slot() {
+    static uint64_t base = 0;
+    static size_t next = 0;
+    static std::mutex mu;
+    std::lock_guard lk(mu);
+    if (!base) base = kernel_alloc(kSlotSize * kSlots, 0x1000);
+    const uint64_t a = base + (next++ % kSlots) * kSlotSize;
+    std::memset(reinterpret_cast<void*>(a), 0, kSlotSize);
+    return a;
+}
+
+// IPv4 for a hostname, with the Nextendo redirect applied. False: unknown host.
+bool resolve_host(const std::string& host, uint32_t& ip_be) {
+    std::string redirected;
+    if (nextendo::redirect_host(host, redirected)) {
+        ip_be = inet_addr(redirected.c_str());
+        nextendo::remember_sni(ip_be, host);
+        log("hostnet: %s -> %s (Nextendo)", host.c_str(), redirected.c_str());
         return true;
     }
-    return false;
+    net_init();
+    addrinfo hints{}, *res = nullptr;
+    hints.ai_family = AF_INET;
+    if (getaddrinfo(host.c_str(), nullptr, &hints, &res) != 0 || !res) return false;
+    ip_be = reinterpret_cast<sockaddr_in*>(res->ai_addr)->sin_addr.s_addr;
+    freeaddrinfo(res);
+    log("hostnet: %s resolved (not a Nintendo name)", host.c_str());
+    nextendo::remember_sni(ip_be, host);
+    return true;
 }
 
-void write_sockaddr_in(uint64_t addr, uint64_t len, uint32_t ip_be, uint16_t port_be) {
-    if (!addr || len < 8) return;
-    uint8_t* p = reinterpret_cast<uint8_t*>(addr);
-    std::memset(p, 0, size_t(len));
-    p[0] = 8;
-    p[1] = 2;  // AF_INET
-    std::memcpy(p + 2, &port_be, 2);
-    std::memcpy(p + 4, &ip_be, 4);
+int map_level(int level) {
+    switch (level) {
+    case kSolSocket: return SOL_SOCKET;
+    case kIpprotoTcp: return IPPROTO_TCP;
+    default: return IPPROTO_IP;
+    }
+}
+
+int map_option(int level, int name) {
+    if (level == kIpprotoTcp) return name == kTcpNoDelay ? TCP_NODELAY : -1;
+    if (level != kSolSocket) return -1;
+    switch (name) {
+    case kSoReuseAddr: return SO_REUSEADDR;
+    case kSoKeepAlive: return SO_KEEPALIVE;
+    case kSoBroadcast: return SO_BROADCAST;
+    case kSoSndBuf: return SO_SNDBUF;
+    case kSoRcvBuf: return SO_RCVBUF;
+    case kSoError: return SO_ERROR;
+#if defined(SO_REUSEPORT)
+    case kSoReusePort: return SO_REUSEPORT;
+#endif
+    default: return -1;
+    }
+}
+
+void set_host_timeout(sock_t s, int opt, const uint8_t* val, uint64_t len) {
+    if (len < 16) return;
+    int64_t t[2];
+    std::memcpy(t, val, 16);  // timeval {s64 sec, s64 usec}
+#ifdef _WIN32
+    const DWORD v = DWORD(t[0] * 1000 + t[1] / 1000);
+#else
+    const timeval v{time_t(t[0]), suseconds_t(t[1])};
+#endif
+    setsockopt(s, SOL_SOCKET, opt, reinterpret_cast<const char*>(&v), sizeof v);
 }
 
 }  // namespace
 
 bool hostnet_active() { return nextendo::online_services_active() && !ldn_enabled(); }
 
-bool hostnet_owns_fd(int fd) {
-    std::lock_guard lk(g_mu);
-    return get(fd) != nullptr;
-}
-
-// Ensure hostnet_active is visible before use in handlers (already defined above).
+bool hostnet_owns_fd(int fd) { return lookup(fd) != kBadSock; }
 
 void hostnet_Socket(CPU& c) {
     if (!hostnet_active()) return ret(c, fail(kENETDOWN));
     net_init();
     const int type = int(c.x[1]) & 0xFF;
-    const int host_type = (type == kSockStream) ? SOCK_STREAM : SOCK_DGRAM;
-    sock_t s = ::socket(AF_INET, host_type, 0);
-    if (s == kBadSock) return ret(c, fail(kEINVAL));
+    if (type != kSockStream && type != kSockDgram) return ret(c, fail(kEPROTONOSUPPORT));
+    sock_t s = ::socket(AF_INET, type == kSockStream ? SOCK_STREAM : SOCK_DGRAM, 0);
+    if (s == kBadSock) return ret(c, host_fail());
     no_sigpipe(s);
+#ifdef _WIN32
+    if (type == kSockDgram) {
+        // Windows reports an ICMP "port unreachable" from an earlier datagram as WSAECONNRESET on the next recvfrom;
+        // BSD (the Switch) does not, and Pia takes the error as fatal.
+        BOOL off = FALSE;
+        DWORD got = 0;
+        WSAIoctl(s, _WSAIOW(IOC_VENDOR, 12) /* SIO_UDP_CONNRESET */, &off, sizeof off, nullptr, 0, &got, nullptr, nullptr);
+    }
+#endif
     std::lock_guard lk(g_mu);
     for (int i = 0; i < kMaxSocks; i++) {
         if (g_socks[i].used) continue;
-        g_socks[i] = HostSock{};
-        g_socks[i].used = true;
-        g_socks[i].s = s;
-        g_socks[i].type = type;
+        g_socks[i] = HostSock{true, false, s, type};
         return ret(c, i + kFdBase);
     }
     sock_close(s);
@@ -116,270 +259,368 @@ void hostnet_Socket(CPU& c) {
 
 void hostnet_Close(CPU& c) {
     std::lock_guard lk(g_mu);
-    HostSock* s = get(int(c.x[0]));
-    if (!s) return ret(c, fail(kEBADF));
-    sock_close(s->s);
-    *s = HostSock{};
+    const int i = int(c.x[0]) - kFdBase;
+    if (i < 0 || i >= kMaxSocks || !g_socks[i].used) return ret(c, fail(kEBADF));
+    sock_close(g_socks[i].s);
+    g_socks[i] = HostSock{};
     ret(c, 0);
 }
 
 void hostnet_Bind(CPU& c) {
-    std::lock_guard lk(g_mu);
-    HostSock* s = get(int(c.x[0]));
-    if (!s) return ret(c, fail(kEBADF));
-    sockaddr_storage ss{};
-    socklen_t sslen = 0;
-    if (!read_sockaddr(c.x[1], c.x[2], ss, sslen)) return ret(c, fail(kEINVAL));
-    if (bind(s->s, reinterpret_cast<sockaddr*>(&ss), sslen) != 0) return ret(c, fail(kEINVAL));
-    ret(c, 0);
+    sock_t s = lookup(int(c.x[0]));
+    if (s == kBadSock) return ret(c, fail(kEBADF));
+    sockaddr_in in;
+    if (!read_sockaddr(c.x[1], c.x[2], in)) return ret(c, fail(kEINVAL));
+    const int64_t r = bind(s, reinterpret_cast<sockaddr*>(&in), sizeof in) != 0 ? host_fail() : 0;
+    udp_trace("Bind", int(c.x[0]), &in, r);
+    ret(c, r);
 }
 
 void hostnet_Connect(CPU& c) {
-    HostSock* s = nullptr;
-    {
-        std::lock_guard lk(g_mu);
-        s = get(int(c.x[0]));
-        if (!s) return ret(c, fail(kEBADF));
-    }
-    sockaddr_storage ss{};
-    socklen_t sslen = 0;
-    if (!read_sockaddr(c.x[1], c.x[2], ss, sslen)) return ret(c, fail(kEINVAL));
-    if (ss.ss_family == AF_INET) {
-        auto* in = reinterpret_cast<sockaddr_in*>(&ss);
-        std::string host = nextendo::host_for_ip(in->sin_addr.s_addr);
-        if (host.empty()) {
-            // still fine
-        }
-    }
-    int r = connect(s->s, reinterpret_cast<sockaddr*>(&ss), sslen);
-    if (r != 0) {
+    sock_t s = lookup(int(c.x[0]));
+    if (s == kBadSock) return ret(c, fail(kEBADF));
+    sockaddr_in in;
+    if (!read_sockaddr(c.x[1], c.x[2], in)) return ret(c, fail(kEINVAL));
+    static std::atomic<int> traced{0};
+    if (traced++ < 64)
+        log("hostnet: Connect(%d, %u.%u.%u.%u:%u)", int(c.x[0]), in.sin_addr.s_addr & 0xFF, (in.sin_addr.s_addr >> 8) & 0xFF,
+            (in.sin_addr.s_addr >> 16) & 0xFF, in.sin_addr.s_addr >> 24, ntohs(in.sin_port));
+    if (connect(s, reinterpret_cast<sockaddr*>(&in), sizeof in) == 0) return ret(c, 0);
+    int e = host_errno();
+    if (e == kEAGAIN) e = kEINPROGRESS;  // Windows: a non-blocking connect reports WSAEWOULDBLOCK
+    ret(c, fail(e));
+}
+
+namespace {
+
+// A blocking socket asked for MSG_DONTWAIT: the host flag does not exist on Windows, so look first.
+bool would_block(sock_t s, const HostSock& hs, int flags, bool write) {
+    return (flags & kMsgDontWait) && !hs.nonblock && !wait_socket(s, write, 0);
+}
+
+int host_flags(int flags) {
+    int f = 0;
+    if (flags & kMsgPeek) f |= MSG_PEEK;
+    if (flags & kMsgWaitAll) f |= MSG_WAITALL;
+    return f;
+}
+
+// DIAG: the first datagram calls, with their outcome.
+void udp_trace(const char* what, int fd, const sockaddr_in* a, int64_t r) {
+    static std::atomic<int> n{0};
+    if (n++ >= 300) return;
+    const uint32_t ip = a ? a->sin_addr.s_addr : 0;
+    log("hostnet: %s(%d, %u.%u.%u.%u:%u) -> %lld errno %d", what, fd, ip & 0xFF, (ip >> 8) & 0xFF, (ip >> 16) & 0xFF,
+        ip >> 24, a ? ntohs(a->sin_port) : 0, (long long)r, r < 0 ? t_errno : 0);
+}
+
+int64_t do_send(int fd, uint64_t buf, uint64_t n, int flags, uint64_t to, uint64_t tolen) {
+    HostSock hs;
+    sock_t s = lookup(fd, &hs);
+    if (s == kBadSock) return fail(kEBADF);
+    if (would_block(s, hs, flags, true)) return fail(kEAGAIN);
+    sockaddr_in in;
+    const bool has_to = to && read_sockaddr(to, tolen, in);
+    const int r = has_to ? int(sendto(s, reinterpret_cast<const char*>(buf), int(n), MSG_NOSIGNAL,
+                                      reinterpret_cast<sockaddr*>(&in), sizeof in))
+                         : int(send(s, reinterpret_cast<const char*>(buf), int(n), MSG_NOSIGNAL));
+    const int64_t res = r < 0 ? host_fail() : r;
+    if (hs.type == kSockDgram) udp_trace("SendTo", fd, has_to ? &in : nullptr, res);
+    return res;
+}
+
+int64_t do_recv(int fd, uint64_t buf, uint64_t n, int flags, uint64_t from, uint64_t fromlen) {
+    HostSock hs;
+    sock_t s = lookup(fd, &hs);
+    if (s == kBadSock) return fail(kEBADF);
+    if (would_block(s, hs, flags, false)) return fail(kEAGAIN);
+    sockaddr_in in{};
+    socklen_t inlen = sizeof in;
+    const int r = int(recvfrom(s, reinterpret_cast<char*>(buf), int(n), host_flags(flags),
+                               reinterpret_cast<sockaddr*>(&in), &inlen));
 #ifdef _WIN32
-        int e = WSAGetLastError();
-        if (e == WSAEWOULDBLOCK || e == WSAEINPROGRESS) return ret(c, fail(kEINPROGRESS));
-#else
-        if (errno == EINPROGRESS || errno == EWOULDBLOCK) return ret(c, fail(kEINPROGRESS));
+    // A datagram bigger than the buffer: Windows fails, the Switch (BSD) truncates.
+    if (r < 0 && WSAGetLastError() == WSAEMSGSIZE) return int64_t(n);
 #endif
-        return ret(c, fail(kECONNREFUSED));
+    if (r < 0) {
+        const int64_t e = host_fail();
+        if (hs.type == kSockDgram && t_errno != kEAGAIN) udp_trace("RecvFrom", fd, nullptr, e);
+        return e;
     }
-    ret(c, 0);
+    if (hs.type == kSockDgram) udp_trace("RecvFrom", fd, &in, r);
+    if (from && inlen >= sizeof(sockaddr_in) && in.sin_family == AF_INET) write_sockaddr(from, fromlen, in);
+    return r;
 }
 
-void hostnet_Send(CPU& c) {
-    HostSock* s = nullptr;
-    {
-        std::lock_guard lk(g_mu);
-        s = get(int(c.x[0]));
-        if (!s) return ret(c, fail(kEBADF));
-    }
-    const void* buf = reinterpret_cast<const void*>(c.x[1]);
-    size_t n = size_t(c.x[2]);
-    int r = int(send(s->s, reinterpret_cast<const char*>(buf), int(n), MSG_NOSIGNAL));
-    if (r < 0) return ret(c, fail(kEAGAIN));
-    ret(c, r);
-}
+}  // namespace
 
-void hostnet_SendTo(CPU& c) {
-    HostSock* s = nullptr;
-    {
-        std::lock_guard lk(g_mu);
-        s = get(int(c.x[0]));
-        if (!s) return ret(c, fail(kEBADF));
-    }
-    const void* buf = reinterpret_cast<const void*>(c.x[1]);
-    size_t n = size_t(c.x[2]);
-    sockaddr_storage ss{};
-    socklen_t sslen = 0;
-    if (!read_sockaddr(c.x[4], c.x[5], ss, sslen)) return ret(c, fail(kEINVAL));
-    int r = int(sendto(s->s, reinterpret_cast<const char*>(buf), int(n), MSG_NOSIGNAL,
-                       reinterpret_cast<sockaddr*>(&ss), sslen));
-    if (r < 0) return ret(c, fail(kEAGAIN));
-    ret(c, r);
-}
+void hostnet_Send(CPU& c) { ret(c, do_send(int(c.x[0]), c.x[1], c.x[2], int(c.x[3]), 0, 0)); }
+void hostnet_SendTo(CPU& c) { ret(c, do_send(int(c.x[0]), c.x[1], c.x[2], int(c.x[3]), c.x[4], c.x[5])); }
+void hostnet_Recv(CPU& c) { ret(c, do_recv(int(c.x[0]), c.x[1], c.x[2], int(c.x[3]), 0, 0)); }
+void hostnet_RecvFrom(CPU& c) { ret(c, do_recv(int(c.x[0]), c.x[1], c.x[2], int(c.x[3]), c.x[4], c.x[5])); }
 
-void hostnet_Recv(CPU& c) {
-    HostSock* s = nullptr;
-    {
-        std::lock_guard lk(g_mu);
-        s = get(int(c.x[0]));
-        if (!s) return ret(c, fail(kEBADF));
-    }
-    void* buf = reinterpret_cast<void*>(c.x[1]);
-    size_t n = size_t(c.x[2]);
-    int r = int(recv(s->s, reinterpret_cast<char*>(buf), int(n), 0));
-    if (r < 0) return ret(c, fail(kEAGAIN));
-    ret(c, r);
-}
-
-void hostnet_RecvFrom(CPU& c) {
-    HostSock* s = nullptr;
-    {
-        std::lock_guard lk(g_mu);
-        s = get(int(c.x[0]));
-        if (!s) return ret(c, fail(kEBADF));
-    }
-    void* buf = reinterpret_cast<void*>(c.x[1]);
-    size_t n = size_t(c.x[2]);
-    sockaddr_storage ss{};
-    socklen_t sslen = sizeof ss;
-    int r = int(recvfrom(s->s, reinterpret_cast<char*>(buf), int(n), 0, reinterpret_cast<sockaddr*>(&ss), &sslen));
-    if (r < 0) return ret(c, fail(kEAGAIN));
-    if (c.x[4] && ss.ss_family == AF_INET) {
-        auto* in = reinterpret_cast<sockaddr_in*>(&ss);
-        write_sockaddr_in(c.x[4], c.x[5] ? c.x[5] : 16, in->sin_addr.s_addr, in->sin_port);
-    }
-    ret(c, r);
-}
-
+// GetAddrInfo(node, service, hints, AddrInfo** out): one IPv4 answer.
 void hostnet_GetAddrInfo(CPU& c) {
-    if (!hostnet_active()) {
-        c.x[0] = 4;  // EAI_FAIL
-        return;
-    }
-    net_init();
+    constexpr uint64_t kEaiNoName = 8, kEaiFail = 4;
     const char* node = reinterpret_cast<const char*>(c.x[0]);
     const char* service = reinterpret_cast<const char*>(c.x[1]);
-    // hints at x2, out at x3
-    std::string host = node ? node : "";
-    std::string ip;
-    if (nextendo::redirect_host(host, ip)) {
-        nextendo::remember_sni(inet_addr(ip.c_str()), host);
-        // Allocate a minimal AddrInfo chain in guest heap.
-        // nn::socket::AddrInfo: next*, canon*, ai_flags, family, socktype, protocol, addrlen, sockaddr*
-        // Simplified: write one IPv4 result.
-        uint64_t out_ptr = c.x[3];
-        if (!out_ptr) {
-            c.x[0] = 4;
-            return;
-        }
-        uint64_t info = kernel_alloc(64, 8);
-        uint64_t sa = kernel_alloc(16, 8);
-        uint8_t* p = reinterpret_cast<uint8_t*>(sa);
-        std::memset(p, 0, 16);
-        p[0] = 8;
-        p[1] = 2;
-        uint16_t port = 0;
-        if (service) port = htons(uint16_t(std::atoi(service)));
-        std::memcpy(p + 2, &port, 2);
-        uint32_t addr = inet_addr(ip.c_str());
-        std::memcpy(p + 4, &addr, 4);
-        uint64_t* info_p = reinterpret_cast<uint64_t*>(info);
-        std::memset(info_p, 0, 64);
-        // Layout guess matching common Switch SDK: flags, family, socktype, protocol, addrlen, addr, canon, next
-        int32_t* i32 = reinterpret_cast<int32_t*>(info);
-        i32[0] = 0;   // flags
-        i32[1] = 2;   // AF_INET
-        i32[2] = 1;   // STREAM (also works for UDP lookups that ignore)
-        i32[3] = 0;
-        i32[4] = 16;  // addrlen
-        st<uint64_t>(info + 24, sa);
-        st<uint64_t>(info + 32, 0);
-        st<uint64_t>(info + 40, 0);
-        st<uint64_t>(out_ptr, info);
-        c.x[0] = 0;
-        log("hostnet: GetAddrInfo(%s) -> %s (Nextendo redirect)", host.c_str(), ip.c_str());
+    const uint64_t hints = c.x[2], out = c.x[3];
+    if (!hostnet_active() || !out) {
+        c.x[0] = kEaiFail;
         return;
     }
-    // Real resolve
-    addrinfo hints{};
-    hints.ai_family = AF_INET;
-    addrinfo* res = nullptr;
-    int rc = getaddrinfo(node, service, &hints, &res);
-    if (rc != 0 || !res) {
-        c.x[0] = 4;
+    uint32_t ip = 0;
+    if (node && node[0] && !resolve_host(node, ip)) {
+        log("hostnet: GetAddrInfo(%s) found nothing", node);
+        c.x[0] = kEaiNoName;
         return;
     }
-    uint64_t out_ptr = c.x[3];
-    uint64_t info = kernel_alloc(64, 8);
-    uint64_t sa = kernel_alloc(16, 8);
-    auto* in = reinterpret_cast<sockaddr_in*>(res->ai_addr);
-    write_sockaddr_in(sa, 16, in->sin_addr.s_addr, in->sin_port);
-    int32_t* i32 = reinterpret_cast<int32_t*>(info);
-    std::memset(i32, 0, 64);
-    i32[1] = 2;
-    i32[2] = res->ai_socktype == SOCK_DGRAM ? 2 : 1;
-    i32[4] = 16;
+    const uint16_t port = htons(uint16_t(service ? std::atoi(service) : 0));
+    int32_t socktype = kSockStream, protocol = 0;
+    if (hints) {
+        socktype = ld<int32_t>(hints + 8) ? ld<int32_t>(hints + 8) : kSockStream;
+        protocol = ld<int32_t>(hints + 12);
+    }
+    const uint64_t info = resolver_slot();
+    const uint64_t sa = info + 64;
+    sockaddr_in in{};
+    in.sin_family = AF_INET;
+    in.sin_port = port;
+    in.sin_addr.s_addr = ip;
+    write_sockaddr(sa, 0, in);
+    st<int32_t>(info + 0, 0);  // ai_flags
+    st<int32_t>(info + 4, 2);  // AF_INET
+    st<int32_t>(info + 8, socktype);
+    st<int32_t>(info + 12, protocol);
+    st<uint32_t>(info + 16, 16);  // ai_addrlen
+    // shortcut: whether ai_addr or ai_canonname comes first is not confirmed for this SDK; both slots point at the
+    // address (a canonical name of junk is harmless), so either order works. Write ai_canonname properly if a game
+    // ever reads it.
     st<uint64_t>(info + 24, sa);
-    st<uint64_t>(out_ptr, info);
-    freeaddrinfo(res);
+    st<uint64_t>(info + 32, sa);
+    st<uint64_t>(info + 40, 0);  // ai_next
+    st<uint64_t>(out, info);
     c.x[0] = 0;
 }
 
-void hostnet_FreeAddrInfo(CPU& c) {
-    (void)c;
-    c.x[0] = 0;
+void hostnet_FreeAddrInfo(CPU& c) { c.x[0] = 0; }
+
+// GetHostByName(name[, options, count]) -> hostent* (BSD layout with 64-bit pointers), null when unknown.
+void hostnet_GetHostByName(CPU& c) {
+    const char* name = reinterpret_cast<const char*>(c.x[0]);
+    uint32_t ip = 0;
+    if (!hostnet_active() || !name || !resolve_host(name, ip)) {
+        c.x[0] = 0;
+        return;
+    }
+    const uint64_t h = resolver_slot();
+    const uint64_t addr = h + 64, list = h + 72, aliases = h + 88, hname = h + 96;
+    st<uint32_t>(addr, ip);
+    st<uint64_t>(list, addr);
+    st<uint64_t>(list + 8, 0);
+    st<uint64_t>(aliases, 0);
+    std::strncpy(reinterpret_cast<char*>(hname), name, kSlotSize - 97);
+    st<uint64_t>(h + 0, hname);    // h_name
+    st<uint64_t>(h + 8, aliases);  // h_aliases
+    st<int32_t>(h + 16, 2);        // h_addrtype AF_INET
+    st<int32_t>(h + 20, 4);        // h_length
+    st<uint64_t>(h + 24, list);    // h_addr_list
+    c.x[0] = h;
 }
 
-void hostnet_GetLastErrno(CPU& c) { c.x[0] = uint64_t(t_errno); }
+void hostnet_GetLastErrno(CPU& c) { c.x[0] = uint64_t(uint32_t(t_errno)); }
 void hostnet_SetLastErrno(CPU& c) {
     t_errno = int(c.x[0]);
     c.x[0] = 0;
 }
 
 void hostnet_Shutdown(CPU& c) {
-    std::lock_guard lk(g_mu);
-    HostSock* s = get(int(c.x[0]));
-    if (!s) return ret(c, fail(kEBADF));
-    shutdown(s->s, int(c.x[1]));
+    sock_t s = lookup(int(c.x[0]));
+    if (s == kBadSock) return ret(c, fail(kEBADF));
+    // SHUT_RD/WR/RDWR are 0/1/2 on the Switch and on every host (SD_RECEIVE/SEND/BOTH on Windows).
+    if (shutdown(s, int(c.x[1])) != 0) return ret(c, host_fail());
     ret(c, 0);
 }
 
 void hostnet_SetSockOpt(CPU& c) {
-    (void)c;
-    ret(c, 0);
-}
-void hostnet_GetSockOpt(CPU& c) {
-    (void)c;
-    ret(c, 0);
-}
-void hostnet_GetSockName(CPU& c) {
-    (void)c;
-    ret(c, 0);
-}
-void hostnet_Poll(CPU& c) {
-    // Minimal: report writable.
-    if (c.x[0] && c.x[1]) {
-        // PollFd array — set revents OUT
+    const int fd = int(c.x[0]), level = int(c.x[1]), name = int(c.x[2]);
+    const auto* val = reinterpret_cast<const uint8_t*>(c.x[3]);
+    const uint64_t len = c.x[4];
+    sock_t s = lookup(fd);
+    if (s == kBadSock) return ret(c, fail(kEBADF));
+    if (level == kSolSocket && name == kSoNonblock && len >= 4) {
+        uint32_t v;
+        std::memcpy(&v, val, 4);
+        set_nonblocking(s, v != 0);
+        std::lock_guard lk(g_mu);
+        g_socks[fd - kFdBase].nonblock = v != 0;
+        return ret(c, 0);
     }
-    c.x[0] = c.x[1];  // all ready
+    if (level == kSolSocket && (name == kSoRcvTimeo || name == kSoSndTimeo)) {
+        set_host_timeout(s, name == kSoRcvTimeo ? SO_RCVTIMEO : SO_SNDTIMEO, val, len);
+        return ret(c, 0);
+    }
+    if (level == kSolSocket && name == kSoLinger && len >= 8) {
+        int32_t v[2];
+        std::memcpy(v, val, 8);
+        linger l{};
+        l.l_onoff = decltype(l.l_onoff)(v[0]);
+        l.l_linger = decltype(l.l_linger)(v[1]);
+        setsockopt(s, SOL_SOCKET, SO_LINGER, reinterpret_cast<const char*>(&l), sizeof l);
+        return ret(c, 0);
+    }
+    const int opt = map_option(level, name);
+    if (opt >= 0 && len >= 4) {
+        int32_t v;
+        std::memcpy(&v, val, 4);
+        setsockopt(s, map_level(level), opt, reinterpret_cast<const char*>(&v), sizeof v);
+    }
+    ret(c, 0);  // options the host lacks (IP TTL/TOS, ...) are accepted, as they only tune the link
+}
+
+void hostnet_GetSockOpt(CPU& c) {
+    const int fd = int(c.x[0]), level = int(c.x[1]), name = int(c.x[2]);
+    auto* plen = reinterpret_cast<uint32_t*>(c.x[4]);
+    HostSock hs;
+    sock_t s = lookup(fd, &hs);
+    if (s == kBadSock) return ret(c, fail(kEBADF));
+    int32_t v = 0;
+    if (level == kSolSocket && name == kSoType) {
+        v = hs.type;
+    } else if (level == kSolSocket && name == kSoNonblock) {
+        v = hs.nonblock;
+    } else if (level == kSolSocket && name == kSoError) {
+        int e = 0;
+        socklen_t l = sizeof e;
+        getsockopt(s, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&e), &l);
+        if (e) {
+#ifdef _WIN32
+            WSASetLastError(e);
+#else
+            errno = e;
+#endif
+            v = host_errno();
+        }
+    } else if (const int opt = map_option(level, name); opt >= 0) {
+        socklen_t l = sizeof v;
+        getsockopt(s, map_level(level), opt, reinterpret_cast<char*>(&v), &l);
+    }
+    if (c.x[3] && plen && *plen >= 4) {
+        std::memcpy(reinterpret_cast<void*>(c.x[3]), &v, 4);
+        *plen = 4;
+    }
+    ret(c, 0);
+}
+
+void hostnet_GetSockName(CPU& c) {
+    sock_t s = lookup(int(c.x[0]));
+    if (s == kBadSock) return ret(c, fail(kEBADF));
+    sockaddr_in in{};
+    socklen_t l = sizeof in;
+    if (getsockname(s, reinterpret_cast<sockaddr*>(&in), &l) != 0) return ret(c, host_fail());
+    write_sockaddr(c.x[1], c.x[2], in);
+    ret(c, 0);
+}
+
+void hostnet_GetPeerName(CPU& c) {
+    sock_t s = lookup(int(c.x[0]));
+    if (s == kBadSock) return ret(c, fail(kEBADF));
+    sockaddr_in in{};
+    socklen_t l = sizeof in;
+    if (getpeername(s, reinterpret_cast<sockaddr*>(&in), &l) != 0) return ret(c, host_fail());
+    write_sockaddr(c.x[1], c.x[2], in);
+    ret(c, 0);
+}
+
+// Poll(PollFd*, count, timeout ms).
+void hostnet_Poll(CPU& c) {
+    auto* fds = reinterpret_cast<uint8_t*>(c.x[0]);
+    const uint64_t n = c.x[1];
+    const int timeout = int(c.x[2]);
+    // poll(nullptr, 0, ms) is a sleep (libcurl waits for its resolver thread this way): returning at once turned that
+    // wait into a busy loop that starved the resolver until curl's timeout (CURLE_OPERATION_TIMEDOUT, ens 2219-1028).
+    if (n == 0) {
+        if (timeout > 0) std::this_thread::sleep_for(std::chrono::milliseconds(timeout));
+        return ret(c, 0);
+    }
+    std::vector<pollfd> host(n);
+    for (uint64_t i = 0; i < n; i++) {
+        int32_t fd;
+        uint16_t ev;
+        std::memcpy(&fd, fds + i * 8, 4);
+        std::memcpy(&ev, fds + i * 8 + 4, 2);
+        sock_t s = fd >= 0 ? lookup(fd) : kBadSock;
+        host[i].fd = s;
+        host[i].events = 0;
+        if (ev & (kPollIn | kPollRdNorm)) host[i].events |= POLLRDNORM;
+        if (ev & (kPollOut | kPollWrNorm)) host[i].events |= POLLWRNORM;
+        host[i].revents = 0;
+    }
+    // Unknown descriptors: poll/WSAPoll skip a negative fd, reported as invalid below.
+#ifdef _WIN32
+    const int r = n ? WSAPoll(host.data(), ULONG(n), timeout) : 0;
+#else
+    const int r = n ? ::poll(host.data(), nfds_t(n), timeout) : 0;
+#endif
+    if (r < 0) return ret(c, host_fail());
+    int ready = 0;
+    for (uint64_t i = 0; i < n; i++) {
+        int32_t fd;
+        uint16_t ev, re = 0;
+        std::memcpy(&fd, fds + i * 8, 4);
+        std::memcpy(&ev, fds + i * 8 + 4, 2);
+        const short h = host[i].revents;
+        if (fd >= 0 && host[i].fd == kBadSock) re = kPollNval;
+        if (h & POLLRDNORM) re |= ev & (kPollIn | kPollRdNorm);
+        if (h & POLLWRNORM) re |= ev & (kPollOut | kPollWrNorm);
+        if (h & POLLERR) re |= kPollErr;
+        if (h & POLLHUP) re |= kPollHup | (ev & (kPollIn | kPollRdNorm));  // a closed peer reads as 0 bytes
+        if (h & POLLNVAL) re |= kPollNval;
+        std::memcpy(fds + i * 8 + 6, &re, 2);
+        if (re) ready++;
+    }
+    ret(c, ready);
 }
 
 void hostnet_Fcntl(CPU& c) {
-    HostSock* s = nullptr;
-    {
+    const int fd = int(c.x[0]), cmd = int(c.x[1]);
+    HostSock hs;
+    sock_t s = lookup(fd, &hs);
+    if (s == kBadSock) return ret(c, fail(kEBADF));
+    if (cmd == kGetFl) return ret(c, hs.nonblock ? kNonblock : 0);
+    if (cmd == kSetFl) {
+        const bool nb = (int(c.x[2]) & kNonblock) != 0;
+        set_nonblocking(s, nb);
         std::lock_guard lk(g_mu);
-        s = get(int(c.x[0]));
-        if (!s) return ret(c, fail(kEBADF));
-    }
-    const int cmd = int(c.x[1]);
-    if (cmd == 3) {  // F_GETFL
-        ret(c, s->nonblock ? kNonblock : 0);
-        return;
-    }
-    if (cmd == 4) {  // F_SETFL
-        s->nonblock = (int(c.x[2]) & kNonblock) != 0;
-#ifdef _WIN32
-        u_long nb = s->nonblock ? 1 : 0;
-        ioctlsocket(s->s, FIONBIO, &nb);
-#else
-        int fl = fcntl(s->s, F_GETFL, 0);
-        fcntl(s->s, F_SETFL, s->nonblock ? (fl | O_NONBLOCK) : (fl & ~O_NONBLOCK));
-#endif
-        ret(c, 0);
-        return;
+        g_socks[fd - kFdBase].nonblock = nb;
     }
     ret(c, 0);
 }
 
-hostnet_sock_t hostnet_native_fd(int guest_fd) {
-    std::lock_guard lk(g_mu);
-    HostSock* s = get(guest_fd);
-    if (!s) return
-#ifdef _WIN32
-        INVALID_SOCKET;
-#else
-        -1;
-#endif
-    return hostnet_sock_t(s->s);
+hostnet_sock_t hostnet_native_fd(int guest_fd) { return hostnet_sock_t(lookup(guest_fd)); }
+
+bool hostnet_is_nonblocking(int guest_fd) {
+    HostSock hs;
+    return lookup(guest_fd, &hs) != kBadSock && hs.nonblock;
+}
+
+uint32_t hostnet_local_ip() {
+    // The interface the host would use to reach Nextendo: connect a UDP socket (sends nothing) and read its address.
+    net_init();
+    sock_t s = ::socket(AF_INET, SOCK_DGRAM, 0);
+    if (s == kBadSock) return 0;
+    sockaddr_in to{};
+    to.sin_family = AF_INET;
+    to.sin_port = htons(443);
+    to.sin_addr.s_addr = inet_addr(nextendo::server_ip().c_str());
+    sockaddr_in me{};
+    socklen_t l = sizeof me;
+    uint32_t ip = 0;
+    if (connect(s, reinterpret_cast<sockaddr*>(&to), sizeof to) == 0 &&
+        getsockname(s, reinterpret_cast<sockaddr*>(&me), &l) == 0)
+        ip = me.sin_addr.s_addr;
+    sock_close(s);
+    return ip;
 }
 
 }  // namespace nx

@@ -1,12 +1,18 @@
 // acc:u0 (accounts) and the storage objects am hands out (launch parameters).
 #include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <functional>
 #include <string>
+#include <thread>
 
 #include "ipc.h"
 #include "nextendo.h"
 #include "users.h"
 
 namespace nx {
+
+extern bool g_trace_net;  // loader.cpp (DIAG)
 
 // IStorage / IStorageAccessor over a byte blob (am's storage objects).
 namespace {
@@ -107,33 +113,87 @@ std::shared_ptr<Service> profile(UserInfo user) {
     return s;
 }
 
-std::shared_ptr<Service> manager_for_application() {
-    auto s = std::make_shared<Service>("IManagerForApplication");
-    s->cmds[0] = [](IpcCtx& c) {
-        // CheckAvailability: available when Nextendo online services are active.
-        c.push<uint8_t>(nextendo::online_services_active() ? 1 : 0);
+// IAsyncContext: a request running on a host thread. GetSystemEvent hands out an event signaled when it ends.
+std::shared_ptr<Service> async_context(std::function<uint32_t()> work) {
+    struct State {
+        std::shared_ptr<EventState> event = std::make_shared<EventState>();
+        std::atomic<bool> done{false};
+        std::atomic<uint32_t> result{0};
+    };
+    auto st = std::make_shared<State>();
+    std::thread([st, work = std::move(work)] {
+        st->result = work();
+        st->done = true;
+        st->event->signaled = true;
+        notify_all();
+    }).detach();
+    auto s = std::make_shared<Service>("IAsyncContext");
+    s->cmds[0] = [st](IpcCtx& c) {  // GetSystemEvent
+        auto r = std::make_shared<KEvent>();
+        r->state = st->event;
+        c.out_copy.push_back(handle_add(r));
         return 0u;
     };
+    s->cmds[1] = [](IpcCtx&) { return 0u; };  // Cancel: the request finishes on its own
+    s->cmds[2] = [st](IpcCtx& c) { c.push<uint8_t>(st->done ? 1 : 0); return 0u; };  // HasDone
+    s->cmds[3] = [st](IpcCtx&) { return st->done ? st->result.load() : 0u; };       // GetResult
+    return s;
+}
+
+// account: a failure to get the id token. shortcut: the exact Result a console returns here was not looked up; the
+// game only needs a failure to show its network error. Replace with the real code if it ever shows a wrong message.
+constexpr uint32_t kNsaUnavailable = (280u << 9) | 124u;
+
+std::shared_ptr<Service> manager_for_application() {
+    auto s = std::make_shared<Service>("IManagerForApplication");
+    // CheckAvailability: always available, as before; offline, nifm already keeps the game off the network.
+    s->cmds[0] = [](IpcCtx&) { return 0u; };
     s->cmds[1] = [](IpcCtx& c) {  // GetAccountId (NetworkServiceAccountId)
         c.push<uint64_t>(nextendo::network_service_account_id());
         return 0u;
     };
-    // EnsureIdTokenCacheAsync / LoadIdTokenCache: hand the game a BAAS / nex token when signed in.
-    s->cmds[130] = [](IpcCtx&) { return nextendo::online_services_active() ? 0u : 0x4E4u; };
-    s->cmds[131] = [](IpcCtx& c) {  // LoadIdTokenCache(Uid) -> size + buffer via out
-        if (!nextendo::online_services_active()) return 0x4E4u;
-        std::string tok =
-            nextendo::sign_baas_id_token(nextendo::network_service_account_id(), 0x01006F8002326000ull, 0x30003);
-        Buffer out = c.out_buf(0);
-        if (out.addr && out.size) {
-            size_t n = std::min(out.size, tok.size());
-            std::memcpy(reinterpret_cast<void*>(out.addr), tok.data(), n);
-            c.push<uint32_t>(uint32_t(n));
-        } else {
-            c.push<uint32_t>(uint32_t(tok.size()));
+    // EnsureIdTokenCacheAsync -> IAsyncContext: renews the account and nex tokens with Nextendo.
+    s->cmds[2] = [](IpcCtx& c) {
+        log("account: EnsureIdTokenCacheAsync");
+        {  // DIAG: trace the online calls that follow, 60 s
+            static std::atomic<bool> armed{false};
+            if (!armed.exchange(true)) {
+                g_trace_net = true;
+                std::thread([] {
+                    std::this_thread::sleep_for(std::chrono::seconds(60));
+                    g_trace_net = false;
+                }).detach();
+            }
         }
+        c.push_object(async_context([] {
+            if (!nextendo::online_services_active()) return kNsaUnavailable;
+            if (!nextendo::ensure_online_identity()) {
+                log("account: Nextendo token renewal failed: %s", nextendo::last_error().c_str());
+                return kNsaUnavailable;
+            }
+            return 0u;
+        }));
         return 0u;
     };
+    // LoadIdTokenCache(out buffer) -> u32 size: the BAAS id_token (nextendo_token.cpp), as a C string. cmd 3 is the
+    // old number, cmd 4 the current one (ACNH 3.0.3 uses 4).
+    s->cmds[3] = [](IpcCtx& c) {
+        if (!nextendo::online_services_active()) return kNsaUnavailable;
+        const std::string tok = nextendo::baas_id_token(nextendo::game_version_string());
+        log("account: LoadIdTokenCache -> %zu-byte id_token", tok.size());
+        if (tok.empty()) return kNsaUnavailable;
+        Buffer out = c.out_buf(0);
+        if (!out.addr || out.size <= tok.size()) {
+            log("account: id_token (%zu bytes) does not fit the game's buffer (%llu)", tok.size(),
+                (unsigned long long)out.size);
+            return kNsaUnavailable;
+        }
+        std::memset(reinterpret_cast<void*>(out.addr), 0, out.size);
+        std::memcpy(reinterpret_cast<void*>(out.addr), tok.data(), tok.size());
+        c.push<uint32_t>(uint32_t(tok.size()));
+        return 0u;
+    };
+    s->cmds[4] = s->cmds[3];
     return s;
 }
 

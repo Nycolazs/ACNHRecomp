@@ -140,7 +140,7 @@ void toast(const std::string& text) {
 bool needs_restart(const std::string& key) {
     if (key.rfind("online.", 0) == 0) {
         if (key == "online.mode")
-            ::nx::nextendo::nat_keepalive_stop(), ::nx::nextendo::nat_keepalive_start();
+            ::nx::nextendo::presence_start();  // starts once; it idles while not online
         return false;  // LDN reads online.enabled at session start; Nextendo reads mode live
     }
 #if defined(__ANDROID__)
