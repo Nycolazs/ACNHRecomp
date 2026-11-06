@@ -257,11 +257,70 @@ void hostnet_Socket(CPU& c) {
     ret(c, fail(kEINVAL));
 }
 
+namespace {
+
+// Pia probes the NAT-check servers from a UDP socket bound to port P, closes it, and at once binds a new socket to P
+// for the session. On a console the socket lives in the firmware and the router's mapping survives; here closing the
+// host socket drops the mapping, so the external port the NAT check reported (and matchmaking gave the other
+// player) is dead when they reach for it, and the host turns the visit down. A closed, bound, unconnected UDP socket
+// is therefore kept a few seconds and handed back when its port is bound again.
+struct Parked {
+    sock_t s;
+    uint16_t port;  // host order
+    std::chrono::steady_clock::time_point until;
+};
+std::vector<Parked> g_parked;  // under g_mu
+
+void reap_parked() {
+    const auto now = std::chrono::steady_clock::now();
+    for (size_t k = 0; k < g_parked.size();)
+        if (g_parked[k].until <= now) {
+            sock_close(g_parked[k].s);
+            g_parked.erase(g_parked.begin() + std::ptrdiff_t(k));
+        } else {
+            k++;
+        }
+}
+
+bool park(const HostSock& hs) {
+    if (hs.type != kSockDgram) return false;
+    sockaddr_in me{}, peer{};
+    socklen_t l = sizeof me, pl = sizeof peer;
+    if (getsockname(hs.s, reinterpret_cast<sockaddr*>(&me), &l) != 0 || !me.sin_port) return false;
+    if (getpeername(hs.s, reinterpret_cast<sockaddr*>(&peer), &pl) == 0) return false;  // connected: a real teardown
+    reap_parked();
+    const uint16_t port = ntohs(me.sin_port);
+    for (Parked& p : g_parked)
+        if (p.port == port) {
+            sock_close(p.s);
+            p.s = hs.s;
+            p.until = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+            return true;
+        }
+    if (g_parked.size() >= 16) return false;
+    g_parked.push_back({hs.s, port, std::chrono::steady_clock::now() + std::chrono::seconds(3)});
+    return true;
+}
+
+// The parked socket for this port, taken out of the list; kBadSock if none.
+sock_t unpark(uint16_t port) {
+    reap_parked();
+    for (size_t k = 0; k < g_parked.size(); k++)
+        if (g_parked[k].port == port) {
+            const sock_t s = g_parked[k].s;
+            g_parked.erase(g_parked.begin() + std::ptrdiff_t(k));
+            return s;
+        }
+    return kBadSock;
+}
+
+}  // namespace
+
 void hostnet_Close(CPU& c) {
     std::lock_guard lk(g_mu);
     const int i = int(c.x[0]) - kFdBase;
     if (i < 0 || i >= kMaxSocks || !g_socks[i].used) return ret(c, fail(kEBADF));
-    sock_close(g_socks[i].s);
+    if (!park(g_socks[i])) sock_close(g_socks[i].s);
     g_socks[i] = HostSock{};
     ret(c, 0);
 }
@@ -271,6 +330,20 @@ void hostnet_Bind(CPU& c) {
     if (s == kBadSock) return ret(c, fail(kEBADF));
     sockaddr_in in;
     if (!read_sockaddr(c.x[1], c.x[2], in)) return ret(c, fail(kEINVAL));
+    {
+        std::lock_guard lk(g_mu);
+        const int i = int(c.x[0]) - kFdBase;
+        if (in.sin_port && g_socks[i].type == kSockDgram) {
+            const sock_t kept = unpark(ntohs(in.sin_port));
+            if (kept != kBadSock) {  // same socket, same router mapping; the fresh one goes
+                sock_close(g_socks[i].s);
+                g_socks[i].s = kept;
+                set_nonblocking(kept, g_socks[i].nonblock);
+                udp_trace("Bind (kept mapping)", int(c.x[0]), &in, 0);
+                return ret(c, 0);
+            }
+        }
+    }
     const int64_t r = bind(s, reinterpret_cast<sockaddr*>(&in), sizeof in) != 0 ? host_fail() : 0;
     udp_trace("Bind", int(c.x[0]), &in, r);
     ret(c, r);
@@ -308,7 +381,7 @@ int host_flags(int flags) {
 // DIAG: the first datagram calls, with their outcome.
 void udp_trace(const char* what, int fd, const sockaddr_in* a, int64_t r) {
     static std::atomic<int> n{0};
-    if (n++ >= 300) return;
+    if (n++ >= 5000) return;
     const uint32_t ip = a ? a->sin_addr.s_addr : 0;
     log("hostnet: %s(%d, %u.%u.%u.%u:%u) -> %lld errno %d", what, fd, ip & 0xFF, (ip >> 8) & 0xFF, (ip >> 16) & 0xFF,
         ip >> 24, a ? ntohs(a->sin_port) : 0, (long long)r, r < 0 ? t_errno : 0);
