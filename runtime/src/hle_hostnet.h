@@ -25,7 +25,12 @@ void hostnet_Shutdown(CPU& c);
 void hostnet_SetSockOpt(CPU& c);
 void hostnet_GetSockOpt(CPU& c);
 void hostnet_GetSockName(CPU& c);
+void hostnet_GetPeerName(CPU& c);
+void hostnet_GetHostByName(CPU& c);
 void hostnet_Poll(CPU& c);
+
+bool hostnet_is_nonblocking(int guest_fd);
+uint32_t hostnet_local_ip();  // network order; 0 if unknown
 
 // Native SOCKET for SSL (kBadSock if unknown).
 #ifdef _WIN32

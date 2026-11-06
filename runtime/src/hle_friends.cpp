@@ -1,4 +1,7 @@
-// nn::friends: empty / not-linked offline; when signed into Nextendo, friend list comes from the account API.
+// nn::friends: empty / not-linked offline; when signed into Nextendo, the friend list comes from the account API
+// (nextendo.cpp caches it). ACNH matches the network service account id each player announces against these
+// entries (best friends, letters, visits), so an entry carries the friend's baasUserID ("nsa") when the server has
+// it, the same id a Switch on that account announces, else the pid.
 #include <cstring>
 #include <vector>
 
@@ -13,6 +16,12 @@ namespace {
 
 constexpr uint32_t kOk = 0;
 constexpr uint32_t kNotLinked = 121 | (4 << 9);  // friends: network service account not available
+
+// nn::friends::Friend (0x200): Uid +0x00, NetworkServiceAccountId +0x10, Nickname +0x18 (0x21 bytes), UserPresence
+// +0x40 {Uid +0x40, last online +0x50, status +0x58, same presence group +0x5C, app key/value storage +0x60 (0xC0)},
+// favourite +0x120, new +0x121, valid +0x128.
+constexpr uint64_t kFriendSize = 0x200;
+enum PresenceStatus : uint32_t { kOffline = 0, kOnline = 1, kOnlinePlay = 2 };
 
 void ok(CPU& c) { c.x[0] = kOk; }
 
@@ -44,44 +53,92 @@ void AsyncGetSystemEvent(CPU& c) {
     c.x[0] = kOk;
 }
 
+uint64_t friend_id(const nextendo::Friend& f) { return f.nsa ? f.nsa : f.pid; }
+
+bool same_game(const nextendo::Friend& f) {
+    return f.status != kOffline && std::strtoull(f.app_id.c_str(), nullptr, 16) == nextendo::kAcnhTitleId;
+}
+
+void write_friend(uint64_t out, uint64_t uid, const nextendo::Friend& f) {
+    std::memset(reinterpret_cast<void*>(out), 0, kFriendSize);
+    if (uid) std::memcpy(reinterpret_cast<void*>(out), reinterpret_cast<const void*>(uid), 16);
+    st<uint64_t>(out + 0x10, friend_id(f));
+    std::strncpy(reinterpret_cast<char*>(out + 0x18), f.name.c_str(), 0x20);
+    if (uid) std::memcpy(reinterpret_cast<void*>(out + 0x40), reinterpret_cast<const void*>(uid), 16);
+    const uint32_t status = f.status == 2 ? kOnlinePlay : f.status == 1 ? kOnline : kOffline;
+    st<uint32_t>(out + 0x58, status);
+    st<uint8_t>(out + 0x5C, same_game(f) ? 1 : 0);
+    st<uint8_t>(out + 0x120, f.favorite ? 1 : 0);
+    st<uint8_t>(out + 0x128, 1);
+}
+
+// FriendFilter: presence filter u32 (0 any, 1 online, 2 online play, 3 either), favourite only, same app presence
+// only, same app played only, any app played only (bools), presence group id u64.
+bool passes(uint64_t filter, const nextendo::Friend& f) {
+    if (!filter) return true;
+    const uint32_t presence = ld<uint32_t>(filter);
+    if (presence == 1 && f.status != 1) return false;
+    if (presence == 2 && f.status != 2) return false;
+    if (presence == 3 && f.status == 0) return false;
+    if (ld<uint8_t>(filter + 4) && !f.favorite) return false;
+    if (ld<uint8_t>(filter + 5) && !same_game(f)) return false;
+    return true;
+}
+
+// GetFriendList(int* count, Friend* out, const Uid&, int offset, int max, const FriendFilter&)
 void GetFriendList(CPU& c) {
     if (!nextendo::online_services_active()) return empty_list(c);
-    std::vector<nextendo::Friend> friends;
-    nextendo::fetch_friends(friends);
-    // (int* count, Friend* out, const Uid&, int offset, int count, const FriendFilter&)
-    int offset = int(c.x[3]);
-    int max = int(c.x[4]);
-    if (max < 0) max = 0;
+    const uint64_t out_count = c.x[0], out = c.x[1], uid = c.x[2], filter = c.x[5];
+    const int offset = int(c.x[3]) < 0 ? 0 : int(c.x[3]);
+    const int max = int(c.x[4]) < 0 ? 0 : int(c.x[4]);
+    std::vector<nextendo::Friend> list;
+    for (const auto& f : nextendo::friends_cached())
+        if (passes(filter, f)) list.push_back(f);
     int written = 0;
-    uint64_t out = c.x[1];
-    // Friend structure is large; write NetworkServiceAccountId at a common offset (0) and name if layout allows.
-    // Minimal: report count only so the game does not crash; detailed layout filled as we learn offsets.
-    for (int i = offset; i < int(friends.size()) && written < max; i++, written++) {
-        if (out) {
-            // Zero a conservative Friend size (0x200) then store NSAID (u64) at +0.
-            std::memset(reinterpret_cast<void*>(out + uint64_t(written) * 0x200), 0, 0x200);
-            st<uint64_t>(out + uint64_t(written) * 0x200, friends[size_t(i)].pid);
-        }
-    }
-    if (c.x[0]) st<int32_t>(c.x[0], written);
+    for (int i = offset; i < int(list.size()) && written < max; i++, written++)
+        if (out) write_friend(out + uint64_t(written) * kFriendSize, uid, list[size_t(i)]);
+    if (out_count) st<int32_t>(out_count, written);
     c.x[0] = kOk;
 }
 
-void EnsureFriendListAvailable(CPU& c) {
-    if (nextendo::online_services_active()) {
-        ok(c);
-        return;
+// UpdateFriendInfo(Friend* out, const Uid&, const NetworkServiceAccountId* ids, int count): the entries for those
+// ids, in order; an id that is not (or no longer) a friend comes back not valid.
+void UpdateFriendInfo(CPU& c) {
+    const uint64_t out = c.x[0], uid = c.x[1], ids = c.x[2];
+    const int count = int(c.x[3]);
+    const auto list = nextendo::online_services_active() ? nextendo::friends_cached() : std::vector<nextendo::Friend>{};
+    for (int i = 0; out && ids && i < count; i++) {
+        const uint64_t id = ld<uint64_t>(ids + uint64_t(i) * 8);
+        const uint64_t dst = out + uint64_t(i) * kFriendSize;
+        std::memset(reinterpret_cast<void*>(dst), 0, kFriendSize);
+        for (const auto& f : list)
+            if (friend_id(f) == id) write_friend(dst, uid, f);
     }
-    not_linked(c);
+    c.x[0] = kOk;
+}
+
+// EnsureFriendListAvailable(AsyncContext*, const Uid&): fetches the list now, so the GetFriendList after the
+// context's event (signaled at once, AsyncGetSystemEvent) sees it.
+void EnsureFriendListAvailable(CPU& c) {
+    if (!nextendo::online_services_active()) return not_linked(c);
+    nextendo::friends_refresh_blocking();
+    ok(c);
+}
+
+// ShowUserDetailInfo / StartSendingFriendRequest open system applets the runtime does not run. Friend requests go
+// through the Nextendo site or app; report success so the game carries on.
+void online_ok(CPU& c) {
+    if (!nextendo::online_services_active()) return not_linked(c);
+    ok(c);
 }
 
 void DeclareOpen(CPU& c) {
-    if (nextendo::online_services_active()) nextendo::publish_presence(2, 0x01006F8002326000ull);
+    nextendo::presence_set_playing(true);
     ok(c);
 }
 
 void DeclareClose(CPU& c) {
-    if (nextendo::online_services_active()) nextendo::publish_presence(1, 0);
+    nextendo::presence_set_playing(false);
     ok(c);
 }
 
@@ -96,12 +153,13 @@ NX_HLE("_ZN2nn7friends14AddPlayHistoryERKNS_7account3UidERKNS0_26PlayHistoryRegi
        ok);
 NX_HLE("_ZN2nn7friends28DeclareOpenOnlinePlaySessionERKNS_7account3UidE", DeclareOpen);
 NX_HLE("_ZN2nn7friends29DeclareCloseOnlinePlaySessionERKNS_7account3UidE", DeclareClose);
-NX_HLE("_ZN2nn7friends16UpdateFriendInfoEPNS0_6FriendERKNS_7account3UidEPKNS3_23NetworkServiceAccountIdEi", ok);
+NX_HLE("_ZN2nn7friends16UpdateFriendInfoEPNS0_6FriendERKNS_7account3UidEPKNS3_23NetworkServiceAccountIdEi",
+       UpdateFriendInfo);
 NX_HLE("_ZN2nn7friends25EnsureFriendListAvailableEPNS0_12AsyncContextERKNS_7account3UidE", EnsureFriendListAvailable);
 NX_HLE("_ZN2nn7friends12AsyncContext14GetSystemEventEPNS_2os11SystemEventE", AsyncGetSystemEvent);
 NX_HLE("_ZN2nn7friends18ShowUserDetailInfoERKNS_7account3UidERKNS1_23NetworkServiceAccountIdERKNS0_15InAppScreenNameESA_",
-       EnsureFriendListAvailable);
+       online_ok);
 NX_HLE("_ZN2nn7friends25StartSendingFriendRequestERKNS_7account3UidERKNS1_23NetworkServiceAccountIdERKNS0_15InAppScreenNameESA_",
-       EnsureFriendListAvailable);
+       online_ok);
 
 }  // namespace nx
