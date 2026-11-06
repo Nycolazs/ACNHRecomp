@@ -160,7 +160,7 @@ std::shared_ptr<Service> manager_for_application() {
             if (!armed.exchange(true)) {
                 g_trace_net = true;
                 std::thread([] {
-                    std::this_thread::sleep_for(std::chrono::seconds(60));
+                    std::this_thread::sleep_for(std::chrono::seconds(600));
                     g_trace_net = false;
                 }).detach();
             }

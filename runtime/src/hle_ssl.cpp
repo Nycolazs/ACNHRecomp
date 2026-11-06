@@ -228,6 +228,21 @@ int tls_read(Conn& c, uint8_t* buf, size_t n) {
     }
 }
 
+// DIAG: the HTTP request line and response status line crossing a connection (never headers: they carry tokens).
+void http_trace(const Conn& k, const char* dir, const uint8_t* p, size_t n) {
+    static std::atomic<int> count{0};
+    if (count >= 2000 || n < 8) return;
+    static const char* const kStarts[] = {"GET ", "POST ", "PUT ", "DELETE ", "PATCH ", "HTTP/1."};
+    for (const char* st : kStarts)
+        if (std::strncmp(reinterpret_cast<const char*>(p), st, std::strlen(st)) == 0) {
+            size_t e = 0;
+            while (e < n && e < 200 && p[e] != 0x0d && p[e] != 0x0a) e++;
+            count++;
+            log("ssl: %s %s %.*s", k.host.c_str(), dir, int(e), reinterpret_cast<const char*>(p));
+            return;
+        }
+}
+
 // ---- nn::ssl::Context -----------------------------------------------------------------------------------------
 
 void Initialize(CPU& c) { c.x[0] = tls_ready() ? kOk : kConnectionAbort; }
@@ -393,6 +408,7 @@ void Read(CPU& c) {
             return void(c.x[0] = map_error(got));
         }
     }
+    if (got > 0) http_trace(k, "<-", buf, size_t(got));
     if (out) st<int32_t>(out, got);
     c.x[0] = kOk;
 }
@@ -423,6 +439,7 @@ void Write(CPU& c) {
     const uint64_t out = c.x[2];
     const size_t n = size_t(uint32_t(c.x[3]));
     if (const uint32_t h = handshake(k); h != kOk) return void(c.x[0] = h);
+    http_trace(k, "->", buf, n);
     const int r = mbedtls_ssl_write(&k.ssl, buf, n);
     if (r < 0) {
         if (r != MBEDTLS_ERR_SSL_WANT_READ && r != MBEDTLS_ERR_SSL_WANT_WRITE) log_tls_error("write", k, r);
