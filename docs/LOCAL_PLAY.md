@@ -5,8 +5,8 @@ between computers running ACNHRecomp on the same network. A virtual LAN (ZeroTie
 network; Tailscale does not forward broadcasts, so a peer's address can also be typed in. Nintendo's online servers
 are never contacted: only machines running this project play together, each with its own copy of the game.
 
-This path is used when Online settings are in **Local** mode (`online.mode=local`). For Dodo Codes and Search for a
-friend on Nextendo Network, see [NEXTENDO.md](NEXTENDO.md) instead (`online.mode=nextendo`, the default).
+It works in either network mode, next to Nextendo Online: only `online.enabled=1` turns it on. For Dodo Codes and
+Search for a friend on Nextendo Network, see [NEXTENDO.md](NEXTENDO.md).
 
 On the Switch, local play is `nn::ldn` (a wireless network between consoles, no router) carrying the game's own
 traffic (Pia) over UDP sockets with addresses in the LDN subnet. The game calls both as APIs the runtime implements
@@ -16,8 +16,8 @@ become real UDP sockets towards the peers' real addresses.
 
 ## How to play
 
-In the launcher or the game's settings (F1), page **Online**, choose **Local play only**, then turn local play over
-the internet on. It can be changed while the game runs: it is read when you next talk to Orville, and held until that
+In the launcher or the game's settings (F1), page **Online**, turn local play over the internet on (in either network
+mode). It can be changed while the game runs: it is read when you next talk to Orville, and held until that
 session ends.
 
 - **On the same network**: nothing else. The host opens the airport (Local Play > invite), the others ask Orville to

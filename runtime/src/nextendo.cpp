@@ -497,7 +497,9 @@ bool ldn_wanted() {
 #if defined(NX_LAUNCHER_UI)
     return false;
 #else
-    return is_local() && config_get("online.enabled", "0") == "1";
+    // Local Play follows its own switch in both modes: an LDN session and Nextendo's sockets never overlap
+    // (hostnet_active() is false while the session is open), so neither needs the other off.
+    return config_get("online.enabled", "0") == "1";
 #endif
 }
 

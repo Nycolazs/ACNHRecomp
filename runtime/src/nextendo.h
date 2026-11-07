@@ -48,7 +48,7 @@ void set_game_version(const std::string& version);  // launcher / runtime once k
 
 // Online services (Dodo / Search) may run when Nextendo mode, signed in, and on 3.0.3.
 bool online_services_active();
-// LDN peer path (docs/LOCAL_PLAY.md) when Local mode and online.enabled.
+// LDN peer path (docs/LOCAL_PLAY.md) when online.enabled, in either mode.
 bool ldn_wanted();
 
 // ---- account persistence --------------------------------------------------------------------------------------
