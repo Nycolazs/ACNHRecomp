@@ -106,12 +106,7 @@ void trace(const char* what, int fd, uint64_t a, uint64_t b) {
 }
 
 void Socket_(CPU& c) {
-    if (hostnet_active()) {
-        hostnet_Socket(c);
-        static std::atomic<int> n{0};
-        if (n++ < 100) log("hostnet: Socket(type %d) -> %lld", int(c.x[1]), (long long)int64_t(c.x[0]));
-        return;
-    }
+    if (hostnet_active()) return hostnet_Socket(c);
     const int type = int(c.x[1]) & 0xFF;
     log("vsock: Socket(family %d, type %d, protocol %d)", int(c.x[0]), int(c.x[1]), int(c.x[2]));
     if (!ldn_enabled()) return ret(c, fail(kENETDOWN));

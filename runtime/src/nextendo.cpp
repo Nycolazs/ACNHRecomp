@@ -762,7 +762,6 @@ bool fetch_friends(std::vector<Friend>& out) {
     out.clear();
     if (account().access_token.empty()) return false;
     auto r = api_get("/api/friends");
-    log("nextendo: GET /api/friends -> HTTP %d", r.status);  // DIAG
     if (r.status != 200) return false;
     for (const std::string& o : json_objects(json_member(r.body, "friends"))) {
         Friend f;
