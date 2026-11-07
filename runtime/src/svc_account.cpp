@@ -12,7 +12,6 @@
 
 namespace nx {
 
-extern bool g_trace_net;  // loader.cpp (DIAG)
 
 // IStorage / IStorageAccessor over a byte blob (am's storage objects).
 namespace {
@@ -154,17 +153,6 @@ std::shared_ptr<Service> manager_for_application() {
     };
     // EnsureIdTokenCacheAsync -> IAsyncContext: renews the account and nex tokens with Nextendo.
     s->cmds[2] = [](IpcCtx& c) {
-        log("account: EnsureIdTokenCacheAsync");
-        {  // DIAG: trace the online calls that follow, 60 s
-            static std::atomic<bool> armed{false};
-            if (!armed.exchange(true)) {
-                g_trace_net = true;
-                std::thread([] {
-                    std::this_thread::sleep_for(std::chrono::seconds(600));
-                    g_trace_net = false;
-                }).detach();
-            }
-        }
         c.push_object(async_context([] {
             if (!nextendo::online_services_active()) return kNsaUnavailable;
             if (!nextendo::ensure_online_identity()) {
@@ -180,7 +168,6 @@ std::shared_ptr<Service> manager_for_application() {
     s->cmds[3] = [](IpcCtx& c) {
         if (!nextendo::online_services_active()) return kNsaUnavailable;
         const std::string tok = nextendo::baas_id_token(nextendo::game_version_string());
-        log("account: LoadIdTokenCache -> %zu-byte id_token", tok.size());
         if (tok.empty()) return kNsaUnavailable;
         Buffer out = c.out_buf(0);
         if (!out.addr || out.size <= tok.size()) {

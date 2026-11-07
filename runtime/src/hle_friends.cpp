@@ -94,27 +94,18 @@ void GetFriendList(CPU& c) {
     const int offset = int(c.x[3]) < 0 ? 0 : int(c.x[3]);
     const int max = int(c.x[4]) < 0 ? 0 : int(c.x[4]);
     std::vector<nextendo::Friend> list;
-    const auto all = nextendo::friends_cached();
-    for (const auto& f : all)
+    for (const auto& f : nextendo::friends_cached())
         if (passes(filter, f)) list.push_back(f);
     int written = 0;
     for (int i = offset; i < int(list.size()) && written < max; i++, written++)
         if (out) write_friend(out + uint64_t(written) * kFriendSize, uid, list[size_t(i)]);
     if (out_count) st<int32_t>(out_count, written);
-    // DIAG: what the game asked for and got (no names or ids).
-    log("friends: GetFriendList(offset %d, max %d, filter presence %u fav %u sameapp %u) -> %d of %zu cached", offset,
-        max, filter ? ld<uint32_t>(filter) : 0, filter ? ld<uint8_t>(filter + 4) : 0, filter ? ld<uint8_t>(filter + 5) : 0,
-        written, all.size());
-    for (const auto& f : all)
-        log("friends:   status %d same_game %d nsa %s app %s", f.status, int(same_game(f)), f.nsa ? "yes" : "no",
-            f.app_id.empty() ? "-" : f.app_id.c_str());
     c.x[0] = kOk;
 }
 
 // UpdateFriendInfo(Friend* out, const Uid&, const NetworkServiceAccountId* ids, int count): the entries for those
 // ids, in order; an id that is not (or no longer) a friend comes back not valid.
 void UpdateFriendInfo(CPU& c) {
-    log("friends: UpdateFriendInfo(%d ids)", int(c.x[3]));  // DIAG
     const uint64_t out = c.x[0], uid = c.x[1], ids = c.x[2];
     const int count = int(c.x[3]);
     const auto list = nextendo::online_services_active() ? nextendo::friends_cached() : std::vector<nextendo::Friend>{};
@@ -131,7 +122,6 @@ void UpdateFriendInfo(CPU& c) {
 // EnsureFriendListAvailable(AsyncContext*, const Uid&): fetches the list now, so the GetFriendList after the
 // context's event (signaled at once, AsyncGetSystemEvent) sees it.
 void EnsureFriendListAvailable(CPU& c) {
-    log("friends: EnsureFriendListAvailable");  // DIAG
     if (!nextendo::online_services_active()) return not_linked(c);
     nextendo::friends_refresh_blocking();
     ok(c);

@@ -86,13 +86,7 @@ void show_error(CPU& c) {
         nextendo::is_nextendo() ? (nextendo::signed_in() ? " [Nextendo signed in]" : " [Nextendo not signed in]") : "");
 }
 
-void net_trace(const char* what, const char* arg) {
-    static std::atomic<int> n{0};
-    if (n++ < 200) log("net: %s(%s) online %d", what, arg ? arg : "null", int(hostnet_active()));
-}
-
 void GetAddrInfo_(CPU& c) {
-    net_trace(hle_current_name(), reinterpret_cast<const char*>(c.x[0]));
     if (hostnet_active()) return hostnet_GetAddrInfo(c);
     eai_fail(c);
 }
@@ -103,7 +97,6 @@ void FreeAddrInfo_(CPU& c) {
 }
 
 void GetHostByName_(CPU& c) {
-    net_trace(hle_current_name(), reinterpret_cast<const char*>(c.x[0]));
     if (hostnet_active()) return hostnet_GetHostByName(c);
     c.x[0] = 0;
 }
@@ -113,7 +106,6 @@ void GetHostByName_(CPU& c) {
 void ResolveEx_(CPU& c) {
     const char* in = reinterpret_cast<const char*>(c.x[1]);
     char* out = reinterpret_cast<char*>(c.x[0]);
-    net_trace("nsd::ResolveEx", in);
     if (!net_up() || !in || !out) return result_fail(c);
     std::string fqdn;
     for (const char* p = in; *p && fqdn.size() < 0xF0; p++) fqdn += *p == '%' ? std::string("lp1") : std::string(1, *p);
