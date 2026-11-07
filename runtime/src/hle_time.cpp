@@ -10,6 +10,8 @@
 #include <nx/runtime.h>
 
 #include "game_clock.h"
+#include "platform.h"
+#include "nextendo.h"
 
 namespace nx {
 
@@ -73,6 +75,39 @@ void current_time(CPU& c) {  // Result GetCurrentTime(PosixTime*)
 void ok(CPU& c) { c.x[0] = 0; }
 void no(CPU& c) { c.x[0] = 0; }  // bool false
 
+// The network clock: online, a console's is synced to real UTC and "accurate"; the island services wait for that
+// (an inaccurate clock ended Orville's connection with a timeout, ens 2219-1028). Offline it stays the game clock,
+// as before, so time travel is untouched.
+void network_time(CPU& c) {
+    st<int64_t>(c.x[0], nextendo::online_services_active() ? game_clock_real_unix_seconds() : unix_now());
+    c.x[0] = 0;
+}
+// libc time for the game's own libraries (libcurl's clock): gettimeofday(timeval* {s64 sec, s64 usec}, tz), time(t*),
+// clock(). Left to the SDK's libc they read the time service the runtime only partly emulates; curl then saw its
+// request already past its deadline and gave up before resolving (CURLE_OPERATION_TIMEDOUT, ens 2219-1028).
+void gettimeofday_(CPU& c) {
+    // Monotonic between calls (curl subtracts them): the game clock once, then the host's steady clock from there.
+    static const int64_t base_s = unix_now();
+    static const uint64_t base_ns = plat::monotonic_ns();
+    const uint64_t us = (plat::monotonic_ns() - base_ns) / 1000;
+    if (c.x[0]) {
+        st<int64_t>(c.x[0], base_s + int64_t(us / 1000000));
+        st<int64_t>(c.x[0] + 8, int64_t(us % 1000000));
+    }
+    c.x[0] = 0;
+}
+void time_(CPU& c) {
+    const int64_t t = unix_now();
+    if (c.x[0]) st<int64_t>(c.x[0], t);
+    c.x[0] = uint64_t(t);
+}
+void clock_(CPU& c) {  // CLOCKS_PER_SEC is 1000000 on the Switch (musl)
+    static const uint64_t start = plat::monotonic_ns();
+    c.x[0] = (plat::monotonic_ns() - start) / 1000;
+}
+
+void network_accurate(CPU& c) { c.x[0] = nextendo::online_services_active() ? 1 : 0; }
+
 // void GetDeviceLocationName(LocationName*): 0x24 chars. The rule behind it is the host's, whatever the name.
 void GetDeviceLocationName(CPU& c) {
     char name[0x24] = "UTC";
@@ -114,10 +149,13 @@ void ToPosixTime(CPU& c) {
 }  // namespace
 
 NX_HLE("_ZN2nn4time23StandardUserSystemClock14GetCurrentTimeEPNS0_9PosixTimeE", current_time);
-NX_HLE("_ZN2nn4time26StandardNetworkSystemClock14GetCurrentTimeEPNS0_9PosixTimeE", current_time);
+NX_HLE("gettimeofday", gettimeofday_);
+NX_HLE("time", time_);
+NX_HLE("clock", clock_);
+NX_HLE("_ZN2nn4time26StandardNetworkSystemClock14GetCurrentTimeEPNS0_9PosixTimeE", network_time);
 NX_HLE("_ZN2nn4time25AdjustableUserSystemClock14GetCurrentTimeEPNS0_9PosixTimeE", current_time);
 NX_HLE("_ZN2nn4time25AdjustableUserSystemClock6AdjustEv", ok);
-NX_HLE("_ZN2nn4time26StandardNetworkSystemClock20IsAccuracySufficientEv", no);
+NX_HLE("_ZN2nn4time26StandardNetworkSystemClock20IsAccuracySufficientEv", network_accurate);
 NX_HLE("_ZN2nn4time21GetDeviceLocationNameEPNS0_12LocationNameE", GetDeviceLocationName);
 NX_HLE("_ZN2nn4time16LoadTimeZoneRuleEPNS0_12TimeZoneRuleERKNS0_12LocationNameE", LoadTimeZoneRule);
 NX_HLE("_ZN2nn4time14ToCalendarTimeEPNS0_12CalendarTimeEPNS0_22CalendarAdditionalInfoERKNS0_9PosixTimeERKNS0_12TimeZoneRuleE",

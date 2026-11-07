@@ -34,6 +34,10 @@ extern const nx::ModuleInfo nx_module_subsdk0;
 namespace nx {
 
 void discord_presence_start();  // discord_presence.cpp
+namespace nextendo {
+void load_account();
+void presence_start();
+}
 
 NX_GAME_API uint64_t mrs(CPU& c, uint32_t sysreg) {
     switch (sysreg) {
@@ -151,6 +155,8 @@ static void nn_main(CPU& c) {
     game::after_init();
     log("entering nnMain");
     discord_presence_start();  // discord.client_id in config.ini; nothing without it
+    nextendo::load_account();  // Nextendo OAuth session from nextendo_account.json
+    nextendo::presence_start();  // POST /api/presence every 60 s while online
     cpu_profile_register("main");  // NX_CPU_PROFILE (cpu_profile.cpp)
     uint64_t real = 0;
     for (size_t k = 0; k < nx_module_main.symbol_count; k++)
