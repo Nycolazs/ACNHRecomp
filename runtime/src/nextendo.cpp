@@ -762,6 +762,7 @@ bool fetch_friends(std::vector<Friend>& out) {
     out.clear();
     if (account().access_token.empty()) return false;
     auto r = api_get("/api/friends");
+    log("nextendo: GET /api/friends -> HTTP %d", r.status);  // DIAG
     if (r.status != 200) return false;
     for (const std::string& o : json_objects(json_member(r.body, "friends"))) {
         Friend f;
@@ -789,6 +790,13 @@ std::atomic<bool> g_friends_busy{false};
 }  // namespace
 
 std::vector<Friend> friends_cached() {
+    bool cold;
+    {
+        std::lock_guard lk(g_friends_mu);
+        cold = !g_friends_at.time_since_epoch().count();
+    }
+    // The first read waits for the list: a game that reads it once at start would otherwise keep an empty one.
+    if (cold) friends_refresh_blocking();
     friends_refresh_async();
     std::lock_guard lk(g_friends_mu);
     return g_friends;
@@ -816,10 +824,10 @@ void friends_refresh_async() {
 
 void friends_refresh_blocking() {
     std::vector<Friend> list;
-    if (!fetch_friends(list)) return;
+    const bool ok = fetch_friends(list);
     std::lock_guard lk(g_friends_mu);
-    g_friends = std::move(list);
-    g_friends_at = std::chrono::steady_clock::now();
+    if (ok) g_friends = std::move(list);
+    g_friends_at = std::chrono::steady_clock::now();  // a failure also waits for the next 20 s refresh
 }
 
 // ---- presence -------------------------------------------------------------------------------------------------

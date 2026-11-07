@@ -1,7 +1,7 @@
 // nn::friends: empty / not-linked offline; when signed into Nextendo, the friend list comes from the account API
 // (nextendo.cpp caches it). ACNH matches the network service account id each player announces against these
-// entries (best friends, letters, visits), so an entry carries the friend's baasUserID ("nsa") when the server has
-// it, the same id a Switch on that account announces, else the pid.
+// entries (best friends, letters, visits), so an entry carries the id that friend announces: their baasUserID ("nsa")
+// when both accounts have one (linked to a console), else the pid (friend_id below).
 #include <cstring>
 #include <vector>
 
@@ -53,7 +53,9 @@ void AsyncGetSystemEvent(CPU& c) {
     c.x[0] = kOk;
 }
 
-uint64_t friend_id(const nextendo::Friend& f) { return f.nsa ? f.nsa : f.pid; }
+// The id this friend's game announces, which ACNH matches against: their baasUserID only when ours is known too (both
+// sides are then linked to a console and announce it); otherwise every Nextendo client announces its pid.
+uint64_t friend_id(const nextendo::Friend& f) { return f.nsa && nextendo::account().nsa ? f.nsa : f.pid; }
 
 bool same_game(const nextendo::Friend& f) {
     return f.status != kOffline && std::strtoull(f.app_id.c_str(), nullptr, 16) == nextendo::kAcnhTitleId;
@@ -92,18 +94,27 @@ void GetFriendList(CPU& c) {
     const int offset = int(c.x[3]) < 0 ? 0 : int(c.x[3]);
     const int max = int(c.x[4]) < 0 ? 0 : int(c.x[4]);
     std::vector<nextendo::Friend> list;
-    for (const auto& f : nextendo::friends_cached())
+    const auto all = nextendo::friends_cached();
+    for (const auto& f : all)
         if (passes(filter, f)) list.push_back(f);
     int written = 0;
     for (int i = offset; i < int(list.size()) && written < max; i++, written++)
         if (out) write_friend(out + uint64_t(written) * kFriendSize, uid, list[size_t(i)]);
     if (out_count) st<int32_t>(out_count, written);
+    // DIAG: what the game asked for and got (no names or ids).
+    log("friends: GetFriendList(offset %d, max %d, filter presence %u fav %u sameapp %u) -> %d of %zu cached", offset,
+        max, filter ? ld<uint32_t>(filter) : 0, filter ? ld<uint8_t>(filter + 4) : 0, filter ? ld<uint8_t>(filter + 5) : 0,
+        written, all.size());
+    for (const auto& f : all)
+        log("friends:   status %d same_game %d nsa %s app %s", f.status, int(same_game(f)), f.nsa ? "yes" : "no",
+            f.app_id.empty() ? "-" : f.app_id.c_str());
     c.x[0] = kOk;
 }
 
 // UpdateFriendInfo(Friend* out, const Uid&, const NetworkServiceAccountId* ids, int count): the entries for those
 // ids, in order; an id that is not (or no longer) a friend comes back not valid.
 void UpdateFriendInfo(CPU& c) {
+    log("friends: UpdateFriendInfo(%d ids)", int(c.x[3]));  // DIAG
     const uint64_t out = c.x[0], uid = c.x[1], ids = c.x[2];
     const int count = int(c.x[3]);
     const auto list = nextendo::online_services_active() ? nextendo::friends_cached() : std::vector<nextendo::Friend>{};
@@ -120,6 +131,7 @@ void UpdateFriendInfo(CPU& c) {
 // EnsureFriendListAvailable(AsyncContext*, const Uid&): fetches the list now, so the GetFriendList after the
 // context's event (signaled at once, AsyncGetSystemEvent) sees it.
 void EnsureFriendListAvailable(CPU& c) {
+    log("friends: EnsureFriendListAvailable");  // DIAG
     if (!nextendo::online_services_active()) return not_linked(c);
     nextendo::friends_refresh_blocking();
     ok(c);
