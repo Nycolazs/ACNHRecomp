@@ -24,7 +24,9 @@ Not yet on Nextendo’s side (server updates): best friends between an emulator 
 | Value | Default | Behaviour |
 |---|---|---|
 | `nextendo` | yes | Sign in with a Nextendo account. Airport Online uses Nextendo. |
-| `local` | | Peer visits only ([LOCAL_PLAY.md](LOCAL_PLAY.md)): no Nextendo account, no Nintendo Online path. |
+| `local` | | Nextendo off: no account, no online services. |
+
+Local Play peer visits ([LOCAL_PLAY.md](LOCAL_PLAY.md)) are separate and work in both modes when `online.enabled=1`.
 
 ## Requirements
 
@@ -68,4 +70,4 @@ Client code in this tree is original (MIT). It was written against the public Ne
 
 ## Kill switch
 
-Choose **Local play only**, or **Sign out**: nifm reports offline again and hostname redirects stop. Local LDN peer play remains available under Local mode when `online.enabled=1`.
+Choose **Local play only**, or **Sign out**: nifm reports offline again and hostname redirects stop. Local Play stays available in both modes when `online.enabled=1`.

@@ -671,18 +671,19 @@ void section(const char* key) {
 // The choice that matches the console, tagged as such ("1080p (TV mode) · console original").
 std::string console(const char* key) { return std::string(tr(key)) + " · " + tr("common.console_tag"); }
 
-// Nextendo Online (Dodo / Search) or Local peer visits (docs/LOCAL_PLAY.md).
+// Nextendo Online (Dodo / Search) and, in either mode, Local Play peer visits (docs/LOCAL_PLAY.md).
 void page_online() {
     row("online.mode", tr("online.mode.desc"), [&](float w) {
         combo("online.mode", "nextendo",
               {{"nextendo", tr("online.mode.nextendo")}, {"local", tr("online.mode.local")}}, w);
     });
-    if (config_get("online.mode", "nextendo") == "nextendo") {
-        if (!::nx::nextendo::version_ok_for_nextendo()) {
-            ImGui::TextWrapped("%s", tr("online.nextendo.need_303"));
-            return;
-        }
-        const auto acc = ::nx::nextendo::account();
+    const auto acc = ::nx::nextendo::account();
+    if (config_get("online.mode", "nextendo") != "nextendo") {
+        // Nextendo off: only Local Play below.
+    } else if (!::nx::nextendo::version_ok_for_nextendo()) {
+        ImGui::TextWrapped("%s", tr("online.nextendo.need_303"));
+        ImGui::Separator();
+    } else {
         if (acc.signed_in) {
             ImGui::TextUnformatted(trf("online.nextendo.signed_in", acc.username).c_str());
             if (!acc.friend_code.empty())
@@ -706,7 +707,7 @@ void page_online() {
             if (!::nx::nextendo::last_error().empty())
                 ImGui::TextWrapped("%s", ::nx::nextendo::last_error().c_str());
         }
-        return;
+        ImGui::Separator();
     }
     const bool busy = ldn_enabled();  // held until the session ends (hle_ldn.cpp): no switch to touch
     row("online.enabled", tr(busy ? "online.enabled.busy" : "online.enabled.desc"), [&](float w) {

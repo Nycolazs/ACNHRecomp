@@ -57,7 +57,7 @@ const Entry kEn[] = {
     {"tab.saves", "Saves"},
     {"tab.online", "Online"},
     {"online.mode", "Network mode"},
-    {"online.mode.desc", "Nextendo: Dodo Codes and Search for a friend on Nextendo Network. Local: peer visits with no account."},
+    {"online.mode.desc", "Nextendo: Dodo Codes and Search for a friend on Nextendo Network. Local play only: no Nextendo account. Local play over the internet (below) works in both."},
     {"online.mode.nextendo", "Nextendo Online"},
     {"online.mode.local", "Local play only"},
     {"online.nextendo.desc", "Sign in with your Nextendo account to use Dodo Codes and Search for a friend. Nintendo's servers are never contacted."},

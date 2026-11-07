@@ -2611,9 +2611,7 @@ void page_online() {
                     ImGui::TextWrapped("%s", nx::nextendo::last_error().c_str());
             }
         }
-        ImGui::EndChild();
-        ImGui::PopStyleColor();
-        return;
+        ImGui::Separator();
     }
     bool on = g_game_ini.get("online.enabled", "0") == "1";
     bool enabled_changed = ImGui::Checkbox(tr("online.enabled"), &on);
