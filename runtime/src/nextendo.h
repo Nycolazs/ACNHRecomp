@@ -86,6 +86,26 @@ std::vector<Friend> friends_cached();
 void friends_refresh_async();
 void friends_refresh_blocking();  // now, from a thread that may wait (EnsureFriendListAvailable)
 
+// The settings screen's Friends view: the list with the requests waiting on either side. Never blocks: it starts a
+// background refresh when the copy is older than 20 s; `loaded` is false until one has come back.
+struct FriendLists {
+    std::vector<Friend> friends, incoming, outgoing;
+    bool loaded = false;
+};
+FriendLists friend_lists_cached();
+// Blocking (a worker thread): send a request by friend code, or answer one. `message` is what to show the player.
+bool send_friend_request(const std::string& friend_code, std::string& message);
+bool answer_friend_request(uint64_t pid, bool accept, std::string& message);
+
+// The Online page's status check (runtime only: nextendo_status.cpp). Blocking: run it on a worker thread.
+struct ServiceStatus {
+    int health = 0;   // GET /api/health: Nextendo's own service
+    int account = 0;  // GET /api/me with this account (0 when signed out): sign-in, friends, presence
+    int game = 0;     // the game servers (island services, NEX) through the redirect address: any HTTP status = up
+    int players = -1;  // players in ACNH now, from /api/online-counts; -1 unknown
+};
+ServiceStatus check_service_status();
+
 // Presence (POST /api/presence): published at least every 60 s while online services are active, or the server
 // shows the player offline after 90 s. playing: inside an online session (nn::friends::DeclareOpenOnlinePlaySession).
 void presence_start();
@@ -110,6 +130,10 @@ std::string baas_id_token(const std::string& display_version);
 
 // Network Service Account id presented to the game: the baasUserID when known, else the pid.
 uint64_t network_service_account_id();
+
+// One GET on a game server through Nextendo's address, with `host` as the TLS name (runtime only: hle_npns.cpp).
+// `request` is the whole request head; the body comes back, `status` gets the HTTP status (0: no answer).
+std::string game_server_get(const std::string& host, const std::string& request, int* status);
 
 constexpr uint64_t kAcnhTitleId = 0x01006F8002326000ull;
 

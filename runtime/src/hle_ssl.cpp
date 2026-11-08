@@ -32,6 +32,8 @@
 
 namespace nx {
 
+void npns_observe_request(const std::string& host, const uint8_t* p, size_t n);  // hle_npns.cpp
+
 // One RNG for every connection and the id_token signer (nextendo_token.cpp); Mbed TLS is built without its
 // threading layer, so calls are serialized here.
 namespace {
@@ -423,6 +425,7 @@ void Write(CPU& c) {
     const uint64_t out = c.x[2];
     const size_t n = size_t(uint32_t(c.x[3]));
     if (const uint32_t h = handshake(k); h != kOk) return void(c.x[0] = h);
+    npns_observe_request(k.host, buf, n);  // best-friend watch (hle_npns.cpp)
     const int r = mbedtls_ssl_write(&k.ssl, buf, n);
     if (r < 0) {
         if (r != MBEDTLS_ERR_SSL_WANT_READ && r != MBEDTLS_ERR_SSL_WANT_WRITE) log_tls_error("write", k, r);

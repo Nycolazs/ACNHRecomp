@@ -685,14 +685,26 @@ void sign_in_start() {
 }
 
 bool refresh_session() {
+    // One refresh at a time: each one rotates the refresh token, and the presence, friend-list and token-renewal
+    // threads can all ask at once. A caller that waited finds the token already fresh.
+    static std::mutex refresh_mu;
+    static uint64_t last_refresh = 0;  // under refresh_mu
+    std::lock_guard rl(refresh_mu);
     Account a = account();
     if (a.refresh_token.empty()) return signed_in();
+    if (now_unix() - last_refresh < 60) return !a.access_token.empty();  // refreshed a moment ago, maybe while we waited
+    last_refresh = now_unix();
     const std::string form = "grant_type=refresh_token&client_id=" + percent_encode(client_id()) +
                              "&refresh_token=" + percent_encode(a.refresh_token);
     Account n = a;  // identity, nex token and nsa survive a refresh
-    if (!exchange_token(form, n)) return false;
+    if (!exchange_token(form, n)) {
+        log("nextendo: access token refresh failed: %s", last_error().c_str());
+        return false;
+    }
     set_account(n);
     save_account();
+    log("nextendo: access token refreshed (%llu min left)",
+        (unsigned long long)((n.access_expires_unix - now_unix()) / 60));
     return true;
 }
 
@@ -702,9 +714,10 @@ std::map<std::string, std::string> bearer(const std::string& token) {
     return {{"Authorization", "Bearer " + token}, {"X-Nextendo-Client-Id", client_id()}, {"Accept", "application/json"}};
 }
 
-// GET with the access token; one refresh and retry on 401.
+// GET with the access token; one retry when no answer came back (a dropped connection), one refresh and retry on 401.
 HttpResponse api_get(const std::string& path) {
     auto r = http_request("GET", api_base() + path, bearer(account().access_token));
+    if (r.status == 0) r = http_request("GET", api_base() + path, bearer(account().access_token));
     if (r.status == 401 && refresh_session()) r = http_request("GET", api_base() + path, bearer(account().access_token));
     return r;
 }
@@ -752,43 +765,81 @@ bool ensure_online_identity() {
     if (!signed_in()) return false;
     const uint64_t now = now_unix();
     Account a = account();
-    if (a.access_expires_unix && a.access_expires_unix < now + 120 && !refresh_session()) return false;
+    if (a.access_expires_unix && a.access_expires_unix < now + 600 && !refresh_session()) return false;
     a = account();
     if ((a.nex_token.empty() || a.nex_expires_unix < now + 600) && !fetch_nex_token()) return false;
     if (!account().nsa) fetch_nsa();  // optional: without it the pid stands in, as on servers without the field
     return true;
 }
 
-// GET /api/friends: {"friends":[{pid, name, nsa, favorite, presence:{status, app_id, ...}}, ...]}.
-bool fetch_friends(std::vector<Friend>& out) {
-    out.clear();
+namespace {
+
+std::string json_escape(const std::string& v) {
+    std::string out;
+    for (char ch : v) {
+        if (uint8_t(ch) < 0x20) continue;
+        if (ch == '"' || ch == '\\') out += '\\';
+        out += ch;
+    }
+    return out;
+}
+
+Friend parse_friend(const std::string& o) {
+    Friend f;
+    f.pid = json_u64(o, "pid");
+    f.nsa = parse_hex16(json_str(o, "nsa"));
+    f.name = json_str(o, "name");
+    if (f.name.empty()) f.name = json_str(o, "username");
+    f.friend_code = json_str(o, "friend_code");
+    f.favorite = json_str(o, "favorite") == "true";
+    const std::string pres = json_member(o, "presence");
+    if (!pres.empty()) {
+        f.status = int(json_u64(pres, "status"));
+        f.app_id = json_str(pres, "app_id");
+    }
+    return f;
+}
+
+std::vector<Friend> parse_friends(const std::string& arr) {
+    std::vector<Friend> out;
+    for (const std::string& o : json_objects(arr))
+        if (Friend f = parse_friend(o); f.pid || f.nsa) out.push_back(std::move(f));
+    return out;
+}
+
+// GET /api/friends: {"friends":[{pid, name, nsa, favorite, presence:{status, app_id, ...}}, ...], "requests":[...],
+// "sent":[...]}: the friends, the requests waiting for this player, and the ones it sent.
+bool fetch_friend_lists(FriendLists& out) {
+    out = {};
     if (account().access_token.empty()) return false;
     auto r = api_get("/api/friends");
     if (r.status != 200) return false;
-    for (const std::string& o : json_objects(json_member(r.body, "friends"))) {
-        Friend f;
-        f.pid = json_u64(o, "pid");
-        f.nsa = parse_hex16(json_str(o, "nsa"));
-        f.name = json_str(o, "name");
-        if (f.name.empty()) f.name = json_str(o, "username");
-        f.friend_code = json_str(o, "friend_code");
-        f.favorite = json_str(o, "favorite") == "true";
-        const std::string pres = json_member(o, "presence");
-        if (!pres.empty()) {
-            f.status = int(json_u64(pres, "status"));
-            f.app_id = json_str(pres, "app_id");
-        }
-        if (f.pid || f.nsa) out.push_back(std::move(f));
-    }
+    out.friends = parse_friends(json_member(r.body, "friends"));
+    out.incoming = parse_friends(json_member(r.body, "requests"));
+    out.outgoing = parse_friends(json_member(r.body, "sent"));
+    out.loaded = true;
     return true;
 }
 
-namespace {
 std::mutex g_friends_mu;
-std::vector<Friend> g_friends;
+FriendLists g_lists;
 std::chrono::steady_clock::time_point g_friends_at{};
 std::atomic<bool> g_friends_busy{false};
+
+void store_lists(bool ok, FriendLists&& lists) {
+    std::lock_guard lk(g_friends_mu);
+    if (ok) g_lists = std::move(lists);
+    g_friends_at = std::chrono::steady_clock::now();  // a failure also waits 20 s before the next try
+}
+
 }  // namespace
+
+bool fetch_friends(std::vector<Friend>& out) {
+    FriendLists lists;
+    const bool ok = fetch_friend_lists(lists);
+    out = std::move(lists.friends);
+    return ok;
+}
 
 std::vector<Friend> friends_cached() {
     bool cold;
@@ -800,7 +851,13 @@ std::vector<Friend> friends_cached() {
     if (cold) friends_refresh_blocking();
     friends_refresh_async();
     std::lock_guard lk(g_friends_mu);
-    return g_friends;
+    return g_lists.friends;
+}
+
+FriendLists friend_lists_cached() {
+    friends_refresh_async();
+    std::lock_guard lk(g_friends_mu);
+    return g_lists;
 }
 
 void friends_refresh_async() {
@@ -812,23 +869,51 @@ void friends_refresh_async() {
     }
     if (g_friends_busy.exchange(true)) return;
     std::thread([] {
-        std::vector<Friend> list;
-        const bool ok = fetch_friends(list);
-        {
-            std::lock_guard lk(g_friends_mu);
-            if (ok) g_friends = std::move(list);
-            g_friends_at = std::chrono::steady_clock::now();  // a failure also waits 20 s before the next try
-        }
+        FriendLists lists;
+        const bool ok = fetch_friend_lists(lists);
+        store_lists(ok, std::move(lists));
         g_friends_busy = false;
     }).detach();
 }
 
 void friends_refresh_blocking() {
-    std::vector<Friend> list;
-    const bool ok = fetch_friends(list);
-    std::lock_guard lk(g_friends_mu);
-    if (ok) g_friends = std::move(list);
-    g_friends_at = std::chrono::steady_clock::now();  // a failure also waits for the next 20 s refresh
+    FriendLists lists;
+    const bool ok = fetch_friend_lists(lists);
+    store_lists(ok, std::move(lists));
+}
+
+namespace {
+
+// POST a JSON body to the account API; one retry when no answer came back, one refresh and retry on 401. The text to
+// show: the server's own "error"/"message" when it gave one.
+bool api_post(const std::string& path, const std::string& body, std::string& message) {
+    auto send = [&] {
+        return http_request("POST", api_base() + path, bearer(account().access_token), body, "application/json");
+    };
+    auto r = send();
+    if (r.status == 0) r = send();
+    if (r.status == 401 && refresh_session()) r = send();
+    message = json_str(r.body, "error");
+    if (message.empty()) message = json_str(r.body, "message");
+    if (message.empty() && r.status != 200 && r.status != 201)
+        message = r.status ? "Nextendo answered HTTP " + std::to_string(r.status) + "." : "Nextendo did not answer.";
+    if (r.status >= 200 && r.status < 300) {
+        std::lock_guard lk(g_friends_mu);
+        g_friends_at = std::chrono::steady_clock::time_point(std::chrono::seconds(1));  // stale: the next read refreshes
+        return true;
+    }
+    return false;
+}
+
+}  // namespace
+
+bool send_friend_request(const std::string& friend_code, std::string& message) {
+    return api_post("/api/friends", "{\"friend_code\":\"" + json_escape(friend_code) + "\"}", message);
+}
+
+bool answer_friend_request(uint64_t pid, bool accept, std::string& message) {
+    return api_post(accept ? "/api/friends/accept" : "/api/friends/decline",
+                    "{\"pid\":" + std::to_string(pid) + "}", message);
 }
 
 // ---- presence -------------------------------------------------------------------------------------------------

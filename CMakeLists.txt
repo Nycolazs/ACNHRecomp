@@ -588,7 +588,8 @@ FetchContent_Declare(mbedtls
     URL_HASH SHA256=8b54fb9bcf4d5a7078028e0520acddefb7900b3e66fec7f7175bb5b7d85ccdca
     EXCLUDE_FROM_ALL)
 FetchContent_MakeAvailable(mbedtls)
-target_sources(${NX_GAME} PRIVATE runtime/src/hle_ssl.cpp runtime/src/nextendo_token.cpp)
+target_sources(${NX_GAME} PRIVATE runtime/src/hle_ssl.cpp runtime/src/hle_npns.cpp runtime/src/nextendo_token.cpp
+    runtime/src/nextendo_status.cpp)
 target_link_libraries(${NX_GAME} PRIVATE mbedtls mbedx509 mbedcrypto)
 if(WIN32)
     set(ZLIB_USE_STATIC_LIBS ON)  # vcpkg's static zlib (tools/setup_acnh.py): zs.lib
