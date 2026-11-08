@@ -78,7 +78,27 @@ void set(std::string* out, const std::string& v) {
 
 fs::path user_dir() { return save_storage::user_dir(plat::data_root()); }
 fs::path device_dir() { return save_storage::device_dir(plat::data_root()); }
-fs::path backups_dir() { return user_dir() / "backups"; }
+fs::path backups_root() { return user_dir() / "backups"; }
+
+// The folder name for a save's backups: its island name, made safe for every file system ("Unnamed island" before
+// the island has one). Two islands of the same name share a folder.
+std::string island_folder(const fs::path& save) {
+    std::string n = save_storage::island_display_name(save);
+    for (char& ch : n)
+        if (static_cast<unsigned char>(ch) < 0x20 || std::strchr("<>:\"/\|?*", ch)) ch = '_';
+    while (!n.empty() && (n.back() == ' ' || n.back() == '.')) n.pop_back();
+    while (!n.empty() && n.front() == ' ') n.erase(0, 1);
+    if (n.empty()) return "Unnamed island";
+    static const char* const kReserved[] = {"con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5",
+                                            "com6", "com7", "com8", "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5",
+                                            "lpt6", "lpt7", "lpt8", "lpt9"};
+    for (const char* r : kReserved)
+        if (lower(n) == r) return n + "_";
+    return n;
+}
+
+// user/backups/<island>/: the backups of the island being played.
+fs::path backups_dir() { return backups_root() / u8(island_folder(device_dir())); }
 
 bool flat_save(const fs::path& d, std::string* why) { return save_storage::flat_save(d, why); }
 bool copy_tree(const fs::path& src, const fs::path& dst, std::string* error) {
@@ -380,15 +400,34 @@ bool zip_write(const fs::path& src, const fs::path& zip, std::string* error) {
     return true;
 }
 
+// YYYYmmdd-HHMMSS[-n]; ".tmp" folders are backups still being written (or abandoned by a crash).
+bool backup_name(const std::string& n) {
+    bool ok = n.size() >= 15 && n[8] == '-' && n.find(".tmp") == std::string::npos;
+    for (size_t i = 0; ok && i < 15; ++i) ok = i == 8 || (n[i] >= '0' && n[i] <= '9');
+    return ok;
+}
+
+// Backups from before the per-island folders sit in user/backups/ itself: each moves into its island's folder.
+void migrate_flat_backups() {
+    std::error_code ec;
+    std::vector<fs::path> flat;
+    for (fs::directory_iterator it(backups_root(), ec), end; !ec && it != end; it.increment(ec))
+        if (it->is_directory(ec) && backup_name(utf8(it->path().filename()))) flat.push_back(it->path());
+    for (const fs::path& p : flat) {
+        const fs::path dest = backups_root() / u8(island_folder(p)) / p.filename();
+        fs::create_directories(dest.parent_path(), ec);
+        if (!fs::exists(dest, ec)) fs::rename(p, dest, ec);
+        if (ec) log("saves: cannot move the backup %s into its island folder", utf8(p).c_str());
+    }
+}
+
 std::vector<std::string> backups_sorted() {
+    migrate_flat_backups();
     std::vector<std::string> v;
     std::error_code ec;
     for (fs::directory_iterator it(backups_dir(), ec), end; !ec && it != end; it.increment(ec)) {
         std::string n = utf8(it->path().filename());
-        // YYYYmmdd-HHMMSS[-n]; ".tmp" folders are backups still being written (or abandoned by a crash).
-        bool ok = it->is_directory(ec) && n.size() >= 15 && n[8] == '-' && n.find(".tmp") == std::string::npos;
-        for (size_t i = 0; ok && i < 15; ++i) ok = i == 8 || (n[i] >= '0' && n[i] <= '9');
-        if (ok) v.push_back(n);
+        if (it->is_directory(ec) && backup_name(n)) v.push_back(n);
     }
     // Newest first. Same-second names: "x-2" sorts after "x" and is newer, which descending order also gives,
     // but "x-10" vs "x-9" does not: compare the suffix as a number.
@@ -762,6 +801,8 @@ std::string backup_now(std::string* error) {
         return std::string();
     }
 }
+
+std::string backups_folder() { return utf8(backups_dir()); }
 
 std::vector<std::string> list_backups() {
     try {

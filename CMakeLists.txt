@@ -561,6 +561,7 @@ else()
 endif()
 target_sources(${NX_GAME} PRIVATE runtime/src/saves.cpp)
 target_link_libraries(${NX_GAME} PRIVATE nx_save_storage)
+target_sources(${NX_GAME} PRIVATE runtime/src/hle_olsc.cpp)  # the Island Backup, kept with the saves (saves.cpp)
 if(WIN32)
     set(ZLIB_USE_STATIC_LIBS ON)  # vcpkg's static zlib (tools/setup_acnh.py): zs.lib
 endif()
