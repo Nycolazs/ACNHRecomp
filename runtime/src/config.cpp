@@ -14,6 +14,7 @@
 #include <nx/runtime.h>
 
 #include "game_clock.h"
+#include "ini_key.h"
 #include "platform.h"
 
 #if !defined(_WIN32)
@@ -235,7 +236,9 @@ void config_load() {
         size_t eq = line.find('=');
         if (eq == std::string::npos) continue;
         std::string k = trim(line.substr(0, eq)), v = trim(line.substr(eq + 1));
-        if (!section.empty() && k.find('.') == std::string::npos) k = section + "." + k;
+        bool legacy = false;
+        k = ini_full_key(section, k, &legacy);  // the key bindings came back to their defaults without it
+        if (legacy && find(k)) continue;
         if (ConfigEntry* e = find(k))
             e->value = v;
         else

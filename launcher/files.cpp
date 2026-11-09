@@ -13,6 +13,7 @@
 #include <fstream>
 #include <sstream>
 
+#include "ini_key.h"
 #include "ui/i18n.h"
 
 namespace launcher {
@@ -163,7 +164,9 @@ void Ini::load(const std::string& path) {
         size_t eq = line.find('=');
         if (eq == std::string::npos) continue;
         std::string k = trim(line.substr(0, eq)), v = trim(line.substr(eq + 1));
-        if (!section.empty() && k.find('.') == std::string::npos) k = section + "." + k;
+        bool legacy = false;
+        k = nx::ini_full_key(section, k, &legacy);  // as the game reads it (runtime/src/ini_key.h)
+        if (legacy && get(k, "\x01") != "\x01") continue;
         set(k, v);
     }
 }
