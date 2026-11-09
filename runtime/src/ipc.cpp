@@ -9,6 +9,14 @@ namespace nx {
 
 namespace {
 
+// X, A, B and W descriptors carry 39 address bits, the guest's address space on Horizon. On macOS that space sits at
+// kGuestShift (0xC0_0800_0000..0x140_0000_0000), so a guest pointer such as main + x (0x100_xxxx_xxxx) arrives with
+// its high bits cut off: they are put back here (issue #77, a crash reading hid's vibration values on macOS).
+uint64_t desc_addr(uint64_t v) {
+    if (kGuestShift == 0 || v == 0) return v;
+    return kGuestShift + ((v - kGuestShift) & 0x7FFFFFFFFFull);
+}
+
 struct DomainState {
     std::map<uint32_t, std::shared_ptr<Service>> objects;
     uint32_t next_object = 1;
@@ -124,14 +132,14 @@ uint32_t ipc_request(CPU& c, uint32_t handle, uint64_t buf, uint64_t) {
     for (uint32_t i = 0; i < nx_; i++, p += 2) {
         uint32_t d0 = w[p], d1 = w[p + 1];
         uint64_t addr = d1 | (uint64_t((d0 >> 12) & 0xF) << 32) | (uint64_t((d0 >> 6) & 0x7) << 36);
-        ctx.x.push_back({addr, d0 >> 16});
+        ctx.x.push_back({desc_addr(addr), d0 >> 16});
     }
     auto abw = [&](std::vector<Buffer>& v, uint32_t n) {
         for (uint32_t i = 0; i < n; i++, p += 3) {
             uint32_t size_lo = w[p], addr_lo = w[p + 1], d2 = w[p + 2];
             uint64_t addr = addr_lo | (uint64_t((d2 >> 28) & 0xF) << 32) | (uint64_t((d2 >> 2) & 0x7) << 36);
             uint64_t size = size_lo | (uint64_t((d2 >> 24) & 0xF) << 32);
-            v.push_back({addr, size});
+            v.push_back({desc_addr(addr), size});
         }
     };
     abw(ctx.a, na);
