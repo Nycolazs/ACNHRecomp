@@ -1,5 +1,5 @@
-// The present pass with HDR output (video.hdr): present.frag's rotation, fit and crop (no touch controls: HDR is a
-// desktop setting), then RenoDX's SwapChainPass. The window texture holds the scene and the UI in UI-relative gamma
+// The present pass with HDR output (video.hdr): present.frag's rotation, fit and crop (the touch controls are drawn
+// over it by overlay.frag), then RenoDX's SwapChainPass. The window texture holds the scene and the UI in UI-relative gamma
 // (the UI at 0..1, untouched; the scene's highlights above 1 once its tonemap is replaced): it is decoded, scaled to
 // the UI brightness, clamped to the peak and encoded HDR10 (PQ, BT.2020) or scRGB.
 // DXC: dxc -spirv -T ps_6_0 -HV 2021 -I <renodx>/src/shaders (tools/gen_spirv_inc.py).
