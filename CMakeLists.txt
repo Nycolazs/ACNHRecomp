@@ -569,8 +569,14 @@ if(ZLIB_FOUND)
     target_link_libraries(${NX_GAME} PRIVATE ZLIB::ZLIB)
     target_compile_definitions(${NX_GAME} PRIVATE NX_HAVE_ZLIB)
 endif()
-execute_process(COMMAND git describe --always --dirty WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-                OUTPUT_VARIABLE NX_GIT_DESCRIBE OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+# A release build (.github/workflows/build.yml) names its version: git describe would give the previous tag when the
+# packages are built before the release's tag exists, and 0.8.0 then called itself 0.7.0 (issue #76).
+if("$ENV{NX_RELEASE_VERSION}" MATCHES "^v?[0-9]+\\.[0-9]+")
+    set(NX_GIT_DESCRIBE "$ENV{NX_RELEASE_VERSION}")
+else()
+    execute_process(COMMAND git describe --always --dirty WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+                    OUTPUT_VARIABLE NX_GIT_DESCRIBE OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+endif()
 if(NOT NX_GIT_DESCRIBE)
     set(NX_GIT_DESCRIBE "dev")
 endif()

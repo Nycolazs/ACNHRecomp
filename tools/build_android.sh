@@ -99,6 +99,8 @@ python3 tools/make_android_icon.py 2>/dev/null || true  # needs Pillow; the PNGs
 # The version comes from the git tag (v0.7.0 -> versionName 0.7.0, versionCode 700), so Android and app stores
 # such as Obtainium see the real release number.
 VNAME=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//'); VNAME=${VNAME:-0.0.0}
+# NX_RELEASE_VERSION=v0.8.1 names it when the tag does not exist yet (the version the release will have).
+[[ ${NX_RELEASE_VERSION:-} =~ ^v?[0-9]+\.[0-9]+ ]] && VNAME=${NX_RELEASE_VERSION#v}
 IFS=. read -r VMAJ VMIN VPAT <<<"${VNAME%%-*}"
 VCODE=$(( ${VMAJ:-0} * 10000 + ${VMIN:-0} * 100 + ${VPAT:-0} ))
 echo "APK version $VNAME ($VCODE)"

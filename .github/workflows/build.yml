@@ -39,6 +39,7 @@ jobs:
     runs-on: windows-2022
     env:
       VERSION: ${{ needs.version.outputs.version }}
+      NX_RELEASE_VERSION: ${{ needs.version.outputs.version }}  # the version the programs show (#76)
     defaults:
       run:
         shell: bash
@@ -78,6 +79,7 @@ jobs:
     runs-on: macos-14  # Homebrew's libraries there run on macOS 14 and newer
     env:
       VERSION: ${{ needs.version.outputs.version }}
+      NX_RELEASE_VERSION: ${{ needs.version.outputs.version }}  # the version the programs show (#76)
       MACOSX_DEPLOYMENT_TARGET: "14.0"
     steps:
       - uses: actions/checkout@v7
@@ -99,6 +101,7 @@ jobs:
     runs-on: ubuntu-22.04  # glibc 2.35: what the package runs on, and newer
     env:
       VERSION: ${{ needs.version.outputs.version }}
+      NX_RELEASE_VERSION: ${{ needs.version.outputs.version }}  # the version the programs show (#76)
     steps:
       - uses: actions/checkout@v7
         with:

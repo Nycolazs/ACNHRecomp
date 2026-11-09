@@ -41,8 +41,14 @@ target_link_libraries(acnhrecomp_launcher PRIVATE SDL3::SDL3 Threads::Threads nx
 if(WIN32)
     target_link_libraries(acnhrecomp_launcher PRIVATE ole32 shell32 uuid ws2_32)  # desktop.cpp: the shortcuts
 endif()
-execute_process(COMMAND git describe --always --dirty WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-                OUTPUT_VARIABLE NX_LAUNCHER_DESCRIBE OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+# A release build (.github/workflows/build.yml) names its version: git describe would give the previous tag when the
+# packages are built before the release's tag exists, and 0.8.0 then called itself 0.7.0 (issue #76).
+if("$ENV{NX_RELEASE_VERSION}" MATCHES "^v?[0-9]+\\.[0-9]+")
+    set(NX_LAUNCHER_DESCRIBE "$ENV{NX_RELEASE_VERSION}")
+else()
+    execute_process(COMMAND git describe --always --dirty WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+                    OUTPUT_VARIABLE NX_LAUNCHER_DESCRIBE OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+endif()
 if(NOT NX_LAUNCHER_DESCRIBE)
     set(NX_LAUNCHER_DESCRIBE "dev")
 endif()
