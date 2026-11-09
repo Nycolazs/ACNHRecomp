@@ -76,11 +76,11 @@ jobs:
   macos:
     name: macOS arm64
     needs: version
-    runs-on: macos-14  # Homebrew's libraries there run on macOS 14 and newer
+    runs-on: macos-15  # GitHub dropped macos-14; Homebrew's libraries here need macOS 15 (checked by the package script)
     env:
       VERSION: ${{ needs.version.outputs.version }}
       NX_RELEASE_VERSION: ${{ needs.version.outputs.version }}  # the version the programs show (#76)
-      MACOSX_DEPLOYMENT_TARGET: "14.0"
+      MACOSX_DEPLOYMENT_TARGET: "15.0"
     steps:
       - uses: actions/checkout@v7
         with:

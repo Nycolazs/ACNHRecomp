@@ -240,7 +240,7 @@ game, and none needs a compiler. You need two things:
 | File | System |
 |---|---|
 | `ACNHRecomp-<version>-windows-x64.zip` | Windows 10/11, x64 |
-| `ACNHRecomp-<version>-macOS-arm64.zip` | macOS 14 or newer, Apple Silicon (M1 or newer) |
+| `ACNHRecomp-<version>-macOS-arm64.zip` | macOS 15 or newer, Apple Silicon (M1 or newer) |
 | `ACNHRecomp-<version>-linux-x64.tar.gz` | Linux x86-64, glibc 2.35+ (Ubuntu 22.04, Fedora 36, Debian 12 and newer) |
 | `ACNHRecomp-<version>-android.apk` | Android 10+, Snapdragon (Adreno 6xx or newer): see [docs/ANDROID.md](docs/ANDROID.md) |
 | `libvulkan_freedreno.so` | The Turnip Vulkan driver (Mesa, MIT), already inside the APK; for `tools/android_install.sh` |

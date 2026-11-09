@@ -8,6 +8,8 @@
 # needs: cmake, ninja, brew install sdl3 molten-vk vulkan-loader vulkan-headers libvpx libvorbis
 cd "$(dirname "$0")/.." || exit 1
 set -e
+# The oldest macOS the package runs on: the compiler, Info.plist and the check at the end follow it.
+export MACOSX_DEPLOYMENT_TARGET=${MACOSX_DEPLOYMENT_TARGET:-15.0}
 VER=${1:?usage: tools/package_release_mac.sh <version>}
 [ "$(uname)" = Darwin ] || { echo "macOS only"; exit 1; }
 git diff --quiet HEAD -- || { echo "uncommitted changes: commit first (the package is made from HEAD)"; exit 1; }
@@ -51,7 +53,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>${VER#v}</string>
     <key>CFBundleVersion</key><string>${VER#v}</string>
-    <key>LSMinimumSystemVersion</key><string>14.0</string>
+    <key>LSMinimumSystemVersion</key><string>${MACOSX_DEPLOYMENT_TARGET:-15.0}</string>
     <key>LSApplicationCategoryType</key><string>public.app-category.games</string>
     <key>NSHighResolutionCapable</key><true/>
 </dict>
@@ -97,6 +99,15 @@ codesign --force -s - "$APP"  # the bundle last: its seal covers the files above
 if otool -L "$M/acnh" "$M/ACNHRecomp Launcher" "$M"/*.dylib | grep -E "$BREW|/opt/homebrew|/usr/local"; then
   echo "a library still points at Homebrew"; exit 1
 fi
+# Every binary must load on the macOS the bundle declares (LSMinimumSystemVersion): Homebrew builds its libraries for
+# the runner's macOS, whatever MACOSX_DEPLOYMENT_TARGET says.
+MIN=${MACOSX_DEPLOYMENT_TARGET:-15.0}
+for f in "$M/acnh" "$M/ACNHRecomp Launcher" "$M"/*.dylib; do
+  need=$(otool -l "$f" | awk '/LC_BUILD_VERSION/ {b = 1} b && $1 == "minos" {print $2; exit}')
+  if [ -n "$need" ] && [ "$(printf '%s\n%s\n' "$need" "$MIN" | sort -V | tail -1)" != "$MIN" ]; then
+    echo "$(basename "$f") needs macOS $need, newer than the declared $MIN"; exit 1
+  fi
+done
 
 cat > "$R/Start ACNHRecomp.command" <<'CMD'
 #!/bin/bash

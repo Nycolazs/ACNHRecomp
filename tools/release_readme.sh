@@ -18,7 +18,7 @@ case $OS in
    Open again (or System Settings > Privacy & Security > Open Anyway).'
            KEEP='"Install in Applications" on the launcher'"'"'s home page copies ACNHRecomp.app into Applications and
    puts it on the desktop: from then on open it from Launchpad, Spotlight or the Dock.'
-           NEEDS='a Mac with Apple Silicon (M1 or newer) and macOS 14 or newer.'
+           NEEDS='a Mac with Apple Silicon (M1 or newer) and macOS 15 or newer.'
            LIBS='SDL3 (zlib licence), the Vulkan loader and MoltenVK (Apache 2.0), libvpx, libvorbis and libogg (BSD).'
            EOL=$'\n' ;;
   linux)   START='run "./Start ACNHRecomp.sh" (or open it from your file manager).'
