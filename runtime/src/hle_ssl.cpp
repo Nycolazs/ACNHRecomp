@@ -1,8 +1,10 @@
 // nn::ssl for Nextendo Online: TLS client connections run here with Mbed TLS over the host sockets of
 // hle_hostnet.cpp, instead of the console's ssl service. The game reaches it through the C API (libcurl:
-// nnsslConnection*) and a few C++ calls (NEX: nn::ssl::Context). Server certificates are not verified: the
-// Nextendo servers present certificates for Nintendo's hostnames that no host trust store accepts, and the DNS
-// redirect (nextendo.cpp) already decides who the game talks to.
+// nnsslConnection*) and a few C++ calls (NEX: nn::ssl::Context). The Nextendo servers present certificates for
+// Nintendo's hostnames that no trust store accepts (self-signed, or from Nextendo's own CA), so instead of a chain
+// the server's public key is checked against the keys Nextendo's game servers use (nextendo_peer_pinned): a
+// connection whose key is not one of them is closed before the game sends anything, so its tokens never reach a
+// stranger in the middle. Every name the game contacts is redirected to Nextendo, so nothing else needs to pass.
 //
 // Object layouts, read from the SDK: nn::ssl::Context holds its context id at +0; nn::ssl::Connection holds its
 // connection id at +0 and its context id at +8. The SDK's own getters read those fields, so Create writes them.
@@ -10,6 +12,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cerrno>
+#include <cstdlib>
 #include <cstring>
 #include <map>
 #include <memory>
@@ -17,15 +20,18 @@
 #include <string>
 #include <vector>
 
+#include <mbedtls/base64.h>
 #include <mbedtls/ctr_drbg.h>
 #include <mbedtls/entropy.h>
 #include <mbedtls/error.h>
 #include <mbedtls/net_sockets.h>
+#include <mbedtls/sha256.h>
 #include <mbedtls/ssl.h>
 #include <psa/crypto.h>
 
 #include <nx/runtime.h>
 
+#include "config.h"
 #include "hle_hostnet.h"
 #include "ldn_net.h"
 #include "nextendo.h"
@@ -61,6 +67,54 @@ bool tls_ready() {
     return ok;
 }
 
+// The public keys (SHA-256 of the DER SubjectPublicKeyInfo, base64) of Nextendo's game servers as of November 2026:
+// the island services, NEX (authentication and secure servers share one), and the NookLink service (issued by
+// Nextendo's CA). More can be added without a rebuild, in case Nextendo changes a key: comma-separated in
+// online.nextendo.tls_pins (config.ini) or NEXTENDO_TLS_PINS. NEXTENDO_TLS_PINS=any turns the check off, for a
+// developer's own test server.
+static const char* const kNextendoPins[] = {
+    "Arqg+TyNT5zPJ5G0ysgg4Ernyi/UYdc7gWGeNP+VuSU=",  // api.hac.lp1.acbaa.srv.nintendo.net
+    "0uc4jkjuMM++z761IodPLMa4X3qhEFxXZp88Kqhfsw4=",  // g2ee2e300-lp1.s.n.srv.nintendo.net (:443 and :60007)
+    "6yJjGQLydiGDaOWd+sc/ZWv4ORw1bmw38HkEnbQNWW8=",  // api-lp1.znc.srv.nintendo.net
+};
+
+std::string spki_sha256_b64(const mbedtls_x509_crt& crt) {
+    unsigned char der[4096];
+    const int n = mbedtls_pk_write_pubkey_der(const_cast<mbedtls_pk_context*>(&crt.pk), der, sizeof der);
+    if (n <= 0) return {};
+    unsigned char hash[32];
+    mbedtls_sha256(der + sizeof der - n, size_t(n), hash, 0);  // the DER is written at the end of the buffer
+    unsigned char b64[64];
+    size_t len = 0;
+    mbedtls_base64_encode(b64, sizeof b64, &len, hash, sizeof hash);
+    return std::string(reinterpret_cast<char*>(b64), len);
+}
+
+bool nextendo_peer_pinned(const mbedtls_ssl_context* ssl, const std::string& host) {
+    std::string extra = config_get("online.nextendo.tls_pins", "");
+    if (const char* e = std::getenv("NEXTENDO_TLS_PINS"); e && e[0]) extra = std::string(e) + "," + extra;
+    if (extra.rfind("any", 0) == 0) return true;
+    const mbedtls_x509_crt* crt = mbedtls_ssl_get_peer_cert(ssl);
+    const std::string key = crt ? spki_sha256_b64(*crt) : std::string();
+    if (key.empty()) {
+        log("ssl: %s: no server certificate; refused", host.c_str());
+        return false;
+    }
+    for (const char* pin : kNextendoPins)
+        if (key == pin) return true;
+    for (size_t i = 0; i <= extra.size();) {
+        size_t e = extra.find(',', i);
+        if (e == std::string::npos) e = extra.size();
+        std::string pin = extra.substr(i, e - i);
+        pin.erase(0, pin.find_first_not_of(" \t"));
+        pin.erase(pin.find_last_not_of(" \t") + 1);
+        if (!pin.empty() && pin == key) return true;
+        i = e + 1;
+    }
+    log("ssl: %s: the server's key (sha256/%s) is not Nextendo's; refused", host.c_str(), key.c_str());
+    return false;
+}
+
 namespace {
 
 constexpr uint32_t kModule = 123;
@@ -86,7 +140,7 @@ struct Conn {
     bool alpn_requested = false;
     uint64_t cert_buf = 0;
     uint32_t cert_buf_size = 0;
-    bool configured = false, handshaken = false;
+    bool configured = false, handshaken = false, refused = false;
     mbedtls_ssl_config conf;
     mbedtls_ssl_context ssl;
     std::vector<uint8_t> peeked;  // plaintext Peek took off the TLS layer, handed out first by Read
@@ -208,12 +262,18 @@ bool configure(Conn& c) {
 
 uint32_t handshake(Conn& c) {
     if (c.handshaken) return kOk;
+    if (c.refused) return kConnectionAbort;
     if (c.fd < 0 || hostnet_native_fd(c.fd) == hostnet_sock_t(kBadSock)) return kNoSocket;
     if (!configure(c)) return kConnectionAbort;
     const int r = mbedtls_ssl_handshake(&c.ssl);
     if (r != 0) {
         if (r != MBEDTLS_ERR_SSL_WANT_READ && r != MBEDTLS_ERR_SSL_WANT_WRITE) log_tls_error("handshake", c, r);
         return map_error(r);
+    }
+    if (!nextendo_peer_pinned(&c.ssl, c.host)) {  // before the game writes anything on it
+        c.refused = true;
+        mbedtls_ssl_close_notify(&c.ssl);
+        return kConnectionAbort;
     }
     c.handshaken = true;
     log("ssl: connected to %s (%s)", c.host.c_str(), mbedtls_ssl_get_version(&c.ssl));

@@ -156,7 +156,7 @@ static void nn_main(CPU& c) {
     log("entering nnMain");
     discord_presence_start();  // discord.client_id in config.ini; nothing without it
     nextendo::load_account();  // Nextendo OAuth session from nextendo_account.json
-    nextendo::presence_start();  // POST /api/presence every 60 s while online
+    nextendo::presence_start();  // POST /api/presence every 60 s while online; nothing when signed out or Local Only
     cpu_profile_register("main");  // NX_CPU_PROFILE (cpu_profile.cpp)
     uint64_t real = 0;
     for (size_t k = 0; k < nx_module_main.symbol_count; k++)

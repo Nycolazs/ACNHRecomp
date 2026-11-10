@@ -69,6 +69,7 @@ std::string server_ip();   // NEXTENDO_SERVER_IP or 51.178.29.194
 std::string nat_ip();      // NEXTENDO_NAT_IP or 164.132.111.120
 
 // Browser PKCE sign-in on a background thread; poll sign_in_busy / last_error.
+std::string pkce_challenge(const std::string& verifier);  // S256: base64url(SHA-256(verifier)), RFC 7636
 void sign_in_start();
 void sign_out();
 bool sign_in_busy();
@@ -84,7 +85,9 @@ bool fetch_friends(std::vector<Friend>& out);
 // Friend list cached by a background refresh (at most every 20 s); never blocks the game.
 std::vector<Friend> friends_cached();
 void friends_refresh_async();
-void friends_refresh_blocking();  // now, from a thread that may wait (EnsureFriendListAvailable)
+// Refresh now and wait for it, 3 s at most (EnsureFriendListAvailable, the first read): never a long stall, even with
+// Nextendo down.
+void friends_refresh_blocking();
 
 // The settings screen's Friends view: the list with the requests waiting on either side. Never blocks: it starts a
 // background refresh when the copy is older than 20 s; `loaded` is false until one has come back.

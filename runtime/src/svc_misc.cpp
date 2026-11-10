@@ -32,21 +32,7 @@ ServiceRegistrar r_pctl_r("pctl:r", [] { return make("pctl:r", pctl); });
 
 ServiceRegistrar r_lm("lm", [] {
     return make("lm", [](Service& s) {
-        s.cmds[0] = [](IpcCtx& c) {  // OpenLogger
-            c.push_object(make("ILogger", [](Service& l) {
-                // Log(packet): a 0x10-byte header, then chunks {key u8, size u8, bytes}; the text runs go to our log.
-                l.cmds[0] = [](IpcCtx& c) {
-                    const Buffer in = c.in_buf(0);
-                    const auto* p = reinterpret_cast<const uint8_t*>(in.addr);
-                    std::string text;
-                    for (uint64_t i = 0x10; p && i < in.size; i++)
-                        text += (p[i] >= 0x20 && p[i] < 0x7f) ? char(p[i]) : ' ';
-                    if (!text.empty()) log("lm: %s", text.c_str());
-                    return 0u;
-                };
-            }));
-            return 0u;
-        };
+        s.cmds[0] = [](IpcCtx& c) { c.push_object(make("ILogger")); return 0u; };  // OpenLogger
     });
 });
 

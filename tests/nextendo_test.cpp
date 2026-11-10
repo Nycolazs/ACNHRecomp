@@ -101,6 +101,11 @@ int main() {
 
     CHECK(nextendo::api_base() == base);  // loopback override accepted
 
+    // RFC 7636 appendix B: the S256 challenge of its example verifier.
+    CHECK(nextendo::pkce_challenge("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk") ==
+          "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM");
+    CHECK(nextendo::pkce_challenge("") == "47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU");  // SHA-256 of nothing
+
     nextendo::Account acc;
     acc.signed_in = true;
     acc.access_token = "access-1";
@@ -123,6 +128,20 @@ int main() {
     nextendo::load_account();
     CHECK(nextendo::account().nsa == 0x0123456789abcdefull);
     CHECK(nextendo::account().nex_token == "nx2.abc.def");
+
+    // A name with JSON's special characters survives a save (escaped) and a load.
+    {
+        nextendo::Account quoted = nextendo::account();
+        quoted.username = "Na\"me\\x";
+        nextendo::set_account(quoted);
+        CHECK(nextendo::save_account());
+        nextendo::set_account({});
+        nextendo::load_account();
+        CHECK(nextendo::account().username == "Na\"me\\x");
+        CHECK(nextendo::account().refresh_token == quoted.refresh_token);
+        CHECK(!std::filesystem::exists(dir / "nextendo_account.json.tmp"));
+        nextendo::set_account(quoted);
+    }
 
     std::vector<nextendo::Friend> fr;
     CHECK(nextendo::fetch_friends(fr));

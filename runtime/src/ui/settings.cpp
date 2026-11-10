@@ -141,7 +141,7 @@ void toast(const std::string& text) {
 bool needs_restart(const std::string& key) {
     if (key.rfind("online.", 0) == 0) {
         if (key == "online.mode")
-            ::nx::nextendo::presence_start();  // starts once; it idles while not online
+            ::nx::nextendo::presence_start();  // starts once, when signed in and in Nextendo mode; idles while not online
         return false;  // LDN reads online.enabled at session start; Nextendo reads mode live
     }
 #if defined(__ANDROID__)
@@ -847,6 +847,13 @@ void page_online() {
     });
     if (nextendo) {
         section("online.section.nextendo");
+#if defined(__ANDROID__)
+        // The account API's HTTPS goes through curl (nextendo_http.cpp), which Android does not have: no sign-in here
+        // until it moves onto Mbed TLS.
+        if (true) {
+            ImGui::TextWrapped("%s", tr("online.nextendo.android"));
+        } else
+#endif
         if (!nxo::version_ok_for_nextendo()) {
             ImGui::TextWrapped("%s", tr("online.nextendo.need_303"));
         } else if (acc.signed_in) {
@@ -877,6 +884,7 @@ void page_online() {
                 page_nav_item();
             });
         }
+#if !defined(__ANDROID__)
         const std::string sdesc = status_text();
         row("online.server", sdesc.c_str(), [&](float w) {
             if (ImGui::Button(tr(g_status.running ? "online.server.checking_button" : "online.server.check"),
@@ -884,6 +892,7 @@ void page_online() {
                 status_check_start();
             page_nav_item();
         });
+#endif
     }
     section("online.section.local");
     const bool busy = ldn_enabled();  // held until the session ends (hle_ldn.cpp): no switch to touch

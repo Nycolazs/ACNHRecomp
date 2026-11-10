@@ -38,8 +38,10 @@ void log(const char* fmt, ...);
 #pragma comment(lib, "shell32.lib")
 #endif
 
-#if defined(__APPLE__)
-#include <CommonCrypto/CommonDigest.h>
+#if !defined(_WIN32)
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #endif
 
 #if defined(NX_HAVE_SDL3)
@@ -67,6 +69,16 @@ std::unordered_map<uint32_t, std::string> g_ip_host;
 std::string trim(const std::string& s) {
     size_t a = s.find_first_not_of(" \t\r\n"), b = s.find_last_not_of(" \t\r\n");
     return a == std::string::npos ? std::string() : s.substr(a, b - a + 1);
+}
+
+std::string json_escape(const std::string& v) {
+    std::string out;
+    for (char ch : v) {
+        if (uint8_t(ch) < 0x20) continue;
+        if (ch == '"' || ch == '\\') out += '\\';
+        out += ch;
+    }
+    return out;
 }
 
 std::string json_get_string(const std::string& json, const char* key) {
@@ -239,36 +251,50 @@ std::string random_token(size_t bytes) {
     return b64url(buf.data(), buf.size());
 }
 
-std::string sha256_b64url(const std::string& s) {
-    uint8_t dig[32] = {};
-#if defined(_WIN32)
-    BCRYPT_ALG_HANDLE alg = nullptr;
-    BCRYPT_HASH_HANDLE hash = nullptr;
-    if (BCryptOpenAlgorithmProvider(&alg, BCRYPT_SHA256_ALGORITHM, nullptr, 0) >= 0) {
-        if (BCryptCreateHash(alg, &hash, nullptr, 0, nullptr, 0, 0) >= 0) {
-            BCryptHashData(hash, (PUCHAR)s.data(), ULONG(s.size()), 0);
-            BCryptFinishHash(hash, dig, 32, 0);
-            BCryptDestroyHash(hash);
+// SHA-256 (FIPS 180-4), for the PKCE challenge. The same code on every platform: this file is also the launcher's,
+// which links no crypto library, and a system tool (openssl on Linux) may be missing.
+void sha256(const uint8_t* data, size_t n, uint8_t out[32]) {
+    static const uint32_t K[64] = {
+        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+        0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+        0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+        0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+        0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+        0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+        0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2};
+    uint32_t h[8] = {0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19};
+    auto rotr = [](uint32_t x, int r) { return (x >> r) | (x << (32 - r)); };
+    std::vector<uint8_t> m(data, data + n);
+    m.push_back(0x80);
+    while (m.size() % 64 != 56) m.push_back(0);
+    const uint64_t bits = uint64_t(n) * 8;
+    for (int i = 7; i >= 0; i--) m.push_back(uint8_t(bits >> (i * 8)));
+    for (size_t off = 0; off < m.size(); off += 64) {
+        uint32_t w[64];
+        for (int i = 0; i < 16; i++)
+            w[i] = uint32_t(m[off + i * 4]) << 24 | uint32_t(m[off + i * 4 + 1]) << 16 |
+                   uint32_t(m[off + i * 4 + 2]) << 8 | m[off + i * 4 + 3];
+        for (int i = 16; i < 64; i++) {
+            const uint32_t s0 = rotr(w[i - 15], 7) ^ rotr(w[i - 15], 18) ^ (w[i - 15] >> 3);
+            const uint32_t s1 = rotr(w[i - 2], 17) ^ rotr(w[i - 2], 19) ^ (w[i - 2] >> 10);
+            w[i] = w[i - 16] + s0 + w[i - 7] + s1;
         }
-        BCryptCloseAlgorithmProvider(alg, 0);
+        uint32_t a = h[0], b = h[1], c = h[2], d = h[3], e = h[4], f = h[5], g = h[6], hh = h[7];
+        for (int i = 0; i < 64; i++) {
+            const uint32_t t1 = hh + (rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25)) + ((e & f) ^ (~e & g)) + K[i] + w[i];
+            const uint32_t t2 = (rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22)) + ((a & b) ^ (a & c) ^ (b & c));
+            hh = g, g = f, f = e, e = d + t1, d = c, c = b, b = a, a = t1 + t2;
+        }
+        h[0] += a, h[1] += b, h[2] += c, h[3] += d, h[4] += e, h[5] += f, h[6] += g, h[7] += hh;
     }
-#elif defined(__APPLE__)
-    CC_SHA256(s.data(), CC_LONG(s.size()), dig);
-#else
-    // Linux: openssl dgst when available
-    const std::string in_p = data_root() + "/.nx_pkce_in";
-    const std::string out_p = data_root() + "/.nx_pkce_out";
-    {
-        std::ofstream f(in_p, std::ios::binary);
-        if (f) f.write(s.data(), std::streamsize(s.size()));
-    }
-    std::string cmd = "openssl dgst -sha256 -binary -out \"" + out_p + "\" \"" + in_p + "\" 2>/dev/null";
-    (void)std::system(cmd.c_str());
-    {
-        std::ifstream out(out_p, std::ios::binary);
-        if (out) out.read(reinterpret_cast<char*>(dig), 32);
-    }
-#endif
+    for (int i = 0; i < 8; i++)
+        for (int k = 0; k < 4; k++) out[i * 4 + k] = uint8_t(h[i] >> (24 - k * 8));
+}
+
+std::string sha256_b64url(const std::string& s) {
+    uint8_t dig[32];
+    sha256(reinterpret_cast<const uint8_t*>(s.data()), s.size(), dig);
     return b64url(dig, 32);
 }
 
@@ -433,6 +459,8 @@ bool exchange_token(const std::string& form, Account& out) {
 
 }  // namespace
 
+std::string pkce_challenge(const std::string& verifier) { return sha256_b64url(verifier); }
+
 void set_data_root(const std::string& path) {
     std::lock_guard lk(g_mu);
     g_data_root_override = path;
@@ -490,7 +518,13 @@ bool version_ok_for_nextendo() {
     return v == "3.0.3";
 }
 
-bool online_services_active() { return is_nextendo() && signed_in() && version_ok_for_nextendo(); }
+bool online_services_active() {
+#if defined(__ANDROID__)
+    return false;  // the account API needs curl (nextendo_http.cpp), which Android lacks; the Online page says so
+#else
+    return is_nextendo() && signed_in() && version_ok_for_nextendo();
+#endif
+}
 
 bool ldn_wanted() {
     if (const char* e = std::getenv("NX_LDN"); e && e[0] == '1') return true;
@@ -524,31 +558,56 @@ void load_account() {
     g_account = std::move(a);
 }
 
+// The file holds the account's tokens, the refresh token included: owner-only on POSIX, written whole to a temporary
+// file and renamed over the old one, one save at a time. A save takes the account as it is when its turn comes, so the
+// last refresh token rotated is the one on disk, and an interrupted write leaves the previous file intact.
 bool save_account() {
+    static std::mutex save_mu;
+    std::lock_guard sl(save_mu);
     Account a = account();
     char nsa_hex[17] = {};
     if (a.nsa) std::snprintf(nsa_hex, sizeof nsa_hex, "%016llx", (unsigned long long)a.nsa);
     std::ostringstream j;
     j << "{\n"
-      << "  \"access_token\": \"" << a.access_token << "\",\n"
-      << "  \"refresh_token\": \"" << a.refresh_token << "\",\n"
-      << "  \"username\": \"" << a.username << "\",\n"
-      << "  \"friend_code\": \"" << a.friend_code << "\",\n"
-      << "  \"nex_token\": \"" << a.nex_token << "\",\n"
+      << "  \"access_token\": \"" << json_escape(a.access_token) << "\",\n"
+      << "  \"refresh_token\": \"" << json_escape(a.refresh_token) << "\",\n"
+      << "  \"username\": \"" << json_escape(a.username) << "\",\n"
+      << "  \"friend_code\": \"" << json_escape(a.friend_code) << "\",\n"
+      << "  \"nex_token\": \"" << json_escape(a.nex_token) << "\",\n"
       << "  \"pid\": " << a.pid << ",\n"
       << "  \"access_expires_unix\": " << a.access_expires_unix << ",\n"
       << "  \"nex_expires_unix\": " << a.nex_expires_unix << ",\n"
       << "  \"nsa\": \"" << nsa_hex << "\"\n"
       << "}\n";
+    const std::string text = j.str();
 #if !defined(NX_LAUNCHER_UI)
     plat::make_dirs(data_root());
 #else
-    std::error_code ec;
-    std::filesystem::create_directories(data_root(), ec);
+    std::error_code mk;
+    std::filesystem::create_directories(data_root(), mk);
 #endif
-    std::ofstream out(account_path(), std::ios::binary);
-    if (!out) return false;
-    out << j.str();
+    const std::string path = account_path(), tmp = path + ".tmp";
+#if defined(_WIN32)
+    {
+        std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+        if (!out) return false;
+        out << text;
+        if (!out.flush()) return false;
+    }
+#else
+    const int fd = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    if (fd < 0) return false;
+    ::fchmod(fd, 0600);  // an older temporary file may have been created with other bits
+    const bool written = ::write(fd, text.data(), text.size()) == ssize_t(text.size()) && ::fsync(fd) == 0;
+    ::close(fd);
+    if (!written) return false;
+#endif
+    std::error_code ec;
+    std::filesystem::rename(tmp, path, ec);  // replaces the old file
+    if (ec) {
+        std::filesystem::remove(tmp, ec);
+        return false;
+    }
     return true;
 }
 
@@ -622,8 +681,41 @@ std::string api_base() { return checked_base("NEXTENDO_API", "https://nextendo.n
 
 std::string auth_base() { return checked_base("NEXTENDO_AUTH", api_base()); }
 
-std::string server_ip() { return env_or("NEXTENDO_SERVER_IP", "51.178.29.194"); }
-std::string nat_ip() { return env_or("NEXTENDO_NAT_IP", "164.132.111.120"); }
+// Nextendo's game and NAT-check servers. Nextendo publishes no DNS name for them (nextendo.network is its web front),
+// so the addresses in use in November 2026 are built in. They can be changed without a rebuild, as an IP or a host
+// name: NEXTENDO_SERVER_IP / NEXTENDO_NAT_IP, or online.nextendo.server / online.nextendo.nat in config.ini. A name is
+// resolved (and kept) on first use; the built-in address stands in when it does not resolve.
+static std::string address_of(const char* env, const char* key, const char* builtin) {
+    std::string v = env_or(env, "");
+#if !defined(NX_LAUNCHER_UI)
+    if (v.empty()) v = trim(config_get(key, ""));
+#else
+    (void)key;
+#endif
+    if (v.empty()) return builtin;
+    if (v.find_first_not_of("0123456789.") == std::string::npos) return v;  // already an IPv4 address
+    static std::mutex mu;
+    static std::map<std::string, std::string> resolved;
+    std::lock_guard lk(mu);
+    if (auto it = resolved.find(v); it != resolved.end()) return it->second;
+    net_init();
+    addrinfo hints{}, *res = nullptr;
+    hints.ai_family = AF_INET;
+    std::string ip = builtin;
+    if (getaddrinfo(v.c_str(), nullptr, &hints, &res) == 0 && res) {
+        char buf[INET_ADDRSTRLEN] = {};
+        inet_ntop(AF_INET, &reinterpret_cast<sockaddr_in*>(res->ai_addr)->sin_addr, buf, sizeof buf);
+        ip = buf;
+        freeaddrinfo(res);
+    } else {
+        log("nextendo: %s does not resolve; using %s", v.c_str(), builtin);
+    }
+    resolved[v] = ip;
+    return ip;
+}
+
+std::string server_ip() { return address_of("NEXTENDO_SERVER_IP", "online.nextendo.server", "51.178.29.194"); }
+std::string nat_ip() { return address_of("NEXTENDO_NAT_IP", "online.nextendo.nat", "164.132.111.120"); }
 
 bool sign_in_busy() { return g_sign_in_busy.load(); }
 
@@ -655,7 +747,7 @@ void sign_in_start() {
             return;
         }
         const std::string verifier = random_token(32);
-        const std::string challenge = sha256_b64url(verifier);
+        const std::string challenge = pkce_challenge(verifier);
         const std::string state = random_token(16);
         std::string code;
         std::string redirect_uri;
@@ -681,6 +773,9 @@ void sign_in_start() {
         save_account();
         ensure_online_identity();
         log("nextendo: signed in as %s", account().username.c_str());
+#if !defined(NX_LAUNCHER_UI)
+        presence_start();  // signed in from the settings screen while the game runs
+#endif
     }).detach();
 }
 
@@ -774,16 +869,6 @@ bool ensure_online_identity() {
 
 namespace {
 
-std::string json_escape(const std::string& v) {
-    std::string out;
-    for (char ch : v) {
-        if (uint8_t(ch) < 0x20) continue;
-        if (ch == '"' || ch == '\\') out += '\\';
-        out += ch;
-    }
-    return out;
-}
-
 Friend parse_friend(const std::string& o) {
     Friend f;
     f.pid = json_u64(o, "pid");
@@ -822,14 +907,31 @@ bool fetch_friend_lists(FriendLists& out) {
 }
 
 std::mutex g_friends_mu;
+std::condition_variable g_friends_cv;  // a refresh ended (g_friends_gen moved)
 FriendLists g_lists;
 std::chrono::steady_clock::time_point g_friends_at{};
+uint64_t g_friends_gen = 0;
 std::atomic<bool> g_friends_busy{false};
 
 void store_lists(bool ok, FriendLists&& lists) {
-    std::lock_guard lk(g_friends_mu);
-    if (ok) g_lists = std::move(lists);
-    g_friends_at = std::chrono::steady_clock::now();  // a failure also waits 20 s before the next try
+    {
+        std::lock_guard lk(g_friends_mu);
+        if (ok) g_lists = std::move(lists);
+        g_friends_at = std::chrono::steady_clock::now();  // a failure also waits 20 s before the next try
+        g_friends_gen++;
+    }
+    g_friends_cv.notify_all();
+}
+
+// A refresh on its own thread, unless one is already running.
+void refresh_in_background() {
+    if (g_friends_busy.exchange(true)) return;
+    std::thread([] {
+        FriendLists lists;
+        const bool ok = fetch_friend_lists(lists);
+        store_lists(ok, std::move(lists));
+        g_friends_busy = false;
+    }).detach();
 }
 
 }  // namespace
@@ -847,7 +949,8 @@ std::vector<Friend> friends_cached() {
         std::lock_guard lk(g_friends_mu);
         cold = !g_friends_at.time_since_epoch().count();
     }
-    // The first read waits for the list: a game that reads it once at start would otherwise keep an empty one.
+    // The first read waits a little for the list (a game that reads it once at start would otherwise keep an empty
+    // one), never long: with Nextendo down it carries on with an empty list, filled by a later read.
     if (cold) friends_refresh_blocking();
     friends_refresh_async();
     std::lock_guard lk(g_friends_mu);
@@ -867,19 +970,19 @@ void friends_refresh_async() {
             std::chrono::steady_clock::now() - g_friends_at < std::chrono::seconds(20))
             return;
     }
-    if (g_friends_busy.exchange(true)) return;
-    std::thread([] {
-        FriendLists lists;
-        const bool ok = fetch_friend_lists(lists);
-        store_lists(ok, std::move(lists));
-        g_friends_busy = false;
-    }).detach();
+    refresh_in_background();
 }
 
 void friends_refresh_blocking() {
-    FriendLists lists;
-    const bool ok = fetch_friend_lists(lists);
-    store_lists(ok, std::move(lists));
+    std::unique_lock lk(g_friends_mu);
+    const uint64_t gen = g_friends_gen;
+    lk.unlock();
+    refresh_in_background();  // or the one already running: its result is as fresh
+    lk.lock();
+    g_friends_cv.wait_for(lk, std::chrono::seconds(3), [&] { return g_friends_gen != gen; });
+    // Not back in time: still counts as the first read, so later reads do not wait again (the refresh running fills
+    // the list when it ends).
+    if (!g_friends_at.time_since_epoch().count()) g_friends_at = std::chrono::steady_clock::now();
 }
 
 namespace {
@@ -949,6 +1052,7 @@ void presence_thread() {
 }  // namespace
 
 void presence_start() {
+    if (!signed_in() || is_local()) return;  // no thread for players who never use Nextendo; sign-in starts it
     if (g_presence_running.exchange(true)) return;
     std::thread(presence_thread).detach();
 }

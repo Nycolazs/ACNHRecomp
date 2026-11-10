@@ -4,8 +4,10 @@
 // service; time:u has no such rule to give (ITimeZoneService 4 was a stub), so the conversion produced a date the game
 // rejected ("The system is set to a date outside the supported range."). Here the rule is ignored and the host's
 // localtime/mktime do the work: the island follows the computer's clock, as it follows the console's.
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <mutex>
 
 #include <nx/runtime.h>
 
@@ -83,25 +85,49 @@ void network_time(CPU& c) {
     c.x[0] = 0;
 }
 // libc time for the game's own libraries (libcurl's clock): gettimeofday(timeval* {s64 sec, s64 usec}, tz), time(t*),
-// clock(). Left to the SDK's libc they read the time service the runtime only partly emulates; curl then saw its
-// request already past its deadline and gave up before resolving (CURLE_OPERATION_TIMEDOUT, ens 2219-1028).
+// clock(). Left to the SDK's libc they read the time service the runtime only partly emulates; online, curl then saw
+// its request already past its deadline and gave up before resolving (CURLE_OPERATION_TIMEDOUT, ens 2219-1028). Only
+// online: offline the SDK's own functions answer, as they always did.
+bool sdk_libc(CPU& c, const char* name) {
+    if (nextendo::online_services_active()) return false;
+    const uint64_t fn = find_symbol(name);
+    if (!fn) return false;
+    call(c, fn);
+    return true;
+}
+
 void gettimeofday_(CPU& c) {
-    // Monotonic between calls (curl subtracts them): the game clock once, then the host's steady clock from there.
-    static const int64_t base_s = unix_now();
-    static const uint64_t base_ns = plat::monotonic_ns();
-    const uint64_t us = (plat::monotonic_ns() - base_ns) / 1000;
+    if (sdk_libc(c, "gettimeofday")) return;
+    // Steady between calls (curl subtracts them): the game clock, then the host's monotonic clock from there; anchored
+    // again when the game clock moves away (time travel changed), so it never drifts from time().
+    static std::mutex mu;
+    static int64_t base_s = 0;
+    static uint64_t base_ns = 0;
+    int64_t sec, usec;
+    {
+        std::lock_guard lk(mu);
+        const uint64_t now_ns = plat::monotonic_ns();
+        const int64_t wall = unix_now();
+        int64_t us = int64_t((now_ns - base_ns) / 1000);
+        if (!base_ns || std::llabs(base_s + us / 1000000 - wall) > 2) {
+            base_s = wall, base_ns = now_ns, us = 0;
+        }
+        sec = base_s + us / 1000000, usec = us % 1000000;
+    }
     if (c.x[0]) {
-        st<int64_t>(c.x[0], base_s + int64_t(us / 1000000));
-        st<int64_t>(c.x[0] + 8, int64_t(us % 1000000));
+        st<int64_t>(c.x[0], sec);
+        st<int64_t>(c.x[0] + 8, usec);
     }
     c.x[0] = 0;
 }
 void time_(CPU& c) {
+    if (sdk_libc(c, "time")) return;
     const int64_t t = unix_now();
     if (c.x[0]) st<int64_t>(c.x[0], t);
     c.x[0] = uint64_t(t);
 }
 void clock_(CPU& c) {  // CLOCKS_PER_SEC is 1000000 on the Switch (musl)
+    if (sdk_libc(c, "clock")) return;
     static const uint64_t start = plat::monotonic_ns();
     c.x[0] = (plat::monotonic_ns() - start) / 1000;
 }

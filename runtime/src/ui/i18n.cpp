@@ -62,6 +62,7 @@ const Entry kEn[] = {
     {"online.mode.local", "Local Only"},
     {"online.section.nextendo", "Nextendo Online"},
     {"online.section.local", "Local Play"},
+    {"online.nextendo.android", "Nextendo Online is not available on Android yet. Local Play works."},
     {"online.nextendo.account", "Nextendo account"},
     {"online.friends", "Friends"},
     {"online.friends.desc", "{} online"},

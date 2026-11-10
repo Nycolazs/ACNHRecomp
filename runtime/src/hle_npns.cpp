@@ -42,6 +42,7 @@ namespace nx {
 
 bool tls_ready();                                     // hle_ssl.cpp
 int tls_random(void*, unsigned char* out, size_t n);  // hle_ssl.cpp
+bool nextendo_peer_pinned(const mbedtls_ssl_context* ssl, const std::string& host);  // hle_ssl.cpp
 
 namespace {
 
@@ -128,16 +129,19 @@ std::string replay(const std::string& host, const std::string& request, int* sta
     std::string raw;
     if (mbedtls_ssl_config_defaults(&conf, MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_TRANSPORT_STREAM,
                                     MBEDTLS_SSL_PRESET_DEFAULT) == 0) {
-        mbedtls_ssl_conf_authmode(&conf, MBEDTLS_SSL_VERIFY_NONE);  // same trust as the game's own connection
+        // Trust as for the game's own connections: the server's key must be one of Nextendo's (hle_ssl.cpp), checked
+        // before the request, which carries the game's island-server session, is sent.
+        mbedtls_ssl_conf_authmode(&conf, MBEDTLS_SSL_VERIFY_NONE);
         mbedtls_ssl_conf_rng(&conf, tls_random, nullptr);
         if (mbedtls_ssl_setup(&ssl, &conf) == 0 && mbedtls_ssl_set_hostname(&ssl, host.c_str()) == 0) {
             mbedtls_ssl_set_bio(&ssl, &s, bio_send, bio_recv, nullptr);
             const std::string req = for_replay(request);
-            if (mbedtls_ssl_handshake(&ssl) == 0 &&
+            if (mbedtls_ssl_handshake(&ssl) == 0 && nextendo_peer_pinned(&ssl, host) &&
                 mbedtls_ssl_write(&ssl, reinterpret_cast<const unsigned char*>(req.data()), req.size()) ==
                     int(req.size())) {
+                constexpr size_t kMaxResponse = 1 << 20;  // the lists are a few KiB; a server sending more is cut off
                 unsigned char buf[4096];
-                for (;;) {
+                while (raw.size() < kMaxResponse) {
                     const int r = mbedtls_ssl_read(&ssl, buf, sizeof buf);
                     if (r == MBEDTLS_ERR_SSL_RECEIVED_NEW_SESSION_TICKET) continue;
                     if (r <= 0) break;

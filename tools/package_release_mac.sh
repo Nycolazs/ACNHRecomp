@@ -118,7 +118,7 @@ xattr -dr com.apple.quarantine . 2>/dev/null
 open ACNHRecomp.app
 CMD
 chmod +x "$R/Start ACNHRecomp.command"
-tools/release_readme.sh "$R" macos "$VER"
+tools/release_readme.sh "$R" macos "$VER" "$BUILD"
 (cd "$OUT" && ditto -c -k --sequesterRsrc --keepParent ACNHRecomp "../$(basename "$OUT").zip")
 rm -rf "${OUT:?}"
 ls -la "$OUT.zip"
