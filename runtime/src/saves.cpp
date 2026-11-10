@@ -85,7 +85,7 @@ fs::path backups_root() { return user_dir() / "backups"; }
 std::string island_folder(const fs::path& save) {
     std::string n = save_storage::island_display_name(save);
     for (char& ch : n)
-        if (static_cast<unsigned char>(ch) < 0x20 || std::strchr("<>:\"/\|?*", ch)) ch = '_';
+        if (static_cast<unsigned char>(ch) < 0x20 || std::strchr("<>:\"/\\|?*", ch)) ch = '_';
     while (!n.empty() && (n.back() == ' ' || n.back() == '.')) n.pop_back();
     while (!n.empty() && n.front() == ' ') n.erase(0, 1);
     if (n.empty()) return "Unnamed island";
