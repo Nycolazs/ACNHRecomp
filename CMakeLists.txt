@@ -266,8 +266,7 @@ set(NX_RUNTIME_SOURCES
     runtime/src/hle_ldn.cpp
     runtime/src/hle_vsock.cpp
     runtime/src/ldn_link.cpp
-    runtime/src/ldn_discovery.cpp
-    runtime/src/ldn_upnp.cpp
+    runtime/src/ldn_lan.cpp
     runtime/src/nextendo.cpp
     runtime/src/nextendo_http.cpp
     runtime/src/hle_audio.cpp

@@ -1,5 +1,6 @@
-// nn::socket on the local play network (NX_LDN=1, docs/LOCAL_PLAY.md): the game's own traffic (Pia) is UDP between
-// addresses of the LDN subnet, which only exist here. Sockets are a table of queues; datagrams go through hle_ldn.cpp.
+// nn::socket on the local play network (NX_LDN=1, docs/LOCAL_PLAY.md): the game's own traffic (Pia) is UDP between the
+// nodes' real addresses, as with ldn_mitm. Each game socket is a real UDP socket at the same port, whose datagrams a
+// thread puts in its queue; a broadcast goes to each other node of the network (a virtual LAN carries no broadcast).
 // Errors are the Switch's (Linux numbers), as are the socket options. Stream sockets are not carried yet.
 // Outside a local play session every call fails, as on a console with no network (hle_net.cpp).
 #include <atomic>
@@ -9,6 +10,7 @@
 #include <cstring>
 #include <deque>
 #include <mutex>
+#include <thread>
 #include <vector>
 // The design follows MHGURecomp (morerokk, MIT): runtime/net/ldn.c and vsock.c, docs/STATUS.md "Local Play over IP".
 
@@ -17,6 +19,7 @@
 #include "hle_hostnet.h"
 #include "hle_ldn.h"
 #include "kernel.h"
+#include "ldn_net.h"
 
 namespace nx {
 
@@ -31,7 +34,6 @@ enum { kPollIn = 1, kPollOut = 4, kPollNval = 0x20, kPollRdNorm = 0x40 };
 
 constexpr int kFdBase = 3, kMaxSocks = 128;
 constexpr size_t kMaxQueued = 512;
-constexpr uint16_t kFirstEphemeral = 49152;
 
 struct Datagram {
     uint32_t ip;
@@ -45,12 +47,14 @@ struct Sock {
     uint16_t port = 0, rport = 0;
     uint32_t rcv_timeout_ms = 0;
     std::deque<Datagram> queue;
+    sock_t real = kBadSock;  // the PC's socket, from the first Bind, Connect or send
+    uint32_t gen = 0;        // which real socket its reader thread serves
 };
 
 std::mutex g_mu;
 std::condition_variable g_cv;
 Sock g_socks[kMaxSocks];
-uint16_t g_next_port = kFirstEphemeral;
+uint32_t g_gen = 0;
 thread_local int t_errno = 0;
 
 int fail(int e) {
@@ -63,21 +67,6 @@ void ret(CPU& c, int r) { c.x[0] = uint64_t(int64_t(r)); }
 Sock* get(int fd) {
     const int i = fd - kFdBase;
     return i >= 0 && i < kMaxSocks && g_socks[i].used ? &g_socks[i] : nullptr;
-}
-
-bool port_used(uint16_t port) {
-    for (const Sock& s : g_socks)
-        if (s.used && s.port == port) return true;
-    return false;
-}
-
-uint16_t ephemeral() {
-    for (int i = 0; i < 16384; i++) {
-        const uint16_t p = g_next_port;
-        g_next_port = g_next_port == 0xFFFF ? kFirstEphemeral : uint16_t(g_next_port + 1);
-        if (!port_used(p)) return p;
-    }
-    return 0;
 }
 
 // SockAddr: length, family, port and address big-endian.
@@ -97,6 +86,65 @@ void write_addr(uint64_t a, uint64_t plen, uint32_t ip, uint16_t port) {
     const uint32_t n = len ? *len : 16;
     std::memcpy(reinterpret_cast<void*>(a), b, n < 16 ? n : 16);
     if (len) *len = 16;
+}
+
+void close_real(Sock& s) {  // g_mu held; its reader sees gen change and stops
+    // shortcut: the reader may be in recvfrom on this handle when it closes, and a socket opened just after could get the
+    // same number and lose one datagram to it; a single poll thread for every socket would avoid that.
+    if (s.real != kBadSock) stop_socket(s.real);
+    s.gen = 0;
+}
+
+void reader(int fd, uint32_t gen, sock_t r) {
+    std::vector<uint8_t> buf(0x10000);
+    for (;;) {
+        sockaddr_in from{};
+        socklen_t fl = sizeof from;
+        const int n = int(recvfrom(r, reinterpret_cast<char*>(buf.data()), int(buf.size()), 0,
+                                   reinterpret_cast<sockaddr*>(&from), &fl));
+        std::lock_guard lk(g_mu);
+        Sock* s = get(fd);
+        if (!s || s->gen != gen) return;
+        if (n < 0) continue;  // a timeout, or Windows' WSAECONNRESET from an earlier send
+        const uint32_t ip = ntohl(from.sin_addr.s_addr);
+        const uint16_t port = ntohs(from.sin_port);
+        if (s->rport && (s->rip != ip || s->rport != port)) continue;
+        if (s->queue.size() >= kMaxQueued) continue;
+        s->queue.push_back({ip, port, std::vector<uint8_t>(buf.begin(), buf.begin() + n)});
+        g_cv.notify_all();
+    }
+}
+
+// The real socket behind a game socket, at its port (0: one the system picks): 0, or the Switch's errno.
+int open_real(int fd, Sock& s) {  // g_mu held
+    if (s.real != kBadSock) return 0;
+    net_init();
+    const sock_t r = socket(AF_INET, SOCK_DGRAM, 0);
+    if (r == kBadSock) return kENETDOWN;
+    int one = 1;
+    setsockopt(r, SOL_SOCKET, SO_BROADCAST, reinterpret_cast<const char*>(&one), sizeof one);
+    sockaddr_in a = ipv4(lan_bind_ip(), s.port);
+    socklen_t len = sizeof a;
+    if (bind(r, reinterpret_cast<const sockaddr*>(&a), sizeof a) ||
+        getsockname(r, reinterpret_cast<sockaddr*>(&a), &len)) {
+        sock_close(r);
+        log("vsock: port %u is taken on this computer", s.port);
+        return kEADDRINUSE;
+    }
+    set_timeout(r, 250);  // the reader sees its socket closed even where closing does not wake it
+    s.port = ntohs(a.sin_port);
+    s.real = r;
+    s.gen = ++g_gen;
+    std::thread(reader, fd, s.gen, r).detach();
+    return 0;
+}
+
+void deliver_local(uint32_t src_ip, uint16_t src_port, uint16_t dst_port, const void* data, uint32_t len) {  // g_mu held
+    const auto* b = static_cast<const uint8_t*>(data);
+    for (Sock& s : g_socks)
+        if (s.used && s.port == dst_port && s.queue.size() < kMaxQueued && !(s.rport && (s.rip != src_ip || s.rport != src_port)))
+            s.queue.push_back({src_ip, src_port, std::vector<uint8_t>(b, b + len)});
+    g_cv.notify_all();
 }
 
 // The first calls, to see what the game does.
@@ -128,6 +176,7 @@ void Close_(CPU& c) {
     std::lock_guard lk(g_mu);
     Sock* s = get(int(c.x[0]));
     if (!s) return ret(c, fail(kEBADF));
+    close_real(*s);
     *s = Sock{};
     g_cv.notify_all();
     ret(c, 0);
@@ -143,9 +192,10 @@ void Bind_(CPU& c) {
     std::lock_guard lk(g_mu);
     Sock* s = get(int(c.x[0]));
     if (!s) return ret(c, fail(kEBADF));
-    if (port && port_used(port)) return ret(c, fail(kEADDRINUSE));
+    if (s->real != kBadSock) return ret(c, fail(kEINVAL));
     s->ip = ip;
-    s->port = port ? port : ephemeral();
+    s->port = port;
+    if (const int e = open_real(int(c.x[0]), *s)) return ret(c, fail(e));
     ret(c, 0);
 }
 
@@ -160,15 +210,22 @@ void Connect_(CPU& c) {
     Sock* s = get(int(c.x[0]));
     if (!s) return ret(c, fail(kEBADF));
     s->rip = ip, s->rport = port;
-    if (!s->port) s->port = ephemeral();
+    if (const int e = open_real(int(c.x[0]), *s)) return ret(c, fail(e));
     ret(c, 0);
 }
 
 int do_send(int fd, const void* buf, uint64_t len, uint64_t to, uint64_t tolen) {
     if (!ldn_enabled()) return fail(kENETDOWN);
-    uint32_t ip = 0, src_ip;
-    uint16_t port = 0, src_port;
+    uint32_t ip = 0;
+    uint16_t port = 0;
+    sock_t real;
     const bool has_to = read_addr(to, tolen, ip, port);
+    if (len > 0xFFE0) return fail(kEMSGSIZE);
+    if (!ldn_net_up()) return fail(kENETUNREACH);
+    uint32_t to_ips[8];
+    const bool all = ip == ldn_broadcast_ip() || ip == 0xFFFFFFFFu;
+    const int n = all ? ldn_peer_ips(to_ips) : 1;
+    if (!all) to_ips[0] = ip;
     {
         std::lock_guard lk(g_mu);
         Sock* s = get(fd);
@@ -177,13 +234,14 @@ int do_send(int fd, const void* buf, uint64_t len, uint64_t to, uint64_t tolen) 
             if (!s->rport) return fail(kEDESTADDRREQ);
             ip = s->rip, port = s->rport;
         }
-        if (!s->port) s->port = ephemeral();
-        src_ip = s->ip ? s->ip : ldn_own_ip();
-        src_port = s->port;
+        if (const int e = open_real(fd, *s)) return fail(e);
+        real = s->real;
+        if (all) deliver_local(ldn_own_ip(), s->port, port, buf, uint32_t(len));  // this node hears its broadcast too
     }
-    if (len > 0xFFE0) return fail(kEMSGSIZE);
-    if (!ldn_net_up()) return fail(kENETUNREACH);
-    ldn_send(src_ip, src_port, ip, port, buf, uint32_t(len));
+    for (int i = 0; i < n; i++) {
+        const sockaddr_in a = ipv4(to_ips[i], port);
+        sendto(real, static_cast<const char*>(buf), int(len), 0, reinterpret_cast<const sockaddr*>(&a), sizeof a);
+    }
     return int(len);
 }
 
@@ -378,22 +436,9 @@ void SetLastError_(CPU& c) {
 
 void vsock_reset() {
     std::lock_guard lk(g_mu);
-    for (Sock& s : g_socks) s = Sock{};
-    g_cv.notify_all();
-}
-
-void vsock_deliver(uint32_t src_ip, uint16_t src_port, uint32_t dst_ip, uint16_t dst_port, const void* data,
-                   uint32_t len) {
-    std::lock_guard lk(g_mu);
-    const bool all = dst_ip == ldn_broadcast_ip() || dst_ip == 0xFFFFFFFFu;
-    const auto* b = static_cast<const uint8_t*>(data);
     for (Sock& s : g_socks) {
-        if (!s.used || s.port != dst_port) continue;
-        if (s.ip && s.ip != dst_ip && !all) continue;
-        if (s.rport && (s.rip != src_ip || s.rport != src_port)) continue;
-        if (s.queue.size() >= kMaxQueued) continue;
-        s.queue.push_back({src_ip, src_port, std::vector<uint8_t>(b, b + len)});
-        if (!all) break;
+        close_real(s);
+        s = Sock{};
     }
     g_cv.notify_all();
 }

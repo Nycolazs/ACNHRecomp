@@ -13,7 +13,7 @@
 // page under it and its buttons in a footer line. Sizes are design pixels times `scale` (main.cpp); below an aspect
 // of 1.2 the two-column parts stack.
 #include "launcher.h"
-#include "ldn_upnp.h"
+#include "ldn_lan.h"
 #include "nextendo.h"
 
 #include <thread>
@@ -2517,31 +2517,7 @@ void footer_settings() {
     if (button(tr("launcher.settings.open_data"), kWhite)) open_folder(g_build.data);
 }
 
-// ---- online: local play over the internet, the same settings as the game's Online page -------------------------
-
-struct OnlineCheck {
-    std::mutex lock;
-    nx::LinkCheck state = nx::LinkCheck::Idle;
-    std::string address;
-    std::atomic<bool> running{false};
-};
-OnlineCheck g_online;
-
-void online_check_start() {
-    if (g_online.running.exchange(true)) return;
-    {
-        std::lock_guard lk(g_online.lock);
-        g_online.state = nx::LinkCheck::Running;
-    }
-    std::thread([] {
-        std::string address;
-        const nx::LinkCheck r = nx::upnp_check(39500, address);
-        std::lock_guard lk(g_online.lock);
-        g_online.state = r;
-        g_online.address = address;
-        g_online.running = false;
-    }).detach();
-}
+// ---- online: local play over the network (ldn_mitm's protocol), the same settings as the game's Online page ------
 
 void page_online() {
     heading(tr("tab.online"), tr("online.mode.desc"));
@@ -2621,35 +2597,9 @@ void page_online() {
     if (enabled_changed) {
         g_game_ini.set("online.enabled", on ? "1" : "0");
         if (!g_game_ini.save()) toast(tr("launcher.settings.save_failed"));
-        if (on) online_check_start();
     }
     if (on) {
-        static bool checked = false;
-        if (!checked) {
-            checked = true;
-            online_check_start();
-        }
-        nx::LinkCheck state;
-        std::string address;
-        {
-            std::lock_guard lk(g_online.lock);
-            state = g_online.state;
-            address = g_online.address;
-        }
-        const char* text = "online.status.idle";
-        switch (state) {
-        case nx::LinkCheck::Running: text = "online.status.running"; break;
-        case nx::LinkCheck::NoRouter: text = "online.status.no_router"; break;
-        case nx::LinkCheck::Refused: text = "online.status.refused"; break;
-        case nx::LinkCheck::NoPublicAddress: text = "online.status.no_public"; break;
-        case nx::LinkCheck::Open: text = "online.status.open"; break;
-        case nx::LinkCheck::OpenVerified: text = "online.status.verified"; break;
-        case nx::LinkCheck::Idle: break;
-        }
-        ImGui::Separator();
-        ImGui::TextUnformatted(tr("online.status"));
-        text_small(tr(text));
-        if (button(tr("online.test"), kWhite, !g_online.running)) online_check_start();
+        static const std::string address = nx::ip_text(nx::local_address());
         if (!address.empty()) {
             static bool shown = false;
             ImGui::Separator();

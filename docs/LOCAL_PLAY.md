@@ -1,64 +1,55 @@
 # Local play over the local network
 
-Goal (2026-10-26): the airport's **local play** (visiting another island, receiving visitors, up to 8 players)
-between computers running ACNHRecomp on the same network. A virtual LAN (ZeroTier, Hamachi) counts as the same
-network; Tailscale does not forward broadcasts, so a peer's address can also be typed in. Nintendo's online servers
-are never contacted: only machines running this project play together, each with its own copy of the game.
+Goal: the airport's **local play** (visiting another island, receiving visitors, up to 8 players) between computers
+running ACNHRecomp, and with a Switch running [ldn_mitm](https://github.com/spacemeowx2/ldn_mitm) (spacemeowx2, GPLv2) on
+the same network. The runtime speaks ldn_mitm's LAN protocol, reimplemented from its description (no code taken).
+Nintendo's online servers are never contacted.
 
 It works in either network mode, next to Nextendo Online: only `online.enabled=1` turns it on. For Dodo Codes and
 Search for a friend on Nextendo Network, see [NEXTENDO.md](NEXTENDO.md).
 
 On the Switch, local play is `nn::ldn` (a wireless network between consoles, no router) carrying the game's own
-traffic (Pia) over UDP sockets with addresses in the LDN subnet. The game calls both as APIs the runtime implements
-by name (`runtime/src/hle_ldn.cpp`, `runtime/src/hle_net.cpp`), so both can be carried over the local network: the
-LDN network becomes UDP broadcasts (discovery) and a session between hosts, and the game's sockets on LDN addresses
-become real UDP sockets towards the peers' real addresses.
+traffic (Pia) over UDP. The game calls both as APIs the runtime implements by name (`runtime/src/hle_ldn.cpp`,
+`runtime/src/hle_vsock.cpp`). As with ldn_mitm, the LDN network becomes the local network: each node's address is its
+real one, and the game's UDP goes straight between them.
 
 ## How to play
 
-In the launcher or the game's settings (F1), page **Online**, turn local play over the internet on (in either network
-mode). It can be changed while the game runs: it is read when you next talk to Orville, and held until that
-session ends.
+In the launcher or the game's settings (F1), page **Online**, turn local play on (in either network mode). It can be
+changed while the game runs: it is read when you next talk to Orville, and held until that session ends.
 
-- **On the same network**: nothing else. The host opens the airport (Local Play > invite), the others ask Orville to
-  travel by Local Play and the island is listed.
-- **Over the internet**: the host copies the address the page shows and sends it to friends, who paste it under
-  "Friend's address" (the page tests it and names the island), then talk to Orville.
+- **On the same network** (or a virtual LAN that forwards broadcasts: ZeroTier, Hamachi): nothing else. The host opens
+  the airport, the others ask Orville to travel by Local Play and the island is listed. A Switch with ldn_mitm on works
+  the same, as host or visitor (same game version).
+- **A virtual LAN without broadcasts** (Tailscale): the visitor types the host's address under "Friend's address"; the
+  Online page shows each computer's own address. Over the internet without a virtual LAN: not possible, as with ldn_mitm.
 
-The host's port opens by itself when the island opens, and closes when it closes. Only the host has to be reachable: a
-visitor can be anywhere, a phone's hotspot included. A connection without a public address (carrier-grade NAT) can visit
-but not host; the page says so, and a virtual LAN (ZeroTier, Hamachi, Tailscale) with the host's address there works.
-
-**Play with people you trust.** Your address is your connection's, so it stays hidden until you ask and never goes to the
-log. The game's own network code was written for consoles and is not meant to face strangers.
+UDP and TCP port 11452 and the game's UDP port must be allowed by the firewall (Windows asks the first time).
 
 ## How it works
 
-Direct between players: no server of ours, only each computer and its router. Files (`runtime/src/`):
+ldn_mitm's protocol (`ldn_net.h`): a 12-byte header (magic `0x11451400`, type, compressed flag, length, decompressed
+length), types Scan, ScanResp, Connect, SyncNetwork; bodies are a `NetworkInfo` (0x480) or a `NodeInfo` (0x40), and may
+come compressed (a zero byte, then how many more zeros). This side sends them uncompressed, which ldn_mitm accepts.
 
 | File | What it does |
 |---|---|
 | `hle_ldn.cpp` | `nn::ldn`, what the game calls: states, the `NetworkInfo`, the setting held for a session |
-| `hle_vsock.cpp` | `nn::socket` on that network: the game's UDP (Pia, one socket on port 12345) as queues |
-| `ldn_discovery.cpp` | Finding islands: UDP answers on the LAN, TCP to the addresses given |
-| `ldn_link.cpp` | The host's TCP port (default 39500), each visitor's one connection, the relay of the game's packets |
-| `ldn_upnp.cpp` | The router: opens, renews and closes the port, the test. Also used by the launcher |
-| `ldn_net.h` | Sockets and the link's frames |
+| `hle_vsock.cpp` | `nn::socket` on that network: each game socket is a real UDP socket at its port; a broadcast goes to each node |
+| `ldn_link.cpp` | UDP 11452 (Scan to the broadcast and the given addresses, ScanResp), the host's TCP 11452, a station's connection |
+| `ldn_lan.cpp` | This computer's address, and the test of a friend's address. Also used by the launcher |
+| `ldn_net.h` | Sockets and the protocol's packets |
 
-The host relays everything between visitors. Packets all go over TCP so far: fine on the connections tried (LAN, 5G), and
-a lost packet stalls those behind it on a bad one. Direct UDP is the next thing to try if that shows up.
+Variables: `NX_LDN=1` forces it on, `NX_LDN_JOIN=host[:port],...` (addresses to scan besides the broadcast),
+`NX_LDN_IP=a.b.c.d` (the address to use and bind to: a virtual LAN's, or `127.0.0.2` to run a second copy on one PC with
+`NX_LDN_JOIN=127.0.0.1`). Lines starting with `ldn:` and `vsock:` in the log show the calls.
 
-Variables: `NX_LDN=1` forces it on, `NX_LDN_PORT`, `NX_LDN_JOIN=host[:port],...`, `NX_LDN_UPNP=0`. Lines starting with
-`ldn:` and `vsock:` in the log show the calls.
+Known: one copy per address, as with ldn_mitm (ports 11452 and the game's are fixed); the subnet mask given to the game is
+/24. A visitor whose player id is already on the island does not see it (the game's own check, seen with copies of one
+save).
 
-Tested on Windows: 6 instances on one PC, a desktop and a laptop on one LAN, and a laptop on a 5G hotspot joining a desktop
-for 30 minutes (Livebox 7). Tested between Windows and Linux (Bazzite, NVIDIA), each hosting in turn, through the router's
-public address. Not tested yet: macOS, two hosts behind one router at once. Known: a visitor whose player id is
-already on the island does not see it (the game's own check, seen with copies of one save); some routers only answer UPnP
-once it has been turned off and on again.
-
-The design follows [MHGURecomp](https://github.com/morerokk/MHGURecomp) by morerokk (MIT): `runtime/net/ldn.c` and
-`vsock.c`, `docs/STATUS.md` "Local Play over IP", which proved this approach and its `NetworkInfo` layout.
+The first version (a relay over TCP, UPnP, play over the internet) followed [MHGURecomp](https://github.com/morerokk/MHGURecomp)
+by morerokk (MIT), `runtime/net/ldn.c` and `vsock.c`, which proved the approach and its `NetworkInfo` layout.
 
 ## Structures (from the calls; sizes per the SDK headers' layout as reimplemented elsewhere)
 

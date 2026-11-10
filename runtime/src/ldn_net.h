@@ -1,4 +1,4 @@
-// Sockets on the PC hosts, for local play's link (ldn_link.cpp) and its router requests (ldn_upnp.cpp).
+// Sockets on the PC hosts, for local play (ldn_link.cpp, hle_vsock.cpp) and the launcher's address test (ldn_lan.cpp).
 #pragma once
 
 #ifdef _WIN32
@@ -145,22 +145,59 @@ inline void stop_socket(sock_t& s) {
     s = kBadSock;
 }
 
-// ---- the link's protocol
+// ---- ldn_mitm's LAN protocol (github.com/spacemeowx2/ldn_mitm, lan_protocol.cpp), so that a Switch running ldn_mitm,
+// or anything else that speaks it, plays with this one. UDP on port 11452 finds networks (Scan, answered by the host
+// with ScanResp and its NetworkInfo); a station keeps one TCP connection to the host's port 11452 (Connect with its
+// NodeInfo, then SyncNetwork with the NetworkInfo at every change). The game's own traffic does not go through it:
+// nodes have their real addresses and send each other UDP directly.
 
-constexpr uint16_t kDefaultPort = 39500;
-constexpr char kProbe[] = "ACNHLDN1?", kAnswer[] = "ACNHLDN1!";
-constexpr size_t kMagicSize = 9, kInfoSize = 0x480;
+constexpr uint16_t kLanPort = 11452;
+constexpr uint32_t kLanMagic = 0x11451400;
+constexpr size_t kInfoSize = 0x480, kNodeSize = 0x40, kLanHeaderSize = 12, kLanMaxPacket = 2048;
 constexpr int kMaxNodes = 8;
-constexpr uint32_t kMaxFrame = 0x10100;
-constexpr int kScanMs = 300, kConnectMs = 1500, kHandshakeMs = 3000;
-constexpr uint32_t kJoinSize = 0x28;
+constexpr int kScanMs = 500, kConnectMs = 1500, kHandshakeMs = 3000;
 
-enum Frame : uint8_t { kJoin = 1, kWelcome = 2, kInfo = 3, kPacket = 4, kRefused = 5, kProbeFrame = 6 };
+enum LanType : uint8_t { kScan = 0, kScanResp = 1, kConnect = 2, kSyncNetwork = 3 };
 
-inline uint16_t link_port() {
-    const char* e = std::getenv("NX_LDN_PORT");
-    const int p = e ? std::atoi(e) : 0;
-    return p > 0 && p < 65536 ? uint16_t(p) : kDefaultPort;
+// Header: magic u32, type u8, compressed u8, length u16 (of what follows), decompressed length u16, 2 reserved.
+// Sent uncompressed, which ldn_mitm accepts.
+inline std::vector<uint8_t> lan_packet(uint8_t type, const void* data, size_t n) {
+    std::vector<uint8_t> p(kLanHeaderSize + n);
+    const uint16_t len = uint16_t(n);
+    std::memcpy(&p[0], &kLanMagic, 4);
+    p[4] = type;
+    std::memcpy(&p[6], &len, 2);
+    if (n) std::memcpy(&p[kLanHeaderSize], data, n);
+    return p;
+}
+
+// ldn_mitm's compression: a zero byte is followed by how many more zeros come after it.
+inline bool lan_decompress(const uint8_t* in, size_t n, size_t want, std::vector<uint8_t>& out) {
+    out.clear();
+    for (size_t i = 0; i < n;) {
+        const uint8_t c = in[i++];
+        out.push_back(c);
+        if (c) continue;
+        if (i == n) return false;
+        out.insert(out.end(), in[i++], uint8_t(0));
+        if (out.size() > kLanMaxPacket) return false;
+    }
+    return out.size() == want;
+}
+
+// A whole packet (a datagram, or header and body read from TCP): its type and its body, decompressed.
+inline bool lan_parse(const uint8_t* p, size_t n, uint8_t& type, std::vector<uint8_t>& body) {
+    if (n < kLanHeaderSize) return false;
+    uint32_t magic;
+    uint16_t len, raw_len;
+    std::memcpy(&magic, p, 4);
+    std::memcpy(&len, p + 6, 2);
+    std::memcpy(&raw_len, p + 8, 2);
+    if (magic != kLanMagic || kLanHeaderSize + len > n) return false;
+    type = p[4];
+    if (p[5]) return lan_decompress(p + kLanHeaderSize, len, raw_len, body);
+    body.assign(p + kLanHeaderSize, p + kLanHeaderSize + len);
+    return true;
 }
 
 inline bool read_all(sock_t s, void* p, size_t n) {
@@ -173,18 +210,22 @@ inline bool read_all(sock_t s, void* p, size_t n) {
     return true;
 }
 
-// A frame: its type, the size of what follows (u32), then that.
-inline bool read_frame(sock_t s, uint8_t& type, std::vector<uint8_t>& out) {
-    uint8_t h[5];
-    if (!read_all(s, h, 5)) return false;
-    uint32_t size;
-    std::memcpy(&size, h + 1, 4);
-    if (size > kMaxFrame) return false;
-    type = h[0];
-    out.resize(size);
-    return !size || read_all(s, out.data(), size);
+// One packet from a TCP connection.
+inline bool lan_read(sock_t s, uint8_t& type, std::vector<uint8_t>& body) {
+    uint8_t p[kLanMaxPacket];
+    if (!read_all(s, p, kLanHeaderSize)) return false;
+    uint16_t len;
+    std::memcpy(&len, p + 6, 2);
+    if (kLanHeaderSize + len > sizeof p || !read_all(s, p + kLanHeaderSize, len)) return false;
+    return lan_parse(p, kLanHeaderSize + len, type, body);
 }
 
-bool discovery_address(const uint8_t* bssid, sockaddr_in& out);  // ldn_discovery.cpp: where a scanned network is
+inline sockaddr_in ipv4(uint32_t ip, uint16_t port) {  // host byte order in, a socket address out
+    sockaddr_in a{};
+    a.sin_family = AF_INET;
+    a.sin_port = htons(port);
+    a.sin_addr.s_addr = htonl(ip);
+    return a;
+}
 
 }  // namespace nx

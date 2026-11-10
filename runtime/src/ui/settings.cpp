@@ -949,39 +949,23 @@ void page_online() {
     });
     if (config_get("online.enabled", "0") != "1") return;
     static bool checked = false;
+    static std::string address;
     if (!checked) {  // once per session, as soon as it is on
         checked = true;
-        link_check();
+        address = ip_text(local_address());
         address_check_start(config_get("online.join"));
     }
     const LinkStatus s = link_status();
-    const char* text = "online.status.idle";
-    switch (s.check) {
-    case LinkCheck::Running: text = "online.status.running"; break;
-    case LinkCheck::NoRouter: text = "online.status.no_router"; break;
-    case LinkCheck::Refused: text = "online.status.refused"; break;
-    case LinkCheck::NoPublicAddress: text = "online.status.no_public"; break;
-    case LinkCheck::Open: text = "online.status.open"; break;
-    case LinkCheck::OpenVerified: text = "online.status.verified"; break;
-    case LinkCheck::Idle: break;
-    }
-    if (s.hosting && (s.check == LinkCheck::Open || s.check == LinkCheck::OpenVerified)) text = "online.status.hosting";
-    row("online.status", tr(text), [&](float w) {
-        if (!s.hosting && !busy) {
-            if (ImGui::Button(tr("online.test"), ImVec2(w, 0))) link_check();
-            page_nav_item();
-        }
-    });
-    if (!s.address.empty()) {
+    {
         static bool shown = false;
         row("online.address", tr("online.address.desc"), [&](float w) {
-            ImGui::TextUnformatted(shown ? s.address.c_str() : "\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2");
+            ImGui::TextUnformatted(shown ? address.c_str() : "â¢â¢â¢â¢â¢â¢");
             const float half = (w - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
             if (ImGui::Button(tr(shown ? "online.hide" : "online.show"), ImVec2(half, 0))) shown = !shown;
             page_nav_item();
             ImGui::SameLine();
             if (ImGui::Button(tr("online.copy"), ImVec2(half, 0))) {
-                ImGui::SetClipboardText(s.address.c_str());
+                ImGui::SetClipboardText(address.c_str());
                 toast(tr("online.copied"));
             }
             page_nav_item();

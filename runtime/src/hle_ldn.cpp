@@ -4,7 +4,7 @@
 // play is unavailable (before, it reached the ipc stub, got no session object back and read through a null pointer).
 //
 // online.enabled or NX_LDN=1: local play between computers (docs/LOCAL_PLAY.md): the API answers as a console with
-// wireless on, its network is the link of ldn_link.cpp, and every call is logged with what the game passed
+// wireless on, its network is ldn_mitm's over the local network (ldn_link.cpp), and every call is logged with what the game passed
 // (configurations as hex).
 #include <atomic>
 #include <cstdio>
@@ -64,7 +64,7 @@ enum { kNodeIp = 0, kNodeMac = 4, kNodeId = 0xA, kNodeConnected = 0xB, kNodeName
 uint8_t g_info[kInfoSize] = {};
 uint8_t g_mac[6] = {};
 uint8_t g_accept_policy = 0;
-std::atomic<uint32_t> g_own_ip{0};  // 169.254.x.1 while hosting
+std::atomic<uint32_t> g_own_ip{0};  // this computer's address on the local network while in a network
 
 void random_bytes(uint8_t* p, size_t n) {
     static std::mt19937_64 gen{std::random_device{}()};
@@ -111,7 +111,7 @@ void make_network(const uint8_t* cfg, const uint8_t* sec, const uint8_t* sec_par
     const uint8_t max = cfg[0x12];
     g_info[kNiNodeMax] = max >= 1 && max <= 8 ? max : 8;
     g_info[kNiNodeCount] = 1;
-    const uint32_t ip = 0xA9FE0001u | uint32_t(1 + r[4] % 254) << 8;
+    const uint32_t ip = local_address();
     g_own_ip = ip;
     uint8_t* node = g_info + kNiNodes;
     put32(node + kNodeIp, ip);
@@ -305,7 +305,7 @@ void Scan(CPU& c) {
     log("ldn: %s(out %#llx, count %#llx, max %d, filter %s, channel %d)", hle_current_name(), (unsigned long long)c.x[0],
         (unsigned long long)c.x[1], int(c.x[2]), hex(reinterpret_cast<void*>(c.x[3]), 0x60).c_str(), int(c.x[4]));
     const int found = c.x[0] && c.x[3] ? link_scan(reinterpret_cast<uint8_t*>(c.x[0]), int(c.x[2]),
-                                                   reinterpret_cast<const uint8_t*>(c.x[3]), 0)
+                                                   reinterpret_cast<const uint8_t*>(c.x[3]))
                                        : 0;
     if (found) log("ldn: Scan found %d", found);
     if (c.x[1]) *reinterpret_cast<int32_t*>(c.x[1]) = found;
@@ -322,8 +322,12 @@ void Connect(CPU& c) {
     const auto* net = reinterpret_cast<const uint8_t*>(c.x[0]);
     const auto* user = reinterpret_cast<const uint8_t*>(c.x[2]);
     const uint16_t version = uint16_t(c.x[3]);
-    uint8_t info[kInfoSize];
-    const int node = link_join(net + kNiBssid, user, g_mac, reinterpret_cast<const uint8_t*>(&version), info);
+    uint8_t me[0x40] = {}, info[kInfoSize];  // this node as ldn_mitm sends it; link_join fills in the address
+    std::memcpy(me + kNodeMac, g_mac, 6);
+    me[kNodeConnected] = 1;
+    std::memcpy(me + kNodeName, user, 0x20);
+    std::memcpy(me + kNodeVersion, &version, 2);
+    const int node = link_join(net + kNiBssid, me, info);
     if (node < 0) {
         log("ldn: could not join");
         return void(c.x[0] = kLdnInvalidState);
@@ -456,20 +460,17 @@ bool ldn_link_info(uint8_t* out) {
     return true;
 }
 
-int ldn_link_add_node(const uint8_t* name, const uint8_t* mac, const uint8_t* version) {
+int ldn_link_add_node(const uint8_t* station) {
     std::lock_guard lk(g_lock);
     if (g_state != AccessPointCreated) return -1;
     const int max = g_info[kNiNodeMax];
     for (int i = 1; i < max && i < 8; i++) {
         uint8_t* node = g_info + kNiNodes + size_t(i) * 0x40;
         if (node[kNodeConnected]) continue;
-        put32(node + kNodeIp, (g_own_ip & 0xFFFFFF00u) | uint32_t(i + 1));
-        std::memcpy(node + kNodeMac, mac, 6);
+        std::memcpy(node, station, 0x40);  // its address, MAC, name and version as it sent them
         node[kNodeId] = uint8_t(i);
         node[kNodeConnected] = 1;
-        std::memcpy(node + kNodeName, name, 0x20);
         node[kNodeName + 0x20] = 0;
-        std::memcpy(node + kNodeVersion, version, 2);
         g_info[kNiNodeCount]++;
         signal_change();
         return i;
@@ -486,7 +487,18 @@ void ldn_link_remove_node(int n) {
     signal_change();
 }
 
-uint32_t ldn_node_ip(int n) { return (g_own_ip & 0xFFFFFF00u) | uint32_t(n + 1); }
+int ldn_peer_ips(uint32_t* out) {
+    std::lock_guard lk(g_lock);
+    int n = 0;
+    if (g_state != AccessPointCreated && g_state != StationConnected) return 0;
+    for (int i = 0; i < 8; i++) {
+        const uint8_t* node = g_info + kNiNodes + size_t(i) * 0x40;
+        uint32_t ip;
+        std::memcpy(&ip, node + kNodeIp, 4);
+        if (node[kNodeConnected] && ip && ip != g_own_ip) out[n++] = ip;
+    }
+    return n;
+}
 
 void ldn_link_set_info(const uint8_t* info) {
     std::lock_guard lk(g_lock);
