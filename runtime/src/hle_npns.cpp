@@ -6,14 +6,14 @@
 // requests change, delivers the push the server would have sent, so the game updates through its own code path.
 //
 // How the game reads a push (read from the 3.0.3 code): Receive fills a 0x10a0-byte record whose payload, at +0xa0
-// with its length (u16) at +0x6, is base64 text; decoded, it is JSON {"type", "action", "receiver_user_id",
+// with its length (u16) at +0x6, is base64 text; decoded, it is a MessagePack map {"type", "action", "receiver_user_id",
 // "target_user_id"}. Type "friend" with action "add"/"delete" changes a best friend, "sent_friend_request" /
 // "received_friend_request" refresh the request lists. The game reads until Receive answers 0x69a (nothing left);
 // any other failure aborts it.
 //
 // Watching the server: the game's own GET requests for its best friends and requests (hle_ssl.cpp hands every request
-// line here) are kept and replayed on a separate TLS connection to the same Nextendo server every 30 s. They carry the
-// game's island-server session, which therefore never leaves this process and is never logged.
+// line here) are kept and replayed on a separate TLS connection to the same server every 30 s.
+// They carry the game's island-server session, which therefore never leaves this process and is never logged.
 #include <algorithm>
 #include <atomic>
 #include <cctype>
@@ -159,9 +159,29 @@ std::string replay(const std::string& host, const std::string& request, int* sta
     return head.find("transfer-encoding: chunked") != std::string::npos ? dechunk(body) : body;
 }
 
-// The ids in a list response: every number under a key ending in "id" ("id", "user_id", "sender_user_id"...), other
+// The ids in a JSON list response: every number under a key ending in "id" ("id", "user_id", "sender_user_id"...), other
 // than the player's own. Whichever names the server uses, a request or a friend appearing or going changes this set.
+// A MessagePack body (the island server answers like Nintendo's): every string key ending in "id" followed by an
+// unsigned integer.
+std::set<uint64_t> msgpack_user_ids(const std::string& body, uint64_t me) {
+    std::set<uint64_t> out;
+    const auto* b = reinterpret_cast<const uint8_t*>(body.data());
+    const size_t n = body.size();
+    for (size_t i = 0; i < n; i++) {
+        if ((b[i] & 0xe0) != 0xa0) continue;  // fixstr
+        const size_t len = b[i] & 0x1f, v = i + 1 + len;
+        if (len < 2 || v >= n || b[v - 2] != 'i' || b[v - 1] != 'd') continue;
+        const size_t w = b[v] == 0xcf ? 8 : b[v] == 0xce ? 4 : b[v] == 0xcd ? 2 : b[v] == 0xcc ? 1 : 0;
+        uint64_t id = b[v] < 0x80 ? b[v] : 0;
+        if (w && v + w < n)
+            for (size_t k = 1; k <= w; k++) id = (id << 8) | b[v + k];
+        if (id && id != me) out.insert(id);
+    }
+    return out;
+}
+
 std::set<uint64_t> user_ids(const std::string& body, uint64_t me) {
+    if (!body.empty() && body[0] != '{') return msgpack_user_ids(body, me);
     std::set<uint64_t> out;
     for (size_t q = body.find('"'); q != std::string::npos; q = body.find('"', q + 1)) {
         const size_t e = body.find('"', q + 1);
@@ -184,12 +204,24 @@ std::set<uint64_t> user_ids(const std::string& body, uint64_t me) {
 
 // ---- pushes -----------------------------------------------------------------------------------------------------
 
+// The payload is MessagePack (the game reads it with the reader it uses for island-server replies):
+// {type, action, receiver_user_id, target_user_id}.
 void push(const char* type, const char* action, uint64_t target) {
-    char json[256];
-    std::snprintf(json, sizeof json,
-                  "{\"type\":\"%s\",\"action\":\"%s\",\"receiver_user_id\":%llu,\"target_user_id\":%llu}", type,
-                  action, (unsigned long long)g_me, (unsigned long long)target);
-    g_queue.emplace_back(json);
+    std::string m(1, char(0x84));  // map of 4
+    auto str = [&m](const char* s) {
+        const size_t n = std::strlen(s);  // all keys and values here are under 32 bytes: fixstr
+        m += char(0xa0 | n);
+        m.append(s, n);
+    };
+    auto u64 = [&m](uint64_t v) {
+        m += char(0xcf);
+        for (int i = 7; i >= 0; i--) m += char(uint8_t(v >> (i * 8)));
+    };
+    str("type"), str(type);
+    str("action"), str(action);
+    str("receiver_user_id"), u64(g_me);
+    str("target_user_id"), u64(target);
+    g_queue.emplace_back(std::move(m));
     g_event->signaled = true;
     log("npns: %s %s", type, action);
 }
@@ -316,6 +348,21 @@ void npns_observe_request(const std::string& host, const uint8_t* p, size_t n) {
                       : line.rfind("GET /api/v1/friend_requests?type=send ", 0) == 0    ? "send"
                       : line.rfind("GET /api/v1/friend_requests?type=receive ", 0) == 0 ? "receive"
                                                                                         : nullptr;
+    // A request the player sends: the server confirms it with a push to the sender (the game shows "processing"
+    // until then). Sent shortly after, once the server has stored it.
+    static const char kSend[] = "POST /api/v1/friend_requests?target_user_id=";
+    if (line.rfind(kSend, 0) == 0) {
+        const uint64_t target = std::strtoull(line.c_str() + sizeof kSend - 1, nullptr, 10);
+        std::thread([target] {
+            std::this_thread::sleep_for(std::chrono::seconds(2));
+            {
+                std::lock_guard lk(g_mu);
+                if (!g_me) return;
+                push("sent_friend_request", "add", target);
+            }
+            notify_all();
+        }).detach();
+    }
     std::lock_guard lk(g_mu);
     g_host = host;
     if (line.rfind("GET /api/v1/users/", 0) == 0) g_me = std::strtoull(line.c_str() + 18, nullptr, 10);
