@@ -50,5 +50,7 @@ void ldn_link_set_info(const uint8_t* info);  // station: the host's new Network
 void ldn_link_lost();                         // station: the host is gone
 // A NetworkInfo from the network: whether its sizes and counts make sense (strings get terminated).
 bool ldn_info_valid(uint8_t* info);
+std::string ldn_island_name(const uint8_t* info);  // the host island's name in a NetworkInfo's advertise data (UTF-8)
+std::string ldn_visited_island();  // station joined to a host: that island's name; else empty (discord_presence.cpp)
 
 }  // namespace nx

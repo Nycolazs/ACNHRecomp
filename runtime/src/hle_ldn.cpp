@@ -485,6 +485,16 @@ void ldn_link_remove_node(int n) {
 
 uint32_t ldn_node_ip(int n) { return (g_own_ip & 0xFFFFFF00u) | uint32_t(n + 1); }
 
+std::string ldn_visited_island() {
+    uint8_t info[kInfoSize];
+    {
+        std::lock_guard lk(g_lock);
+        if (g_state != StationConnected) return {};
+        std::memcpy(info, g_info, kInfoSize);
+    }
+    return ldn_island_name(info);
+}
+
 void ldn_link_set_info(const uint8_t* info) {
     std::lock_guard lk(g_lock);
     if (g_state != StationConnected) return;

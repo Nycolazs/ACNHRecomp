@@ -150,7 +150,7 @@ static void nn_main(CPU& c) {
     init_module(c, nx_module_main);
     game::after_init();
     log("entering nnMain");
-    discord_presence_start();  // discord.client_id in config.ini; nothing without it
+    discord_presence_start();  // [discord] in config.ini; enabled = 0 turns it off
     cpu_profile_register("main");  // NX_CPU_PROFILE (cpu_profile.cpp)
     uint64_t real = 0;
     for (size_t k = 0; k < nx_module_main.symbol_count; k++)
