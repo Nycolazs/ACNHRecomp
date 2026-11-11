@@ -5,7 +5,7 @@
 // clock). It talks to the Discord client over its local IPC (\\.\pipe\discord-ipc-N on Windows, a Unix socket
 // discord-ipc-N in $XDG_RUNTIME_DIR, $TMPDIR or /tmp elsewhere): a frame is {u32 opcode, u32 length} and JSON.
 //
-// config.ini, [discord]: enabled (default 1), client_id (the Application ID of a Discord application, default
+// config.ini, [discord]: enabled (default 1; the settings' Discord page, applied within 2 s), client_id (the Application ID of a Discord application, default
 // ACNHRecomp's: its name is what Discord shows), island (the island's name; else the save's), hemisphere
 // (north / south), large_image (default "acnh")
 // and the small images winter, spring, summer, autumn (defaults: those names): Rich Presence art assets of that
@@ -263,7 +263,13 @@ void presence_thread(Settings s) {
     const std::string pid = std::to_string(process_id());
     bool told = false;
     uint64_t nonce = 0;
+    // discord.enabled (the settings' Discord page) is read again every turn: off closes the pipe, which clears it
+    auto enabled = [] { return config_get_bool("discord.enabled", true); };
     for (;;) {
+        if (!enabled()) {
+            std::this_thread::sleep_for(std::chrono::seconds(2));
+            continue;
+        }
         Handle h = kNone;
         for (int n = 0; n < 10 && h == kNone; n++) h = ipc_open(n);
         std::string reply;
@@ -272,6 +278,7 @@ void presence_thread(Settings s) {
             if (!told) log("discord: rich presence on"), told = true;
             std::string sent;
             for (;;) {  // the activity again whenever it changes; Discord's replies read as they come
+                if (!enabled()) break;
                 std::string a = activity_json(s, start);
                 if (a != sent) {
                     std::string cmd = "{\"cmd\":\"SET_ACTIVITY\",\"nonce\":\"" + std::to_string(++nonce) +
@@ -288,7 +295,7 @@ void presence_thread(Settings s) {
             }
         }
         if (h != kNone) ipc_close(h);
-        std::this_thread::sleep_for(std::chrono::seconds(20));
+        for (int i = 0; i < 10 && enabled(); i++) std::this_thread::sleep_for(std::chrono::seconds(2));
     }
 }
 
@@ -328,7 +335,6 @@ void discord_presence_file(const std::string& guest_path) {
 }
 
 void discord_presence_start() {
-    if (!config_get_bool("discord.enabled", true)) return;
     Settings s;
     s.client_id = config_get("discord.client_id", "1570205908682936351");  // the ACNHRecomp Discord application
     if (s.client_id.empty()) return;

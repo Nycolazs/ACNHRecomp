@@ -63,7 +63,8 @@ struct Page {
 const Page kPages[] = {
     {"tab.game", rgb(124, 194, 103), 0},  {"tab.video", rgb(79, 179, 217), 1},   {"tab.audio", rgb(245, 166, 35), 2},
     {"tab.controls", rgb(155, 125, 212), 3}, {"tab.saves", rgb(232, 115, 122), 4}, {"tab.online", rgb(72, 190, 170), kIconBox},
-    {"tab.amiibo", rgb(255, 180, 80), kIconKey}, {"tab.about", rgb(176, 140, 100), 5},
+    {"tab.amiibo", rgb(255, 180, 80), kIconKey}, {"tab.discord", rgb(88, 101, 242), kIconGlobe},
+    {"tab.about", rgb(176, 140, 100), 5},
 };
 constexpr int kPageCount = int(sizeof(kPages) / sizeof(kPages[0]));
 
@@ -1258,6 +1259,22 @@ void report_section() {
 #endif
 }
 
+// The project's Discord server (also launcher/pages.cpp)
+const char* const kDiscordUrl = "https://discord.gg/VJW9Dtdu7a";
+
+void page_discord() {
+#if !defined(__ANDROID__)  // Rich Presence talks to the Discord desktop app (discord_presence.cpp)
+    row("discord.presence", "discord.presence.desc", [&](float w) { toggle("discord.enabled", true, w); });
+    ImGui::Dummy(ImVec2(0, 6 * g_scale));
+#endif
+    ImGui::TextWrapped("%s", tr("discord.server.desc"));
+#if !defined(__ANDROID__)
+    if (button(tr("discord.server"))) SDL_OpenURL(kDiscordUrl);
+#else
+    if (button(tr("discord.server"))) plat::open_url_in_app(kDiscordUrl, "com.discord");
+#endif
+}
+
 void page_about() {
     ImGui::TextWrapped("%s", trf("about.version", NX_VERSION_STRING).c_str());
     ImGui::Dummy(ImVec2(0, 6 * g_scale));
@@ -1685,6 +1702,7 @@ bool settings_draw(float scale, ImFont* title, float opening) {
         case 4: page_saves(); break;
         case 5: page_online(); break;
         case 6: settings_page_amiibo(g_scale); break;
+        case 7: page_discord(); break;
         default: page_about(); break;
     }
     g_page_navigation = false;
