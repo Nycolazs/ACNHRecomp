@@ -33,7 +33,8 @@ bool import_save(const std::string& from, std::string* error);
 // or into the zip `to` when it ends with .zip. written: the path written.
 bool export_save(const std::string& to, std::string* written, std::string* error);
 
-// <data root>/user/backups/<island name>/<YYYYmmdd-HHMMSS>/, for the island being played (landname.dat); the 10
+// <data root>/user/backups/<island name> <8 hex hash><8 hex time>/<YYYYmmdd-HHMMSS>/, for the island being played
+// (landname.dat; one folder per island, so two islands named alike never share backups); the 10
 // newest of each island are kept. Returns the backup's name, "" on failure.
 std::string backup_now(std::string* error);
 std::vector<std::string> list_backups();  // the current island's, newest first

@@ -17,6 +17,7 @@
 #include <array>
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
@@ -97,8 +98,6 @@ std::string island_folder(const fs::path& save) {
     return n;
 }
 
-// user/backups/<island>/: the backups of the island being played.
-fs::path backups_dir() { return backups_root() / u8(island_folder(device_dir())); }
 
 bool flat_save(const fs::path& d, std::string* why) { return save_storage::flat_save(d, why); }
 bool copy_tree(const fs::path& src, const fs::path& dst, std::string* error) {
@@ -141,6 +140,38 @@ std::vector<fs::path> subdirs(const fs::path& d) {
     std::sort(v.begin(), v.end());
     return v;
 }
+
+// The island's identity: FNV-1a over its landname.dat.
+uint32_t landname_hash(const fs::path& save) {
+    uint32_t h = 2166136261u;
+    std::ifstream f(save / "landname.dat", std::ios::binary);
+    for (char c; f.get(c);) h = (h ^ uint8_t(c)) * 16777619u;
+    return h;
+}
+
+std::string hex8(uint32_t v) {
+    char b[9];
+    std::snprintf(b, sizeof b, "%08x", v);
+    return b;
+}
+
+// user/backups/<island> <8 hex landname hash><8 hex unix time>/: the backups of the save's island. The hash ties the
+// folder to the island (a rename starts a new one); the time, set when the folder is made, tells apart two islands
+// with the same name and hash. A folder from before these names (user/backups/<island>/) is renamed to one.
+fs::path island_dir_for(const fs::path& save) {
+    const std::string head = island_folder(save) + " " + hex8(landname_hash(save));
+    for (const fs::path& p : subdirs(backups_root())) {
+        const std::string n = utf8(p.filename());
+        if (n.size() == head.size() + 8 && n.compare(0, head.size(), head) == 0) return p;
+    }
+    const fs::path made = backups_root() / u8(head + hex8(uint32_t(std::time(nullptr))));
+    std::error_code ec;
+    const fs::path legacy = backups_root() / u8(island_folder(save));
+    if (is_dir(legacy)) fs::rename(legacy, made, ec);  // on failure the old folder stays, and a new one is made
+    return made;
+}
+
+fs::path backups_dir() { return island_dir_for(device_dir()); }
 
 // The save in `d` itself, else the only one one or two levels down (JKSV / Checkpoint keep a folder per backup).
 // A Ryujinx save folder holds 0/ (committed) and maybe 1/ (working copy): 0 wins.
@@ -414,7 +445,7 @@ void migrate_flat_backups() {
     for (fs::directory_iterator it(backups_root(), ec), end; !ec && it != end; it.increment(ec))
         if (it->is_directory(ec) && backup_name(utf8(it->path().filename()))) flat.push_back(it->path());
     for (const fs::path& p : flat) {
-        const fs::path dest = backups_root() / u8(island_folder(p)) / p.filename();
+        const fs::path dest = island_dir_for(p) / p.filename();
         fs::create_directories(dest.parent_path(), ec);
         if (!fs::exists(dest, ec)) fs::rename(p, dest, ec);
         if (ec) log("saves: cannot move the backup %s into its island folder", utf8(p).c_str());
@@ -442,14 +473,15 @@ std::string backup_locked(std::string* error) {
     fs::path dir = device_dir();
     if (!non_empty_dir(dir)) return set(error, "no save to back up"), std::string();
     std::error_code ec;
-    fs::create_directories(backups_dir(), ec);
+    const fs::path bdir = backups_dir();  // fixed for this backup: the folder's time part is set when it is made
+    fs::create_directories(bdir, ec);
     // Same second as an existing backup: a suffix past the highest one, not the first free name (pruning may have
     // freed the bare name, and reusing it would sort the newest backup as the oldest and prune it at once).
     std::string base = stamp("%Y%m%d-%H%M%S");
     int next = 0;
     for (const std::string& n : backups_sorted())
         if (n.compare(0, base.size(), base) == 0) next = std::max(next, n.size() > 16 ? std::atoi(n.c_str() + 16) : 1);
-    fs::path final_path = unique_in(backups_dir(), next ? base + "-" + std::to_string(next + 1) : base);
+    fs::path final_path = unique_in(bdir, next ? base + "-" + std::to_string(next + 1) : base);
     fs::path tmp = u8(utf8(final_path) + ".tmp");
     fs::remove_all(tmp, ec);
     if (!copy_tree(dir, tmp, error)) {
@@ -463,8 +495,8 @@ std::string backup_locked(std::string* error) {
     }
     std::string name = utf8(final_path.filename());
     std::vector<std::string> all = backups_sorted();
-    for (size_t i = kKeepBackups; i < all.size(); ++i) fs::remove_all(backups_dir() / u8(all[i]), ec);
-    for (fs::directory_iterator it(backups_dir(), ec), end; !ec && it != end; it.increment(ec))
+    for (size_t i = kKeepBackups; i < all.size(); ++i) fs::remove_all(bdir / u8(all[i]), ec);
+    for (fs::directory_iterator it(bdir, ec), end; !ec && it != end; it.increment(ec))
         if (utf8(it->path().filename()).find(".tmp") != std::string::npos) fs::remove_all(it->path(), ec);
     log("saves: backup %s", name.c_str());
     return name;
