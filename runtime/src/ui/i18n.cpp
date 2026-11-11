@@ -90,6 +90,36 @@ const Entry kEn[] = {
     {"online.friends.acnh", "In Animal Crossing"},
     {"online.friends.acnh_online", "In Animal Crossing, playing online"},
     {"online.friends.other_game", "Playing another game"},
+    {"online.fix_link", "Fix Save Linked Account"},
+    {"online.fix_link.experimental",
+     "HIGHLY EXPERIMENTAL. This edits your save file directly. It has been tested on a few saves only. Read "
+     "everything below before you use it."},
+    {"online.fix_link.what",
+     "Every resident of an island remembers the online account they were linked to. A save played on another "
+     "network (Rustendo, Pretendo, Nintendo Switch Online on a console) remembers that account, so on Nextendo the "
+     "game says the save data is linked to another online service account and asks you to erase it. This clears "
+     "that link from every resident so the save works here again, with nothing erased."},
+    {"online.fix_link.when_title", "When to use it"},
+    {"online.fix_link.when",
+     "Only when the game says your save data is linked to another online service account and tells you that you "
+     "need to erase the save data. Do not erase it: use this instead. If your save loads normally, you do not need "
+     "this."},
+    {"online.fix_link.warn_title", "Warnings"},
+    {"online.fix_link.warn",
+     "- The game closes and starts again on its own to make the change.\n"
+     "- The link is cleared for every resident on the island, including other players' residents.\n"
+     "- Your residents are no longer linked to any online account. The game may ask to link again when you go "
+     "online.\n"
+     "- Only saves from version 3.0.x are supported. Anything else, or a save that looks damaged, is left untouched.\n"
+     "- To undo it, import the backup below from Settings > Saves."},
+    {"online.fix_link.backup_title", "Backup"},
+    {"online.fix_link.backup",
+     "Before anything changes, the save is copied exactly as it is to backups/[save-fixed]/<island name> <date and "
+     "time>, in your ACNHRecomp user folder. This copy is kept apart from the normal backups and is never deleted "
+     "automatically."},
+    {"online.fix_link.result_title", "Last fix"},
+    {"online.fix_link.button", "Fix and restart"},
+    {"online.fix_link.fail", "Could not restart the game to fix the save."},
     {"online.server", "Server status"},
     {"online.server.desc", "Check whether the Nextendo systems Animal Crossing uses are answering."},
     {"online.server.check", "Check server status"},

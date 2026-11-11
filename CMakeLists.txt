@@ -589,7 +589,7 @@ FetchContent_Declare(mbedtls
     EXCLUDE_FROM_ALL)
 FetchContent_MakeAvailable(mbedtls)
 target_sources(${NX_GAME} PRIVATE runtime/src/hle_ssl.cpp runtime/src/hle_npns.cpp runtime/src/nextendo_token.cpp
-    runtime/src/nextendo_status.cpp)
+    runtime/src/nextendo_status.cpp runtime/src/save_unlink.cpp)
 target_link_libraries(${NX_GAME} PRIVATE mbedtls mbedx509 mbedcrypto)
 if(WIN32)
     set(ZLIB_USE_STATIC_LIBS ON)  # vcpkg's static zlib (tools/setup_acnh.py): zs.lib

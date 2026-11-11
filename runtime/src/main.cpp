@@ -38,6 +38,9 @@ namespace nextendo {
 void load_account();
 void presence_start();
 }
+namespace save_unlink {
+void run_if_requested();  // save_unlink.cpp
+}
 
 NX_GAME_API uint64_t mrs(CPU& c, uint32_t sysreg) {
     switch (sysreg) {
@@ -153,6 +156,7 @@ static void nn_main(CPU& c) {
 #endif
     init_module(c, nx_module_main);
     game::after_init();
+    save_unlink::run_if_requested();  // "Fix Save Linked Account" restarted us: before the game opens the save
     log("entering nnMain");
     discord_presence_start();  // discord.client_id in config.ini; nothing without it
     nextendo::load_account();  // Nextendo OAuth session from nextendo_account.json

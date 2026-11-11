@@ -6,6 +6,7 @@
 // the control on the right (under them when narrow). Sizes are in design pixels times `scale` (ui.cpp).
 #include "../hle_ldn.h"
 #include "../nextendo.h"
+#include "../save_unlink.h"
 #include "ui/settings.h"
 
 #if !defined(__ANDROID__)
@@ -835,6 +836,49 @@ void page_friends() {
     for (const auto& f : sorted) friend_line(f, friend_state(f), {});
 }
 
+bool g_fix_link_view = false;  // the Online page shows the "Fix Save Linked Account" page instead of its rows
+
+bool red_button(const char* text, float width) {
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.70f, 0.16f, 0.16f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.82f, 0.22f, 0.22f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.58f, 0.12f, 0.12f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
+    const bool pressed = ImGui::Button(text, ImVec2(width, 0));
+    ImGui::PopStyleColor(4);
+    return pressed;
+}
+
+#if !defined(__ANDROID__)
+// Everything the player should know before the fix, then the fix itself (save_unlink.h): the game restarts, the save
+// is copied unaltered to backups/[save-fixed], and the online account link is cleared from every resident.
+void page_fix_link() {
+    row("online.friends.back", nullptr, [&](float w) {
+        if (ImGui::Button(tr("online.friends.back"), ImVec2(w, 0))) g_fix_link_view = false;
+        page_nav_item();
+    });
+    section("online.fix_link");
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.42f, 0.42f, 1.0f));
+    ImGui::TextWrapped("%s", tr("online.fix_link.experimental"));
+    ImGui::PopStyleColor();
+    ImGui::Spacing();
+    ImGui::TextWrapped("%s", tr("online.fix_link.what"));
+    section("online.fix_link.when_title");
+    ImGui::TextWrapped("%s", tr("online.fix_link.when"));
+    section("online.fix_link.warn_title");
+    ImGui::TextWrapped("%s", tr("online.fix_link.warn"));
+    section("online.fix_link.backup_title");
+    ImGui::TextWrapped("%s", tr("online.fix_link.backup"));
+    if (const std::string r = save_unlink::last_result(); !r.empty()) {
+        section("online.fix_link.result_title");
+        ImGui::TextWrapped("%s", r.c_str());
+    }
+    ImGui::Spacing();
+    if (red_button(tr("online.fix_link.button"), ImGui::GetContentRegionAvail().x) && !save_unlink::request_restart())
+        toast(tr("online.fix_link.fail"));  // request_restart returns only on failure
+    page_nav_item();
+}
+#endif
+
 // Network mode: Local Only (no Nextendo at all) or Nextendo (account, server status, friends). Local Play peer visits
 // (docs/LOCAL_PLAY.md) follow their own switch in both.
 void page_online() {
@@ -842,8 +886,19 @@ void page_online() {
     const nxo::Account acc = nxo::account();
     if (g_friends_view && nextendo && acc.signed_in) return page_friends();
     g_friends_view = false;
+#if !defined(__ANDROID__)
+    if (g_fix_link_view) return page_fix_link();
+#endif
     row("online.mode", tr("online.mode.desc"), [&](float w) {
+        [[maybe_unused]] const float x = ImGui::GetCursorPosX();  // the control column, on the right
         combo("online.mode", "nextendo", {{"local", tr("online.mode.local")}, {"nextendo", tr("online.mode.nextendo")}}, w);
+#if !defined(__ANDROID__)
+        // A save linked on another network (Rustendo, Pretendo, a console) refuses to load here: the red button,
+        // under the dropdown in either mode, opens the page that explains the fix and runs it (save_unlink.h).
+        ImGui::SetCursorPosX(x);
+        if (red_button(tr("online.fix_link"), w)) g_fix_link_view = true;
+        page_nav_item();
+#endif
     });
     if (nextendo) {
         section("online.section.nextendo");
