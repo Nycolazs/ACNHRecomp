@@ -850,7 +850,7 @@ bool red_button(const char* text, float width) {
 
 #if !defined(__ANDROID__)
 // Everything the player should know before the fix, then the fix itself (save_unlink.h): the game restarts, the save
-// is copied unaltered to backups/[save-fixed], and the online account link is cleared from every resident.
+// is copied unaltered to backups/save-link-fix, and the online account link is cleared from every resident.
 void page_fix_link() {
     row("online.friends.back", nullptr, [&](float w) {
         if (ImGui::Button(tr("online.friends.back"), ImVec2(w, 0))) g_fix_link_view = false;

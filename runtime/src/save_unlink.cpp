@@ -174,7 +174,7 @@ std::string open_pair(Pair& p, const fs::path& dir, const char* name, size_t siz
     return "";
 }
 
-// The save as it was, before any change: <user>/backups/[save-fixed]/<island> <date time>. Kept apart from the
+// The save as it was, before any change: <user>/backups/save-link-fix/<island> <date time>. Kept apart from the
 // timestamped backups (saves.cpp lists and prunes only those), so it is never pruned. Returns its path, "" on failure.
 std::string backup_unaltered(const fs::path& dir, std::string& error) {
     std::string island = save_storage::island_display_name(dir);
@@ -191,7 +191,7 @@ std::string backup_unaltered(const fs::path& dir, std::string& error) {
 #endif
     char when[32];
     std::strftime(when, sizeof when, "%Y-%m-%d %H-%M-%S", &tm);
-    const fs::path root = save_storage::user_dir(plat::data_root()) / "backups" / "[save-fixed]";
+    const fs::path root = save_storage::user_dir(plat::data_root()) / "backups" / "save-link-fix";
     fs::path dst = root / fs::u8path(island + " " + when);
     std::error_code ec;
     for (int n = 2; fs::exists(dst, ec) && n < 100; n++) dst = root / fs::u8path(island + " " + when + " (" + std::to_string(n) + ")");
@@ -270,7 +270,7 @@ bool unlink(const std::string& device_save, std::string& message) {
         if (changed[k] && !store(residents[k], true)) return message = "could not write a resident's file", false;
     if (copies && !store(main, false)) return message = "could not write main.dat", false;
     message = "Unlinked " + std::to_string(unlinked) + (unlinked == 1 ? " resident" : " residents") +
-              " from the old online account. The unaltered save is in backups/[save-fixed]/" +
+              " from the old online account. The unaltered save is in backups/save-link-fix/" +
               save_storage::path_utf8(fs::u8path(backup).filename()) + ".";
     return true;
 }

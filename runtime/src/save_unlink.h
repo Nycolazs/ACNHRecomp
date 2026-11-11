@@ -2,7 +2,7 @@
 // played on another network (Rustendo, Pretendo, a console) loads under Nextendo instead of "linked to a different
 // account". The game is restarted around the change: request_restart() relaunches this process with NX_UNLINK_SAVE=1,
 // and run_if_requested() makes the change at boot, before the game opens the save. The save as it was is copied first
-// to <user>/backups/[save-fixed]/<island> <date time> (never pruned, not in the Saves page's backup list).
+// to <user>/backups/save-link-fix/<island> <date time> (never pruned, not in the Saves page's backup list).
 #pragma once
 
 #include <string>

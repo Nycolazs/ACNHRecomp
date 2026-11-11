@@ -114,7 +114,7 @@ const Entry kEn[] = {
      "- To undo it, import the backup below from Settings > Saves."},
     {"online.fix_link.backup_title", "Backup"},
     {"online.fix_link.backup",
-     "Before anything changes, the save is copied exactly as it is to backups/[save-fixed]/<island name> <date and "
+     "Before anything changes, the save is copied exactly as it is to backups/save-link-fix/<island name> <date and "
      "time>, in your ACNHRecomp user folder. This copy is kept apart from the normal backups and is never deleted "
      "automatically."},
     {"online.fix_link.result_title", "Last fix"},
