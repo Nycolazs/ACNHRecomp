@@ -41,7 +41,7 @@
 namespace nx::nvn {
 std::mutex& vk_queue_mutex();  // nvn_vk.cpp: held around every use of the game's queue
 int hdr_ui_params(float& ui_nits, bool& gamma22);  // nvn_present.cpp: 0 SDR, 1 scRGB, 2 HDR10
-void screenshot_request();                         // nvn_screenshot.cpp: F12
+void screenshot_request(const std::string& stem = std::string());  // nvn_screenshot.cpp: F12
 uint64_t ffx_fg_presents();                        // nvn_temporal.cpp: AMD frame generation's presents, 0 when off
 }  // namespace nx::nvn
 

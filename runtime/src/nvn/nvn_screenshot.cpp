@@ -1,4 +1,5 @@
 // F12: the presented frame (before the settings screen is drawn over it) to <data root>/screenshots/acnh_<time>.png.
+// The phone camera (hle_album.cpp): the texture the game drew the photo into, read back the same way, to <stem>.png.
 // With an HDR swapchain the PNG is HDR: 16 bits a channel, BT.2020 primaries, PQ, and the cICP chunk saying so (9, 16,
 // 0, 1), which Chrome and Discord show in HDR. scRGB (RGBA16F, linear BT.709, 1 = 80 nits) is converted; HDR10
 // (A2B10G10R10, already BT.2020 PQ) is widened. An SDR swapchain gives an 8-bit sRGB PNG. Compressed with zlib when
@@ -12,6 +13,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -49,7 +51,13 @@ struct Pending {
     int tonemap = 1;
     float ui_nits = 203;
     bool gamma22 = true;
+    std::string stem;  // the file's name without .png; empty: acnh_<time>_<look>
 } g_pending;
+std::mutex g_stem_lock;
+std::string g_wanted_stem;  // the next capture's name (screenshot_request)
+Pending g_album;                          // the camera's photo being read back
+std::atomic<uint64_t> g_album_texture{0};  // the NVNtexture to read back at the next present (album_capture)
+std::string g_album_stem;                 // its name, under g_stem_lock
 uint64_t g_presents = 0;
 
 #include "nvn_pq_icc.inc"
@@ -274,52 +282,121 @@ void write_png(Pending p, const uint8_t* px) {
     char stamp[32];
     std::strftime(stamp, sizeof stamp, "%Y%m%d_%H%M%S", std::localtime(&t));
     std::snprintf(name, sizeof name, "/acnh_%s_%s.png", stamp, look);
-    if (FILE* f = plat::fopen_utf8(dir + name, "wb")) {
+    const std::string file = p.stem.empty() ? std::string(name) : "/" + p.stem + ".png";
+    if (FILE* f = plat::fopen_utf8(dir + file, "wb")) {
         std::fwrite(png.data(), 1, png.size(), f);
         std::fclose(f);
-        log("screenshot: %s%s (%ux%u, %s, %.1f MB)", dir.c_str(), name, p.width, p.height,
+        log("screenshot: %s%s (%ux%u, %s, %.1f MB)", dir.c_str(), file.c_str(), p.width, p.height,
             vanilla ? "vanilla, SDR" : scrgb ? "HDR from scRGB" : hdr10 ? "HDR10" : "SDR", double(png.size()) / 1e6);
     }
 }
 
+// Once the frames in flight are past the readback: written on a thread.
+void finish(Pending& slot) {
+    if (!slot.buffer || g_presents < slot.at + 16) return;
+    Pending p = slot;
+    slot = {};
+    void* px = nullptr;
+    if (p_vkMapMemory(vk_device(), p.memory, 0, VK_WHOLE_SIZE, 0, &px) == VK_SUCCESS) {
+        std::thread([p, px] {
+            write_png(p, static_cast<const uint8_t*>(px));
+            p_vkUnmapMemory(vk_device(), p.memory);
+            p_vkDestroyBuffer(vk_device(), p.buffer, nullptr);
+            p_vkFreeMemory(vk_device(), p.memory, nullptr);
+        }).detach();
+    }
+}
+
+// A host-visible buffer of `size` bytes for the readback; false (and `p` cleared) when there is none.
+bool alloc_readback(Pending& p, uint64_t size) {
+    VkDevice d = vk_device();
+    VkBufferCreateInfo bi{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+    bi.size = size;
+    bi.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    if (p_vkCreateBuffer(d, &bi, nullptr, &p.buffer) != VK_SUCCESS) return p = {}, false;
+    VkMemoryRequirements req{};
+    p_vkGetBufferMemoryRequirements(d, p.buffer, &req);
+    VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+    ai.allocationSize = req.size;
+    ai.memoryTypeIndex = memory_type(req.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    if (p_vkAllocateMemory(d, &ai, nullptr, &p.memory) != VK_SUCCESS) {
+        p_vkDestroyBuffer(d, p.buffer, nullptr);
+        return p = {}, false;
+    }
+    p_vkBindBufferMemory(d, p.buffer, p.memory, 0);
+    return true;
+}
+
+// The camera's photo: the game drew it into a linear RGBA8 texture and passed that texture's memory to
+// nn::album::SaveScreenshot, but the drawing is only in the texture's Vulkan image (at the screen scale: 1707x960 for
+// 1280x720 at 1440p). Copied from there, at the image's size.
+void record_album(VkCommandBuffer cb, uint64_t texture) {
+    GpuImage* img = image_of(texture);
+    const bool rgba8 = img && (img->format == VK_FORMAT_R8G8B8A8_UNORM || img->format == VK_FORMAT_R8G8B8A8_SRGB ||
+                               img->format == VK_FORMAT_B8G8R8A8_UNORM || img->format == VK_FORMAT_B8G8R8A8_SRGB);
+    if (!rgba8 || !img->image || img->layout == VK_IMAGE_LAYOUT_UNDEFINED || !(img->aspect & VK_IMAGE_ASPECT_COLOR_BIT)) {
+        log("album: texture %llx has no RGBA8 image to read (format %d)", (unsigned long long)texture,
+            img ? int(img->format) : -1);
+        return;
+    }
+    if (!alloc_readback(g_album, uint64_t(img->width) * img->height * 4)) return;
+    g_album.width = img->width, g_album.height = img->height, g_album.format = img->format, g_album.at = g_presents;
+    {
+        std::lock_guard lk(g_stem_lock);
+        g_album.stem = std::move(g_album_stem);
+    }
+    const VkImageLayout back = img->layout;
+    transition(cb, *img, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+    VkBufferImageCopy r{};
+    r.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    r.imageExtent = {img->width, img->height, 1};
+    p_vkCmdCopyImageToBuffer(cb, img->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, g_album.buffer, 1, &r);
+    transition(cb, *img, back);
+    log("album: photo from texture %llx (%ux%u), written in a moment", (unsigned long long)texture, img->width, img->height);
+}
+
 }  // namespace
 
-void screenshot_request() { g_wanted = true; }
+void album_capture(uint64_t texture, const std::string& stem) {
+    {
+        std::lock_guard lk(g_stem_lock);
+        g_album_stem = stem;
+    }
+    g_album_texture = texture;
+}
+
+// Guest memory that holds the picture itself (RGBA8 sRGB): copied, then written on a thread.
+void screenshot_save_rgba(const uint8_t* rgba, uint32_t width, uint32_t height, const std::string& stem) {
+    std::vector<uint8_t> px(rgba, rgba + size_t(width) * height * 4);
+    Pending p;
+    p.width = width, p.height = height, p.format = VK_FORMAT_R8G8B8A8_UNORM, p.stem = stem;
+    std::thread([p, px = std::move(px)] { write_png(p, px.data()); }).detach();
+}
+
+void screenshot_request(const std::string& stem) {
+    {
+        std::lock_guard lk(g_stem_lock);
+        g_wanted_stem = stem;
+    }
+    g_wanted = true;
+}
 
 // After the frame is drawn into the swapchain image (left in PRESENT_SRC_KHR), before the settings screen.
 void screenshot_record(VkCommandBuffer cb, VkImage image, VkFormat format, VkExtent2D extent) {
     g_presents++;
-    if (g_pending.buffer && g_presents >= g_pending.at + 16) {  // the readback is done: write it on a thread
-        Pending p = g_pending;
-        g_pending = {};
-        void* px = nullptr;
-        if (p_vkMapMemory(vk_device(), p.memory, 0, VK_WHOLE_SIZE, 0, &px) == VK_SUCCESS) {
-            std::thread([p, px] {
-                write_png(p, static_cast<const uint8_t*>(px));
-                p_vkUnmapMemory(vk_device(), p.memory);
-                p_vkDestroyBuffer(vk_device(), p.buffer, nullptr);
-                p_vkFreeMemory(vk_device(), p.memory, nullptr);
-            }).detach();
-        }
-    }
+    finish(g_pending);
+    finish(g_album);
+    if (!g_album.buffer)
+        if (const uint64_t t = g_album_texture.exchange(0)) record_album(cb, t);
     if (!g_wanted.exchange(false) || g_pending.buffer || !extent.width || !extent.height) return;
     const uint32_t texel = format == VK_FORMAT_R16G16B16A16_SFLOAT ? 8 : 4;
-    VkDevice d = vk_device();
-    VkBufferCreateInfo bi{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
-    bi.size = uint64_t(extent.width) * extent.height * texel;
-    bi.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-    if (p_vkCreateBuffer(d, &bi, nullptr, &g_pending.buffer) != VK_SUCCESS) return void(g_pending = {});
-    VkMemoryRequirements req{};
-    p_vkGetBufferMemoryRequirements(d, g_pending.buffer, &req);
-    VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-    ai.allocationSize = req.size;
-    ai.memoryTypeIndex = memory_type(req.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    if (p_vkAllocateMemory(d, &ai, nullptr, &g_pending.memory) != VK_SUCCESS) {
-        p_vkDestroyBuffer(d, g_pending.buffer, nullptr);
-        return void(g_pending = {});
-    }
-    p_vkBindBufferMemory(d, g_pending.buffer, g_pending.memory, 0);
+    if (!alloc_readback(g_pending, uint64_t(extent.width) * extent.height * texel)) return;
     g_pending.width = extent.width, g_pending.height = extent.height, g_pending.format = format, g_pending.at = g_presents;
+    {
+        std::lock_guard lk(g_stem_lock);
+        g_pending.stem = std::move(g_wanted_stem);
+        g_wanted_stem.clear();
+    }
     if (hdr_ui_params(g_pending.ui_nits, g_pending.gamma22)) g_pending.tonemap = hdr_tonemap_mode();
     VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
     b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
