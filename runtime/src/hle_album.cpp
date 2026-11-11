@@ -13,6 +13,7 @@
 
 #include <nx/runtime.h>
 
+#include "hle_ldn.h"
 #include "platform.h"
 #include "save_storage.h"
 
@@ -27,11 +28,14 @@ namespace {
 
 constexpr uint32_t kWidth = 1280, kHeight = 720;
 
-// The island's name as a file name: the characters Windows refuses (and control characters) dropped, no trailing dots
-// or spaces; "Island" before the first save writes landname.dat.
+// The island's name as a file name: the host's while visiting over local or online play, else this save's
+// (landname.dat). The characters Windows refuses (and control characters) dropped, no trailing dots or spaces;
+// "Island" before the first save writes landname.dat.
 std::string file_island_name() {
+    std::string name = ldn_visited_island();
+    if (name.empty()) name = save_storage::island_display_name(save_storage::device_dir(plat::data_root()));
     std::string out;
-    for (char c : save_storage::island_display_name(save_storage::device_dir(plat::data_root()))) {
+    for (char c : name) {
         if (static_cast<unsigned char>(c) < 0x20 || std::string("<>:\"/\\|?*").find(c) != std::string::npos) continue;
         out += c;
     }
