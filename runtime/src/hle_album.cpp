@@ -28,12 +28,9 @@ namespace {
 
 constexpr uint32_t kWidth = 1280, kHeight = 720;
 
-// The island's name as a file name: the host's while visiting over local or online play, else this save's
-// (landname.dat). The characters Windows refuses (and control characters) dropped, no trailing dots or spaces;
-// "Island" before the first save writes landname.dat.
-std::string file_island_name() {
-    std::string name = ldn_visited_island();
-    if (name.empty()) name = save_storage::island_display_name(save_storage::device_dir(plat::data_root()));
+// A name as part of a file name: the characters Windows refuses (and control characters) dropped, no trailing dots or
+// spaces; "Island" when nothing is left (before the first save writes landname.dat).
+std::string file_name_part(const std::string& name) {
     std::string out;
     for (char c : name) {
         if (static_cast<unsigned char>(c) < 0x20 || std::string("<>:\"/\\|?*").find(c) != std::string::npos) continue;
@@ -41,6 +38,14 @@ std::string file_island_name() {
     }
     while (!out.empty() && (out.back() == '.' || out.back() == ' ')) out.pop_back();
     return out.empty() ? "Island" : out;
+}
+
+// The island in the photo's name: Visit_<host's island> while visiting over local or online play, else this save's
+// (landname.dat).
+std::string file_island_name() {
+    const std::string visited = ldn_visited_island();
+    if (!visited.empty()) return "Visit_" + file_name_part(visited);
+    return file_name_part(save_storage::island_display_name(save_storage::device_dir(plat::data_root())));
 }
 
 // Result SaveScreenshot(const void* data, size_t size, ImageSize, AlbumReportOption)
