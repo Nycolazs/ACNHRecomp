@@ -375,6 +375,11 @@ bool init() {
             p_vkGetPhysicalDeviceProperties2(g_physical, &p2);
         }
         g_oob_not_zero = drv.driverID == VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS;
+        // The driver's own name and build ("Mesa 26.2.5 (git-...)" for Turnip): a report then says which custom
+        // driver was in use (#74), not only the GPU.
+        if (drv.driverName[0] || drv.driverInfo[0])
+            log("nvn/vk: driver %.*s, %.*s", int(sizeof drv.driverName), drv.driverName, int(sizeof drv.driverInfo),
+                drv.driverInfo);
         // Intel encodes its Windows driver version as major << 14 | minor: 101.2115 is 0x194843. The 101.2xxx branch
         // is the legacy one (Gen9, Skylake to Comet Lake); Ice Lake, Iris Xe and Arc drivers are 101.4xxx and later.
         const uint32_t dv = dprops.driverVersion, major = dv >> 14, minor = dv & 0x3fff;
