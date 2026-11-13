@@ -2858,6 +2858,7 @@ void pages_drag(bool over, float x, float y) {
 }
 
 void pages_close_requested() {
+    if (update_progress().stage == UpdateStage::Installing) return;  // a moment: the files are being swapped
     if (setup_state().running)
         g_confirm_quit = true;
     else

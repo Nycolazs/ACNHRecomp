@@ -16,6 +16,7 @@
 #include <filesystem>
 #include <fstream>
 #include <mutex>
+#include <random>
 #include <string>
 #include <iterator>
 #include <thread>
@@ -300,6 +301,7 @@ void update_check_start() {
         const std::string asset = json_string_after(json, at, "browser_download_url");
         const std::string digest = json_string_after(json, at, "digest");
         if (asset.rfind("https://github.com/Nycolazs/ACNHRecomp/releases/download/", 0) == 0 &&
+            asset.find("..") == std::string::npos && asset.find('%') == std::string::npos &&
             digest.rfind("sha256:", 0) == 0 && digest.size() == 7 + 64) {
             g_update.asset_url = asset;
             g_update.asset_sha256 = digest.substr(7);
@@ -312,20 +314,40 @@ namespace {
 std::mutex g_install_lock;
 UpdateProgress g_install;
 std::atomic<bool> g_install_started{false};
-fs::path g_relaunch;  // the launcher to start after the update (its path from before any file was renamed)
+fs::path g_relaunch;  // what to start after the update, found before any file was renamed
 
 void install_stage(UpdateStage s, const std::string& error = "") {
     std::lock_guard lk(g_install_lock);
     g_install.stage = s, g_install.error = error;
 }
 
-// The folder the package's ACNHRecomp/ goes over: the launcher's own, or on macOS the one holding ACNHRecomp.app.
-fs::path install_root() {
-    fs::path d = p8(own_dir());
+// What an update replaces: on Linux and Windows the files of the launcher's folder, from the package's ACNHRecomp/; on
+// macOS the running bundle as a whole (whatever it is called, wherever it is: /Applications, the desktop), by the
+// package's ACNHRecomp.app, as Sparkle does: files changed inside a signed bundle break its seal. install_root is the
+// folder the renames happen in: there only "<bundle>.update-new" and "<bundle>.update-old" are written.
 #if defined(__APPLE__)
-    d = d.parent_path().parent_path().parent_path();  // Contents/MacOS -> Contents -> ACNHRecomp.app -> its folder
+fs::path own_bundle() { return p8(own_dir()).parent_path().parent_path(); }  // Contents/MacOS -> Contents -> the .app
+fs::path install_root() { return own_bundle().parent_path(); }
+#else
+fs::path install_root() { return p8(own_dir()); }
 #endif
-    return d;
+fs::path package_part(const fs::path& unpacked) {
+#if defined(__APPLE__)
+    return unpacked / "ACNHRecomp" / "ACNHRecomp.app";
+#else
+    return unpacked / "ACNHRecomp";
+#endif
+}
+
+// The update's journal: "new <file>" for each file put in place (relative to the root), then "done" once all are.
+// update_cleanup reads it at the next start: it finishes an update stopped half-way and removes what it set aside.
+fs::path journal_path() {
+#if defined(__APPLE__)
+    const char* home = std::getenv("HOME");  // not inside the bundle (its signature), nor beside it
+    return fs::path(home ? home : "/tmp") / "Library" / "Caches" / "acnhrecomp-update.txt";
+#else
+    return install_root() / ".update-journal.txt";
+#endif
 }
 
 fs::path own_exe() {
@@ -334,7 +356,7 @@ fs::path own_exe() {
     const DWORD n = GetModuleFileNameW(nullptr, b, DWORD(std::size(b)));
     return n ? fs::path(std::wstring(b, n)) : fs::path();
 #elif defined(__APPLE__)
-    return install_root() / "ACNHRecomp.app";  // started again through `open`
+    return own_bundle();  // started again through `open`
 #else
     std::error_code ec;
     return fs::read_symlink("/proc/self/exe", ec);
@@ -342,95 +364,156 @@ fs::path own_exe() {
 }
 
 std::string file_sha256(const fs::path& p) {
-    std::FILE* f = nullptr;
-#if defined(_WIN32)
-    f = _wfopen(p.c_str(), L"rb");
-#else
-    f = std::fopen(p.c_str(), "rb");
-#endif
+    std::ifstream f(p, std::ios::binary);
     if (!f) return "";
     nx::Sha256 h;
     std::vector<char> buf(1 << 20);
-    for (size_t n; (n = std::fread(buf.data(), 1, buf.size(), f)) > 0;) h.update(buf.data(), n);
-    std::fclose(f);
+    while (f) {
+        f.read(buf.data(), std::streamsize(buf.size()));
+        if (f.gcount() > 0) h.update(buf.data(), size_t(f.gcount()));
+    }
     return h.hex();
 }
 
-// Every file of `from` put at the same place under `to`: copied beside as .update-new, the old one renamed to
-// .update-old (a running executable or a loaded library can be renamed, even on Windows, but not overwritten), the new
-// one renamed into place. On a failure everything renamed so far is put back. The .update-old names are listed in
-// .update-old.txt, for update_cleanup at the next start.
-bool put_in_place(const fs::path& from, const fs::path& to, std::string& error) {
+// A new, empty folder of this user's for the download (mkdtemp: in a shared /tmp no one else can have made it).
+fs::path make_work_dir() {
     std::error_code ec;
-    std::vector<std::pair<fs::path, fs::path>> moved;  // {old aside, its place}
-    std::vector<fs::path> added;
-    auto undo = [&] {
-        std::error_code e2;
-        for (const fs::path& p : added) fs::remove(p, e2);
-        for (auto it = moved.rbegin(); it != moved.rend(); ++it) fs::rename(it->first, it->second, e2);
-    };
-    for (auto it = fs::recursive_directory_iterator(from, ec); !ec && it != fs::recursive_directory_iterator();
-         it.increment(ec)) {
-        const fs::path src = it->path(), rel = fs::relative(src, from, ec), dst = to / rel;
-        if (ec) break;
-        if (it->is_directory(ec) && !it->is_symlink(ec)) {
-            fs::create_directories(dst, ec);
-            if (ec) break;
-            continue;
-        }
-        const fs::path fresh = dst.string() + ".update-new", old = dst.string() + ".update-old";
-        fs::remove(fresh, ec);
-        if (it->is_symlink(ec)) fs::copy_symlink(src, fresh, ec);
-        else fs::copy_file(src, fresh, fs::copy_options::overwrite_existing, ec);
-        if (ec) break;
-        if (!it->is_symlink()) fs::permissions(fresh, fs::status(src).permissions(), ec), ec.clear();
-        if (fs::exists(fs::symlink_status(dst, ec))) {
-            fs::remove(old, ec);
+    const fs::path base = fs::temp_directory_path(ec);
+    if (ec) return {};
+#if defined(_WIN32)  // %TEMP% is the user's own
+    std::random_device rd;
+    for (int i = 0; i < 8; i++) {
+        char name[48];
+        std::snprintf(name, sizeof name, "acnhrecomp-update-%08x", unsigned(rd()));
+        if (fs::create_directory(base / name, ec) && !ec) return base / name;
+    }
+    return {};
+#else
+    std::string t = s8(base / "acnhrecomp-update-XXXXXX");
+    return mkdtemp(t.data()) ? p8(t) : fs::path();
+#endif
+}
+
+bool present(const fs::path& p) {  // exists, even as a broken symlink; a missing path is no error here
+    std::error_code e;
+    return fs::exists(fs::symlink_status(p, e));
+}
+
+// The renames of a journal's "new" files into place: the old file to .update-old (a running executable or a loaded
+// library can be renamed, even on Windows, but not overwritten), the .update-new one in its place. `undo` (not when
+// finishing at start) puts back what was renamed if one fails; a file is never left missing.
+bool swap_in(const fs::path& root, const std::vector<std::string>& files, bool undo, std::string& error) {
+    std::vector<std::string> done;
+    for (const std::string& rel : files) {
+        const fs::path dst = root / p8(rel), fresh = root / p8(rel + ".update-new"), old = root / p8(rel + ".update-old");
+        if (!present(fresh)) continue;  // already in place (an update finished at start)
+        std::error_code ec;
+        if (present(dst)) {
+            std::error_code e2;
+            fs::remove_all(old, e2);
             fs::rename(dst, old, ec);
-            if (ec) {
-                fs::remove(fresh);
-                break;
-            }
-            moved.push_back({old, dst});
-        } else {
-            added.push_back(dst);
         }
-        fs::rename(fresh, dst, ec);
-        if (ec) break;
+        if (!ec) fs::rename(fresh, dst, ec);
+        if (ec) {
+            error = rel + ": " + ec.message();
+            std::error_code e2;
+            if (!present(dst) && present(old)) fs::rename(old, dst, e2);  // this one's old file back
+            if (undo)
+                for (auto it = done.rbegin(); it != done.rend(); ++it)
+                    fs::rename(root / p8(*it + ".update-old"), root / p8(*it), e2);
+            return false;
+        }
+        done.push_back(rel);
     }
-    if (ec) {
-        error = ec.message();
-        undo();
-        return false;
-    }
-    std::ofstream list(to / ".update-old.txt", std::ios::app);
-    for (const auto& [old, place] : moved) list << s8(fs::relative(old, to, ec)) << "\n";
     return true;
 }
 
 void install(UpdateInfo u) {
     std::error_code ec;
-    const fs::path root = install_root(), work = fs::temp_directory_path(ec) / ("acnhrecomp-update-" + u.version);
-    fs::remove_all(work, ec);
-    fs::create_directories(work / "x", ec);
-    const fs::path pkg = work / package_name(u.version);
+    const fs::path root = install_root(), work = make_work_dir();
+    if (work.empty()) return install_stage(UpdateStage::Failed, "temporary folder");
+    auto fail = [&](const std::string& why) {
+        fs::remove_all(work, ec);
+        install_stage(UpdateStage::Failed, why);
+    };
+    const fs::path pkg = work / package_name(u.version), unpacked = work / "x";
+    fs::create_directory(unpacked, ec);
     g_relaunch = own_exe();
     install_stage(UpdateStage::Downloading);
-    if (!run_ok({"curl", "-sSfL", "--connect-timeout", "15", "-A", "ACNHRecomp-launcher", "-o", s8(pkg), u.asset_url}))
-        return install_stage(UpdateStage::Failed, "download");
+    if (!run_ok({"curl", "-sSfL", "--connect-timeout", "15", "--speed-limit", "1024", "--speed-time", "60", "-A",
+                 "ACNHRecomp-launcher", "-o", s8(pkg), u.asset_url}))
+        return fail("download");
     install_stage(UpdateStage::Checking);
-    if (file_sha256(pkg) != u.asset_sha256) return install_stage(UpdateStage::Failed, "checksum");
+    if (file_sha256(pkg) != u.asset_sha256) return fail("checksum");
     install_stage(UpdateStage::Unpacking);
 #if defined(__APPLE__)
-    const bool unpacked = run_ok({"/usr/bin/ditto", "-x", "-k", s8(pkg), s8(work / "x")});
+    const bool unpacked_ok = run_ok({"/usr/bin/ditto", "-x", "-k", s8(pkg), s8(unpacked)});
 #else
-    const bool unpacked = run_ok({"tar", "-xf", s8(pkg), "-C", s8(work / "x")});  // Windows 10+: bsdtar reads .zip
+    const bool unpacked_ok = run_ok({"tar", "-xf", s8(pkg), "-C", s8(unpacked)});  // Windows 10+: bsdtar reads .zip
 #endif
-    const fs::path top = work / "x" / "ACNHRecomp";
-    if (!unpacked || !fs::is_directory(top, ec)) return install_stage(UpdateStage::Failed, "unpack");
+    const fs::path top = package_part(unpacked);
+    if (!unpacked_ok || !fs::is_directory(top, ec)) return fail("unpack");
     install_stage(UpdateStage::Installing);
+    // 1. Every new file copied beside its place as .update-new: stopping here harms nothing.
+    std::vector<std::string> files;
+#if defined(__APPLE__)
+    {
+        const std::string name = s8(own_bundle().filename());
+        const fs::path fresh = root / p8(name + ".update-new");
+        fs::remove_all(fresh, ec);
+        ec.clear();
+        fs::copy(top, fresh, fs::copy_options::recursive | fs::copy_options::copy_symlinks, ec);
+        files.push_back(name);
+    }
+#else
+    for (auto it = fs::recursive_directory_iterator(top, ec); !ec && it != fs::recursive_directory_iterator();
+         it.increment(ec)) {
+        const fs::path rel = fs::relative(it->path(), top, ec);
+        if (ec) break;
+        const fs::path dst = root / rel;
+        const bool link = it->is_symlink(ec);
+        if (!link && it->is_directory(ec)) {
+            fs::create_directories(dst, ec);
+            if (ec) break;
+            continue;
+        }
+        const fs::path fresh = p8(s8(dst) + ".update-new");
+        fs::remove(fresh, ec);
+        if (link) fs::copy_symlink(it->path(), fresh, ec);
+        else fs::copy_file(it->path(), fresh, fs::copy_options::overwrite_existing, ec);
+        if (ec) break;
+        if (!link) {
+            const fs::file_status st = fs::status(it->path(), ec);
+            if (!ec) fs::permissions(fresh, st.permissions(), ec);
+            ec.clear();
+        }
+        files.push_back(s8(rel));
+    }
+#endif
+    auto drop_new = [&] {
+        std::error_code e2;
+        for (const std::string& rel : files) fs::remove_all(root / p8(rel + ".update-new"), e2);
+    };
+    if (ec) {
+        drop_new();
+        return fail(ec.message());
+    }
+    // 2. The journal, then the renames (a moment): an update stopped there is finished at the next start.
+    {
+        std::ofstream j(journal_path(), std::ios::trunc);
+        for (const std::string& rel : files) j << "new " << rel << "\n";
+        if (!j) {
+            drop_new();
+            return fail("journal");
+        }
+    }
     std::string why;
-    if (!put_in_place(top, root, why)) return install_stage(UpdateStage::Failed, why);
+    if (!swap_in(root, files, true, why)) {
+        drop_new();
+        fs::remove(journal_path(), ec);
+        return fail(why);
+    }
+    std::ofstream(journal_path(), std::ios::app) << "done\n";
     fs::remove_all(work, ec);
     install_stage(UpdateStage::Done);
 }
@@ -438,12 +521,21 @@ void install(UpdateInfo u) {
 }  // namespace
 
 bool update_can_install() {
+    // Worked out once the check is done (each frame would write a probe file: antivirus scans, a Mac's /Applications)
+    static int answer = -1;
+    if (answer >= 0) return answer == 1;
     const UpdateInfo u = update_info();
+    if (!u.done) return false;
+    answer = 0;
     if (!u.available || u.asset_url.empty() || player_beside().empty()) return false;
+#if defined(__APPLE__)
+    if (own_bundle().extension() != ".app") return false;  // not run from its bundle
+#endif
     std::error_code ec;
     const fs::path probe = install_root() / ".update-probe";
-    const bool writable = static_cast<bool>(std::ofstream(probe));  // this user may write the folder (not Program Files)
+    const bool writable = static_cast<bool>(std::ofstream(probe));  // this user may write it (not Program Files)
     fs::remove(probe, ec);
+    answer = writable ? 1 : 0;
     return writable;
 }
 
@@ -479,19 +571,44 @@ void update_restart() {
 
 void update_cleanup() {
     std::error_code ec;
-    const fs::path root = install_root(), list = root / ".update-old.txt";
-    std::ifstream in(list);
+    const fs::path root = install_root(), jp = journal_path();
+    std::ifstream in(jp);
     if (!in) return;
-    for (std::string rel; std::getline(in, rel);) {
-        while (!rel.empty() && rel.back() == '\r') rel.pop_back();
-        // only names an update wrote: under the folder, ending in .update-old
-        if (rel.empty() || rel.find("..") != std::string::npos || rel.size() < 11 ||
-            rel.compare(rel.size() - 11, 11, ".update-old") != 0)
-            continue;
-        fs::remove(root / p8(rel), ec);
+    std::vector<std::string> files;
+    bool done = false;
+    for (std::string line; std::getline(in, line);) {
+        while (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line == "done") done = true;
+        else if (line.rfind("new ", 0) == 0 && line.find("..") == std::string::npos) files.push_back(line.substr(4));
     }
     in.close();
-    fs::remove(list, ec);
+    std::string why;
+    if (!done) swap_in(root, files, false, why);  // stopped between the renames: the rest go in now
+    // What was set aside: removed, and the names that are still in use (Windows: an old launcher still closing, the
+    // game running) kept in the journal for the next start.
+    std::vector<std::string> left;
+    for (const std::string& rel : files) {
+        const fs::path dst = root / p8(rel), old = root / p8(rel + ".update-old"), fresh = root / p8(rel + ".update-new");
+        std::error_code e;
+        if (!present(dst)) {  // never removed while its place is empty: the old file back, else the new one
+            if (present(old)) fs::rename(old, dst, e);
+            else if (present(fresh)) fs::rename(fresh, dst, e);
+            if (e) left.push_back(rel);
+            continue;
+        }
+        if (present(old)) {  // a file, or on macOS the old bundle
+            fs::remove_all(old, e);
+            if (e || present(old)) left.push_back(rel);
+        }
+        if (present(fresh)) fs::remove_all(fresh, e);  // a copy an interrupted update left
+    }
+    if (left.empty()) {
+        fs::remove(jp, ec);
+        return;
+    }
+    std::ofstream j(jp, std::ios::trunc);
+    for (const std::string& rel : left) j << "new " << rel << "\n";
+    j << "done\n";
 }
 
 UpdateInfo update_info() {
