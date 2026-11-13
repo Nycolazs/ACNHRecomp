@@ -98,18 +98,22 @@ const Entry kEn[] = {
      "Every resident of an island remembers the online account they were linked to. A save played on another "
      "network (Rustendo, Pretendo, Nintendo Switch Online on a console) remembers that account, so on Nextendo the "
      "game says the save data is linked to another online service account and asks you to erase it. This clears "
-     "that link from every resident so the save works here again, with nothing erased."},
+     "that link from every resident so the save works here again, with nothing erased. It also clears the island's "
+     "NookLink link, so the next time the game goes online it links the save to NookLink on the server you use now, "
+     "as on its first time online."},
     {"online.fix_link.when_title", "When to use it"},
     {"online.fix_link.when",
-     "Only when the game says your save data is linked to another online service account and tells you that you "
-     "need to erase the save data. Do not erase it: use this instead. If your save loads normally, you do not need "
-     "this."},
+     "When the game says your save data is linked to another online service account and tells you that you need to "
+     "erase the save data: do not erase it, use this instead. Also after moving a save between Nextendo and "
+     "Rustendo, when NookLink does not show your island or players."},
     {"online.fix_link.warn_title", "Warnings"},
     {"online.fix_link.warn",
      "- The game closes and starts again on its own to make the change.\n"
      "- The link is cleared for every resident on the island, including other players' residents.\n"
      "- Your residents are no longer linked to any online account. The game may ask to link again when you go "
      "online.\n"
+     "- NookLink starts over on the server you use now: the island and its players are registered there again. "
+     "What NookLink held on the old server stays there.\n"
      "- Only saves from version 3.0.x are supported. Anything else, or a save that looks damaged, is left untouched.\n"
      "- To undo it, import the backup below from Settings > Saves."},
     {"online.fix_link.backup_title", "Backup"},

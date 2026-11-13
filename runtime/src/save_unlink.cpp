@@ -7,12 +7,20 @@
 //
 // The link itself, as found in saves linked under three accounts (Nextendo, Rustendo, none): personal.dat holds a
 // 0x58-byte record at 0x66690 {u64; char[32] account string; zeros; u64 network service account id @+0x50}, all zero
-// when the resident was never linked; main.dat keeps a copy of each resident's record in its last region. Unlinking
-// zeroes those records, rehashes and re-encrypts with the same header.
+// when the resident was never linked; main.dat keeps a copy of each resident's record in its last region. The record's
+// u64 and string are also the resident's NookLink sign-in (its user id and password on the island server).
+//
+// The island's NookLink sign-in is main.dat's 0x50-byte record at 0x978f90 {u64 island id; char[32] password; zeros},
+// in the last region (found from island ids the island server handed out). It goes too, so the next online start
+// links the save afresh on the server now in use: the game registers the island and its residents again (POST lands,
+// POST users), links them (PUT users/{id}/land) and uploads its NookLink data, as on a save's first time online.
+//
+// Unlinking zeroes those records, rehashes and re-encrypts with the same header.
 #include "save_unlink.h"
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -59,6 +67,7 @@ constexpr Region kMain[] = {{0x000110, 0x1e339c}, {0x1e34b0, 0x3d089c}, {0x5b3e6
                             {0x8e4620, 0x037acc}, {0x91c0f0, 0x03ce5c}, {0x958f50, 0x057f3c}};
 constexpr Region kPersonal[] = {{0x00110, 0x37acc}, {0x37be0, 0x3ce5c}};
 constexpr size_t kRecord = 0x66690, kRecordSize = 0x58, kSignature = 0x28;  // signature: the u64 and the string
+constexpr size_t kIsland = 0x978f90, kIslandSize = 0x50, kIslandPassword = 32;  // main.dat: the island's sign-in
 
 std::mutex g_mu;
 std::string g_last;  // under g_mu
@@ -211,6 +220,17 @@ bool all_zero(const uint8_t* p, size_t n) {
     return true;
 }
 
+// main.dat's island sign-in as the game writes it: an id, a 32-hex-digit password, then zeros. Anything else at that
+// offset is not touched.
+bool island_record(const uint8_t* p) {
+    uint64_t id = 0;
+    std::memcpy(&id, p, 8);
+    if (!id) return false;
+    for (size_t i = 0; i < kIslandPassword; i++)
+        if (!std::isxdigit(p[8 + i])) return false;
+    return all_zero(p + 8 + kIslandPassword, kIslandSize - 8 - kIslandPassword);
+}
+
 }  // namespace
 
 bool unlink(const std::string& device_save, std::string& message) {
@@ -251,7 +271,12 @@ bool unlink(const std::string& device_save, std::string& message) {
         changed[k] = true;
         unlinked++;
     }
-    if (!unlinked) return message = "This save is not linked to an online account: nothing to fix.", true;
+    // The island's NookLink sign-in.
+    uint8_t* const island = main.data.data() + kIsland;
+    const bool island_linked = island_record(island);
+    if (island_linked) std::memset(island, 0, kIslandSize);
+    if (!unlinked && !island_linked)
+        return message = "This save is not linked to an online account or NookLink: nothing to fix.", true;
 
     std::string err;
     const std::string backup = backup_unaltered(dir, err);
@@ -268,10 +293,11 @@ bool unlink(const std::string& device_save, std::string& message) {
     };
     for (size_t k = 0; k < residents.size(); k++)
         if (changed[k] && !store(residents[k], true)) return message = "could not write a resident's file", false;
-    if (copies && !store(main, false)) return message = "could not write main.dat", false;
+    if ((copies || island_linked) && !store(main, false)) return message = "could not write main.dat", false;
     message = "Unlinked " + std::to_string(unlinked) + (unlinked == 1 ? " resident" : " residents") +
-              " from the old online account. The unaltered save is in backups/save-link-fix/" +
-              save_storage::path_utf8(fs::u8path(backup).filename()) + ".";
+              " from the old online account" + (island_linked ? " and the island from NookLink" : "") +
+              ". The next time the game goes online it links the save again. The unaltered save is in "
+              "backups/save-link-fix/" + save_storage::path_utf8(fs::u8path(backup).filename()) + ".";
     return true;
 }
 
