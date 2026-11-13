@@ -1,11 +1,13 @@
-// Discord Rich Presence: "Playing <application name>", the time since the game started, where the player is (from the
-// room and island models the game loads: discord_presence_file, called by hle_fs.cpp), and the season and time of day
-// from the host clock (the island's clock). It talks to the Discord client over its local IPC (\\.\pipe\discord-ipc-N
-// on Windows, a Unix socket discord-ipc-N in $XDG_RUNTIME_DIR, $TMPDIR or /tmp elsewhere): a frame is
-// {u32 opcode, u32 length} and JSON.
+// Discord Rich Presence: "Playing <application name>", the time since the game started, what the player is doing
+// ("Day dreaming of <island>" at the title screen, "Living life on <island>", "Visiting <island>" in local play,
+// "Dreaming" in the Dream Suite), where (from the room and island models and the title music the game loads:
+// discord_presence_file, called by hle_fs.cpp), and the season and time of day from the host clock (the island's
+// clock). It talks to the Discord client over its local IPC (\\.\pipe\discord-ipc-N on Windows, a Unix socket
+// discord-ipc-N in $XDG_RUNTIME_DIR, $TMPDIR or /tmp elsewhere): a frame is {u32 opcode, u32 length} and JSON.
 //
-// config.ini, [discord]: client_id (the Application ID of a Discord application; nothing without it: its name is what
-// Discord shows), island (the island's name; else the save's), hemisphere (north / south), large_image (default "acnh")
+// config.ini, [discord]: enabled (default 1; the settings' Discord page, applied within 2 s), client_id (the Application ID of a Discord application, default
+// ACNHRecomp's: its name is what Discord shows), island (the island's name; else the save's), hemisphere
+// (north / south), large_image (default "acnh")
 // and the small images winter, spring, summer, autumn (defaults: those names): Rich Presence art assets of that
 // application, or image URLs. trace = 1 logs the models that set the place to <data root>/discord_trace.txt. The texts
 // are in the settings screen's language (ui/i18n.cpp, "discord.*"). Discord started after the game is picked up within
@@ -34,6 +36,7 @@
 #include <nx/runtime.h>
 
 #include "config.h"
+#include "hle_ldn.h"
 #include "ui/i18n.h"
 #include "platform.h"
 
@@ -138,7 +141,7 @@ std::string escaped(const std::string& s) {
 // ---- where the player is ---------------------------------------------------------------------------------------
 
 std::mutex g_place_lock;
-const char* g_place = nullptr;  // the place's text key; null until a model says
+const char* g_place = nullptr;  // the place's text key; null (the title screen) until a model says
 bool g_place_trace = false;
 
 // Model name prefixes (romfs Model/<name>.Nin_NX_NVN.zs) and the place each one means (a text key); the first match
@@ -229,14 +232,22 @@ std::string island_name(const Settings& s) {
 std::string activity_json(const Settings& s, int64_t start) {
     const Moment m = moment(s.south);
     const std::string island = island_name(s);
+    const std::string named = island.empty() ? std::string(tr("discord.no_island")) : island;
+    const std::string visited = ldn_visited_island();
     const char* at = place();
-    std::string where = !at ? std::string()
-                        : std::strcmp(at, "discord.island") == 0 && !island.empty() ? trf("discord.island_named", island)
-                                                                                     : std::string(tr(at));
+    const bool title = !at || std::strcmp(at, "discord.title") == 0;
+    const bool dream = at && std::strcmp(at, "discord.dream") == 0;
+    // details: what the player is doing; state: the room they are in, else the season and the time of day
+    // shortcut: the dreamed island's name is not read (no Dream Suite online here), add it once dreams load.
+    std::string details = !visited.empty() ? trf("discord.visiting", visited)
+                          : title          ? trf("discord.title", named)
+                          : dream          ? std::string(tr("discord.dream"))
+                                           : trf("discord.home", named);
     const std::string season = tr((std::string("discord.") + m.season).c_str());
+    const bool room = at && !title && !dream && visited.empty() && std::strcmp(at, "discord.island") != 0;
     std::string j = "{\"timestamps\":{\"start\":" + std::to_string(start) + "}";
-    if (!where.empty()) j += ",\"details\":\"" + escaped(where) + "\"";
-    j += ",\"state\":\"" + escaped(season + " · " + tr(m.day)) + "\"";
+    j += ",\"details\":\"" + escaped(details) + "\"";
+    j += ",\"state\":\"" + escaped(room ? std::string(tr(at)) : season + " · " + tr(m.day)) + "\"";
     j += ",\"assets\":{\"large_image\":\"" + escaped(s.large_image) + "\"";
     j += ",\"large_text\":\"" +
          escaped(island.empty() ? std::string("Animal Crossing: New Horizons") : trf("discord.island_title", island)) +
@@ -252,7 +263,13 @@ void presence_thread(Settings s) {
     const std::string pid = std::to_string(process_id());
     bool told = false;
     uint64_t nonce = 0;
+    // discord.enabled (the settings' Discord page) is read again every turn: off closes the pipe, which clears it
+    auto enabled = [] { return config_get_bool("discord.enabled", true); };
     for (;;) {
+        if (!enabled()) {
+            std::this_thread::sleep_for(std::chrono::seconds(2));
+            continue;
+        }
         Handle h = kNone;
         for (int n = 0; n < 10 && h == kNone; n++) h = ipc_open(n);
         std::string reply;
@@ -261,6 +278,7 @@ void presence_thread(Settings s) {
             if (!told) log("discord: rich presence on"), told = true;
             std::string sent;
             for (;;) {  // the activity again whenever it changes; Discord's replies read as they come
+                if (!enabled()) break;
                 std::string a = activity_json(s, start);
                 if (a != sent) {
                     std::string cmd = "{\"cmd\":\"SET_ACTIVITY\",\"nonce\":\"" + std::to_string(++nonce) +
@@ -277,7 +295,7 @@ void presence_thread(Settings s) {
             }
         }
         if (h != kNone) ipc_close(h);
-        std::this_thread::sleep_for(std::chrono::seconds(20));
+        for (int i = 0; i < 10 && enabled(); i++) std::this_thread::sleep_for(std::chrono::seconds(2));
     }
 }
 
@@ -285,9 +303,19 @@ std::atomic<bool> g_on{false};
 
 }  // namespace
 
-// A file the game opened (hle_fs.cpp): a room or island model sets the place.
+// A file the game opened (hle_fs.cpp): a room or island model sets the place; the title music the title screen, the
+// island's music (BGM_24Hour, BGM_Field) the end of it. The title's layouts and stages are all loaded at boot: no use.
 void discord_presence_file(const std::string& guest_path) {
     if (!g_on.load(std::memory_order_relaxed)) return;
+    if (size_t bgm = guest_path.find("/Stream/BGM_"); bgm != std::string::npos) {
+        const char* music = guest_path.c_str() + bgm + 12;
+        std::lock_guard lk(g_place_lock);
+        if (std::strncmp(music, "Title", 5) == 0) g_place = "discord.title";
+        else if ((std::strncmp(music, "24Hour", 6) == 0 || std::strncmp(music, "Field", 5) == 0) && g_place &&
+                 std::strcmp(g_place, "discord.title") == 0)
+            g_place = "discord.island";
+        return;
+    }
     size_t at = guest_path.find("/Model/");
     if (at == std::string::npos) return;
     std::string name = guest_path.substr(at + 7);
@@ -308,7 +336,7 @@ void discord_presence_file(const std::string& guest_path) {
 
 void discord_presence_start() {
     Settings s;
-    s.client_id = config_get("discord.client_id");
+    s.client_id = config_get("discord.client_id", "1570205908682936351");  // the ACNHRecomp Discord application
     if (s.client_id.empty()) return;
     s.island = config_get("discord.island");  // else the save's landname.dat (island_name)
     s.large_image = config_get("discord.large_image", "acnh");
