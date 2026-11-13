@@ -248,16 +248,8 @@ LinkCheck upnp_check(uint16_t port, std::string& address) {
     return verified ? LinkCheck::OpenVerified : LinkCheck::Open;
 }
 
-// ---- a friend's address: asks there as a search does (ldn_discovery.cpp), and reads the island's name
-
-namespace {
-
-std::mutex g_address_lock;
-AddressResult g_address;
-int g_address_generation = 0;  // only the latest test's answer counts
-
 // The island's name in the advertise data: UTF-16 at +0x1C, 10 characters at most (seen in the game's data), to UTF-8.
-std::string island_name(const uint8_t* info) {
+std::string ldn_island_name(const uint8_t* info) {
     constexpr size_t kAdv = 0x26C, kName = 0x1C;
     std::string out;
     for (size_t i = 0; i < 10; i++) {
@@ -277,6 +269,14 @@ std::string island_name(const uint8_t* info) {
     }
     return out;
 }
+
+// ---- a friend's address: asks there as a search does (ldn_discovery.cpp), and reads the island's name
+
+namespace {
+
+std::mutex g_address_lock;
+AddressResult g_address;
+int g_address_generation = 0;  // only the latest test's answer counts
 
 AddressResult check_address(std::string item) {
     AddressResult r;
@@ -301,7 +301,7 @@ AddressResult check_address(std::string item) {
     std::vector<uint8_t> f;
     if (send_all(s, h, sizeof h) && read_frame(s, type, f) && type == kInfo && f.size() == kInfoSize) {
         r.check = AddressCheck::Found;
-        r.island = island_name(f.data());
+        r.island = ldn_island_name(f.data());
     }
     sock_close(s);
     return r;

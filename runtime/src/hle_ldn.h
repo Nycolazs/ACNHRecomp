@@ -8,6 +8,8 @@
 namespace nx {
 
 bool ldn_enabled();          // the game is in a local play session (online.enabled or NX_LDN=1 when it started)
+std::string ldn_island_name(const uint8_t* info);  // a NetworkInfo's island (ldn_upnp.cpp), UTF-8
+std::string ldn_visited_island();  // the host's island while this console is a guest there, else empty
 bool ldn_net_up();           // a network exists: this console made or joined it
 uint32_t ldn_own_ip();       // 0 without a network (host byte order, as the two addresses here)
 uint32_t ldn_broadcast_ip();

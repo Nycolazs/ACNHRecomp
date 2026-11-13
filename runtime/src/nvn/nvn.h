@@ -169,6 +169,7 @@ void defer_object(std::unique_ptr<Object> o);
 void drain_objects();
 enum { kWaitSync, kWaitFinish, kWaitInvalidate, kWaitFinalize, kWaitSites };  // nvn_queue.cpp's wait sites
 void wait_submits_so_far(int site);  // nvn_queue.cpp: until the submits made so far were replayed (DEBUG.md #59)
+bool cpu_read_after_write_backs(const uint8_t* p, uint64_t size);  // nvn_frames.cpp: the game reads a late write-back's bytes
 
 template <typename T>
 T& make(uint64_t guest) {

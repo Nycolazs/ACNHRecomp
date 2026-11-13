@@ -294,6 +294,21 @@ void write_back_before_read(const uint8_t* p, uint64_t size, const char* why) {
     retire_through(serial);
 }
 
+// The game's CPU about to read guest bytes a late write-back fills (the JPEG encoder's pixels, hle_jpeg.cpp): those
+// submits are retired now, under the GPU lock (as the replay thread retires them), so the bytes are in guest memory.
+// The submits must have been replayed already (wait_submits_so_far, worker_finish). True when it waited.
+bool cpu_read_after_write_backs(const uint8_t* p, uint64_t size) {
+    std::lock_guard lk(gpu_lock());
+    uint64_t serial = 0;
+    for (const LateRange& r : g_late)
+        if (p < r.p + r.size && r.p < p + size) serial = std::max(serial, r.serial);
+    if (!serial || g_completed >= serial) return false;
+    g_late_reads++;
+    g_late_waits++;
+    retire_through(serial);
+    return true;
+}
+
 bool late_in_ring(const LateRange& r) {
     return r.from >= g_ring_ptr && r.from + r.size <= g_ring_ptr + g_ring_size;
 }

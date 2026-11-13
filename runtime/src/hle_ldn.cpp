@@ -421,6 +421,11 @@ void Reject(CPU& c) {
 
 }  // namespace
 
+std::string ldn_visited_island() {
+    std::lock_guard lk(g_lock);
+    return g_state == StationConnected ? ldn_island_name(g_info) : std::string();
+}
+
 bool ldn_enabled() { return g_session; }
 
 bool ldn_net_up() { return g_own_ip != 0; }

@@ -765,4 +765,18 @@ void textures_written(uint64_t addr, uint64_t size) {
     }
 }
 
+// The texture whose storage starts at guest memory `addr` and has a GPU image (the camera's photo, hle_album.cpp);
+// 0 when there is none.
+uint64_t texture_at_memory(uint64_t addr) {
+    using namespace nx::nvn;
+    std::lock_guard lk(objects_lock());
+    for (auto& [pool, guests] : pool_textures())
+        for (uint64_t guest : guests) {
+            auto o = objects().find(guest);
+            auto* t = o == objects().end() ? nullptr : dynamic_cast<Texture*>(o->second.get());
+            if (t && t->memory == addr && t->image) return guest;
+        }
+    return 0;
+}
+
 }  // namespace nx
