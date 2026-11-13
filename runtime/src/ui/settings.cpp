@@ -767,7 +767,9 @@ void page_video() {
 #if defined(__ANDROID__)
     resolutions.insert(resolutions.begin(), {"auto", tr("video.resolution.auto")});
 #endif
-    for (const char* r : {"540", "720", "900", "1080", "1440"}) resolutions.push_back({r, std::string(r) + "p"});
+    // Below 540 for weak phones and integrated GPUs (#82): blurrier, but the 3D scene's cost falls with the rows.
+    for (const char* r : {"360", "432", "480", "540", "720", "900", "1080", "1440"})
+        resolutions.push_back({r, std::string(r) + "p"});
     resolutions.push_back({"2160", "2160p (4K)"});
     row("video.resolution", "video.resolution.desc", [&](float w) {
         combo("video.resolution", plat::kDefaultResolution, resolutions, w);
