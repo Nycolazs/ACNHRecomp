@@ -11,7 +11,8 @@ case $OS in
            KEEP='"Add to desktop" on the launcher'"'"'s home page puts a shortcut with the icon on the desktop and in
    the Start menu.'
            NEEDS='Windows 10 or 11 (x64) and a GPU with a Vulkan 1.3 driver (NVIDIA, AMD or Intel; keep it up to date).'
-           LIBS='SDL3 (zlib licence); the Microsoft Visual C++ runtime (vcruntime140, msvcp140: redistributable).'
+           LIBS='SDL3 (zlib licence); the Microsoft Visual C++ runtime (vcruntime140, msvcp140: redistributable);
+   AMD FidelityFX (amd_fidelityfx_*_vk.dll, MIT) and NVIDIA DLSS (nvngx_dlss.dll, NVIDIA DLSS SDK licence): see licenses\.'
            EOL=$'\r\n' ;;
   macos)   START='double-click "Start ACNHRecomp.command" the first time (it lets macOS open ACNHRecomp.app, which
    is not signed by Apple, and opens it). If macOS still refuses: right-click ACNHRecomp.app, choose Open, then
