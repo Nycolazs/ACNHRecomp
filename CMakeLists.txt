@@ -586,11 +586,21 @@ set(ENABLE_TESTING OFF CACHE BOOL "" FORCE)
 set(MBEDTLS_FATAL_WARNINGS OFF CACHE BOOL "" FORCE)
 set(USE_SHARED_MBEDTLS_LIBRARY OFF CACHE BOOL "" FORCE)
 set(USE_STATIC_MBEDTLS_LIBRARY ON CACHE BOOL "" FORCE)
+# Its threading layer (runtime/src/mbedtls/nx_mbedtls_config.h): TLS is used from several threads.
+set(MBEDTLS_USER_CONFIG_FILE "${CMAKE_SOURCE_DIR}/runtime/src/mbedtls/nx_mbedtls_config.h" CACHE FILEPATH "" FORCE)
+if(NOT WIN32)
+    set(LINK_WITH_PTHREAD ON CACHE BOOL "" FORCE)
+endif()
 FetchContent_Declare(mbedtls
     URL https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-3.6.7/mbedtls-3.6.7.tar.bz2
     URL_HASH SHA256=a7e8bcbec0e6f761b4af24f25677626b35f762f68eef79c08677a363212d11f6
     EXCLUDE_FROM_ALL)
 FetchContent_MakeAvailable(mbedtls)
+if(WIN32)  # threading_alt.h, which <mbedtls/threading.h> includes with MBEDTLS_THREADING_ALT
+    foreach(t mbedcrypto mbedx509 mbedtls)
+        target_include_directories(${t} PUBLIC "${CMAKE_SOURCE_DIR}/runtime/src/mbedtls")
+    endforeach()
+endif()
 target_sources(${NX_GAME} PRIVATE runtime/src/hle_ssl.cpp runtime/src/hle_npns.cpp runtime/src/nextendo_token.cpp
     runtime/src/nextendo_status.cpp runtime/src/save_unlink.cpp)
 target_link_libraries(${NX_GAME} PRIVATE mbedtls mbedx509 mbedcrypto)

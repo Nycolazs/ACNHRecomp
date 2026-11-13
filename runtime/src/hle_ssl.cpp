@@ -27,7 +27,11 @@
 #include <mbedtls/net_sockets.h>
 #include <mbedtls/sha256.h>
 #include <mbedtls/ssl.h>
+#include <mbedtls/threading.h>
 #include <psa/crypto.h>
+#if defined(_WIN32)
+#include <windows.h>  // SRWLOCK: Mbed TLS's mutexes (tls_ready)
+#endif
 
 #include <nx/runtime.h>
 
@@ -40,9 +44,25 @@ namespace nx {
 
 void npns_observe_request(const std::string& host, const uint8_t* p, size_t n);  // hle_npns.cpp
 
-// One RNG for every connection and the id_token signer (nextendo_token.cpp); Mbed TLS is built without its
-// threading layer, so calls are serialized here.
+// One RNG for every connection and the id_token signer (nextendo_token.cpp), serialized here as well. Mbed TLS is
+// built with its threading layer (runtime/src/mbedtls/nx_mbedtls_config.h): on Windows its mutexes are SRW locks.
 namespace {
+
+#if defined(_WIN32)
+void srw_init(mbedtls_threading_mutex_t* m) { m->srw = nullptr, m->valid = 1; }  // SRWLOCK_INIT
+void srw_free(mbedtls_threading_mutex_t* m) { m->valid = 0; }
+int srw_lock(mbedtls_threading_mutex_t* m) {
+    if (!m || !m->valid) return MBEDTLS_ERR_THREADING_BAD_INPUT_DATA;
+    AcquireSRWLockExclusive(reinterpret_cast<PSRWLOCK>(&m->srw));
+    return 0;
+}
+int srw_unlock(mbedtls_threading_mutex_t* m) {
+    if (!m || !m->valid) return MBEDTLS_ERR_THREADING_BAD_INPUT_DATA;
+    ReleaseSRWLockExclusive(reinterpret_cast<PSRWLOCK>(&m->srw));
+    return 0;
+}
+static_assert(sizeof(SRWLOCK) == sizeof(void*), "threading_alt.h keeps an SRWLOCK as one pointer");
+#endif
 
 std::mutex g_rng_mu;
 mbedtls_entropy_context g_entropy;
@@ -57,6 +77,9 @@ int tls_random(void*, unsigned char* out, size_t n) {
 
 bool tls_ready() {
     static const bool ok = [] {
+#if defined(_WIN32)
+        mbedtls_threading_set_alt(srw_init, srw_free, srw_lock, srw_unlock);  // before any other Mbed TLS call
+#endif
         if (psa_crypto_init() != PSA_SUCCESS) return false;  // TLS 1.3 needs PSA
         mbedtls_entropy_init(&g_entropy);
         mbedtls_ctr_drbg_init(&g_drbg);
@@ -92,8 +115,10 @@ std::string spki_sha256_b64(const mbedtls_x509_crt& crt) {
 
 bool nextendo_peer_pinned(const mbedtls_ssl_context* ssl, const std::string& host) {
     std::string extra = config_get("online.nextendo.tls_pins", "");
-    if (const char* e = std::getenv("NEXTENDO_TLS_PINS"); e && e[0]) extra = std::string(e) + "," + extra;
-    if (extra.rfind("any", 0) == 0) return true;
+    const char* e = std::getenv("NEXTENDO_TLS_PINS");
+    // "any" as the whole variable only: a pin is base64 and may start with those letters (config.ini can't turn it off)
+    if (e && std::strcmp(e, "any") == 0) return true;
+    if (e && e[0]) extra = std::string(e) + "," + extra;
     const mbedtls_x509_crt* crt = mbedtls_ssl_get_peer_cert(ssl);
     const std::string key = crt ? spki_sha256_b64(*crt) : std::string();
     if (key.empty()) {
