@@ -2568,9 +2568,11 @@ void page_online() {
         nx::nextendo::set_data_root(g_build.data);
         nx::nextendo::set_mode_override("nextendo");
         nx::nextendo::set_client_id_override(g_game_ini.get("online.nextendo.client_id", ""));
-        BuildContents c = build_contents(g_build.data);
+        const BuildContents& c = contents();  // cached: not a scan of the game folder every frame
         if (!c.version.empty()) nx::nextendo::set_game_version(c.version);
-        nx::nextendo::load_account();
+        static double account_read = -1.0;  // the account file again once a second (a sign-in elsewhere shows up)
+        if (const double now = ImGui::GetTime(); account_read < 0.0 || now - account_read >= 1.0)
+            account_read = now, nx::nextendo::load_account();
         if (!nx::nextendo::version_ok_for_nextendo()) {
             ImGui::TextWrapped("%s", tr("online.nextendo.need_303"));
         } else {
