@@ -19,7 +19,7 @@ endif()
 add_executable(acnhrecomp_launcher WIN32
     launcher/main.cpp launcher/pages.cpp launcher/files.cpp launcher/pipeline.cpp launcher/desktop.cpp
     launcher/cpu_check.cpp
-    runtime/src/ldn_upnp.cpp
+    runtime/src/ldn_lan.cpp
     runtime/src/nextendo.cpp
     runtime/src/nextendo_http.cpp
     launcher/save_log_stub.cpp

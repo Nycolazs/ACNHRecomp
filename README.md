@@ -132,7 +132,7 @@ GPU; see [docs/STATUS.md](docs/STATUS.md) for the full, regularly updated log.
 | 60 fps | Native with ACNHRecomp-Importer 1.0.6+ ([credits](#credits-and-references)) |
 | Online features through Nintendo | Unavailable (never contacted) |
 | Online via Nextendo (Dodo Codes, Search for a friend) | Supported on 3.0.3; [docs/NEXTENDO.md](docs/NEXTENDO.md) |
-| Visits between PCs (airport, Local Play), over LAN or the internet, no server | Local mode, works on Windows; [docs/LOCAL_PLAY.md](docs/LOCAL_PLAY.md) |
+| Visits between PCs and Switches with ldn_mitm (airport, Local Play), over LAN or a virtual LAN | New: builds, not yet tested in game; [docs/LOCAL_PLAY.md](docs/LOCAL_PLAY.md) |
 
 **Known issues**
 
@@ -678,8 +678,9 @@ Some GNOME setups make libdecor/GTK abort the process; the runtime prefers X11/X
 `private/acnh/nx_play.log`.
 
 **Can I visit friends or use Nook Link?**
-Visiting friends: **Nextendo Online** (Dodo / Search, [docs/NEXTENDO.md](docs/NEXTENDO.md)) or **Local** peer play
-([docs/LOCAL_PLAY.md](docs/LOCAL_PLAY.md)). Nintendo's own online services (including Nook Link) are never used.
+Visiting friends: **Nextendo Online** (Dodo / Search, [docs/NEXTENDO.md](docs/NEXTENDO.md)) or **Local** play at the
+airport, on a LAN or a virtual LAN, with PCs or a Switch running ldn_mitm ([docs/LOCAL_PLAY.md](docs/LOCAL_PLAY.md)).
+Nintendo's own online services (including Nook Link) are never used.
 
 **Does time pass on my island?**
 Yes. The island follows your computer's date, time and time zone.
@@ -781,6 +782,8 @@ More detail: [docs/ACNH.md](docs/ACNH.md) (the game's modules, RomFS and shader 
 - [Dear ImGui](https://github.com/ocornut/imgui) (MIT): the settings screen.
 - [MHGURecomp](https://github.com/morerokk/MHGURecomp) by morerokk (MIT): the design of local play between PCs
   (`nn::ldn`, virtual sockets), [docs/LOCAL_PLAY.md](docs/LOCAL_PLAY.md).
+- [ldn_mitm](https://github.com/spacemeowx2/ldn_mitm) by spacemeowx2 (GPLv2): the LAN protocol local play speaks, so a
+  Switch running it plays with PCs (reimplemented, no code taken), [docs/LOCAL_PLAY.md](docs/LOCAL_PLAY.md).
 - [RenoDX](https://github.com/clshortfuse/renodx) by Carlos Lopez Jr. (MIT): the HDR output and tonemapping
   (`SwapChainPass`, `ToneMapPass`, RenoDRT, user grading) compiled into the HDR shaders (`tools/shaders/hdr`; the
   generated `.inc` files are in the repository, regenerating them needs a RenoDX checkout: `tools/gen_spirv_inc.py`).
