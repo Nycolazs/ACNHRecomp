@@ -65,9 +65,16 @@ public class Picker extends Activity {
     protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
         if (request == PICK_DRIVER) {
-            boolean picked = result == RESULT_OK && data != null && data.getData() != null;
-            write(picked ? importDriver(data.getData()) : "");
-            finish();
+            if (result != RESULT_OK || data == null || data.getData() == null) {
+                write("");
+                finish();
+                return;
+            }
+            final Uri uri = data.getData();
+            new Thread(() -> {  // a copy (from a cloud provider, a download) off the main thread
+                write(importDriver(uri));
+                runOnUiThread(this::finish);
+            }).start();
             return;
         }
         String path = "";
@@ -94,47 +101,84 @@ public class Picker extends Activity {
     }
 
     // The picked driver into drivers/, alone there (the game loads the first .so in it, platform_android.cpp): a .so as
-    // it is, or the first .so inside a .zip. Written to a temporary file first, so a failed copy leaves the old one.
+    // it is, or from a .zip the .so its meta.json names (AdrenoTools' "libraryName"), else its only .so. Written to a
+    // temporary file first and renamed into place before the other drivers there are removed, so a failure leaves the
+    // old one in use.
     private String importDriver(Uri uri) {
         File dir = new File(getIntent().getStringExtra("driver"));
         if (!dir.isDirectory() && !dir.mkdirs()) return "error:cannot create " + dir;
         String name = displayName(uri);
         File tmp = new File(dir, "import.tmp");
-        String outName = null;
-        try (InputStream in = getContentResolver().openInputStream(uri)) {
-            if (in == null) return "error:cannot read " + name;
+        String outName;
+        try {
             if (name.toLowerCase(Locale.ROOT).endsWith(".so")) {
-                copy(in, tmp);
+                try (InputStream in = getContentResolver().openInputStream(uri)) {
+                    if (in == null) return "error:cannot read " + name;
+                    copy(in, tmp);
+                }
                 outName = name;
             } else {
-                try (ZipInputStream z = new ZipInputStream(in)) {
+                outName = zipDriverName(uri);
+                if (outName.startsWith("error:")) return outName;
+                boolean found = false;
+                try (InputStream in = getContentResolver().openInputStream(uri);
+                     ZipInputStream z = new ZipInputStream(in)) {
                     for (ZipEntry e; (e = z.getNextEntry()) != null;) {
-                        String n = e.getName(), base = n.substring(n.lastIndexOf('/') + 1);
-                        if (!e.isDirectory() && base.toLowerCase(Locale.ROOT).endsWith(".so")) {
+                        if (!e.isDirectory() && baseName(e.getName()).equals(outName)) {
                             copy(z, tmp);
-                            outName = base;
+                            found = true;
                             break;
                         }
                     }
                 }
-                if (outName == null) return "error:no .so file in " + name;
+                if (!found) return "error:" + outName + " not found in " + name;
             }
         } catch (Exception e) {
             tmp.delete();
             return "error:" + e.getMessage();
         }
         if (outName.isEmpty() || outName.contains("/") || outName.contains("..")) outName = "driver.so";
-        File[] old = dir.listFiles();
-        if (old != null)
-            for (File f : old)
-                if (f.getName().toLowerCase(Locale.ROOT).endsWith(".so")) f.delete();
         File dst = new File(dir, outName);
+        if (dst.exists() && !dst.delete()) {
+            tmp.delete();
+            return "error:cannot replace " + dst;
+        }
         if (!tmp.renameTo(dst)) {
             tmp.delete();
             return "error:cannot write " + dst;
         }
+        File[] old = dir.listFiles();
+        if (old != null)
+            for (File f : old)
+                if (!f.equals(dst) && f.getName().toLowerCase(Locale.ROOT).endsWith(".so")) f.delete();
         return "ok:" + outName;
     }
+    // A driver .zip's .so: the one its meta.json names, else the only one there.
+    private String zipDriverName(Uri uri) throws Exception {
+        String named = null, only = null;
+        int count = 0;
+        try (InputStream in = getContentResolver().openInputStream(uri); ZipInputStream z = new ZipInputStream(in)) {
+            for (ZipEntry e; (e = z.getNextEntry()) != null;) {
+                if (e.isDirectory()) continue;
+                String base = baseName(e.getName());
+                if (base.equalsIgnoreCase("meta.json")) {
+                    java.io.ByteArrayOutputStream b = new java.io.ByteArrayOutputStream();
+                    byte[] buf = new byte[8192];
+                    for (int n; (n = z.read(buf)) > 0 && b.size() < 65536;) b.write(buf, 0, n);
+                    java.util.regex.Matcher m = java.util.regex.Pattern
+                        .compile("\"libraryName\"\\s*:\\s*\"([^\"]+)\"").matcher(b.toString("UTF-8"));
+                    if (m.find()) named = baseName(m.group(1));
+                } else if (base.toLowerCase(Locale.ROOT).endsWith(".so")) {
+                    only = base;
+                    count++;
+                }
+            }
+        }
+        if (named != null) return named;
+        if (count == 1) return only;
+        return count == 0 ? "error:no .so file in the .zip" : "error:the .zip holds several drivers: pick its .so";
+    }
+    private static String baseName(String path) { return path.substring(path.lastIndexOf('/') + 1); }
     private String displayName(Uri uri) {
         try (Cursor c = getContentResolver().query(uri, new String[] {OpenableColumns.DISPLAY_NAME}, null, null, null)) {
             if (c != null && c.moveToFirst() && c.getString(0) != null) {
