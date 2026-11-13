@@ -1375,6 +1375,8 @@ void do_import(const std::string& from) {
         toast(trf("saves.import.fail", err));
 }
 
+double g_backups_listed = -100;  // when the Saves page last read the backups (-100: at once)
+
 void page_saves() {
     bool has = saves::has_save();
     row("saves.current", nullptr, [&](float) {
@@ -1394,6 +1396,7 @@ void page_saves() {
     if (button(tr("saves.backup"), bw)) {
         std::string err, name = saves::backup_now(&err);
         toast(name.empty() ? err : trf("saves.backup.ok", name));
+        g_backups_listed = -100;  // the new one in the list now, not up to 2 s later
     }
     ImGui::EndDisabled();
     ImGui::Dummy(ImVec2(0, 4 * g_scale));
@@ -1448,8 +1451,7 @@ void page_saves() {
     // Read again every 2 s, not every frame: it walks every island's folder under the saves' lock, which a backup
     // being copied (10-40 MB, at boot) holds.
     static std::vector<std::string> backups;
-    static double listed = -100;
-    if (ImGui::GetTime() - listed > 2) backups = saves::list_backups(), listed = ImGui::GetTime();
+    if (ImGui::GetTime() - g_backups_listed > 2) backups = saves::list_backups(), g_backups_listed = ImGui::GetTime();
     for (const std::string& b : backups) {
         const size_t slash = b.find('/');
         if (b.compare(0, slash, island) != 0) {

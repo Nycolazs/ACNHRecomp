@@ -94,7 +94,8 @@ javac -nowarn -Xlint:-options -source 8 -target 8 -bootclasspath "$PLATFORM" -cl
 cp $(find "$BUILD/_deps" -name "lib*hook*.so") "$OUT/lib/arm64-v8a/"
 TURNIP=private/third_party/mesa/build-android/src/freedreno/vulkan/libvulkan_freedreno.so
 [ -f "$TURNIP" ] && cp "$TURNIP" "$OUT/lib/arm64-v8a/" || echo "(no Turnip: tools/build_turnip.sh; the phone's driver is used)"
-python3 tools/make_android_icon.py 2>/dev/null || true  # needs Pillow; the PNGs are kept in android/res otherwise
+# The icons are in git: drawn again only when missing (each Pillow writes other bytes for the same pixels).
+[ -f android/res/mipmap-xxxhdpi/ic_launcher.png ] || python3 tools/make_android_icon.py 2>/dev/null || true
 "$BT/aapt2" compile --dir android/res -o "$OUT/res.zip"
 # The version comes from the git tag (v0.7.0 -> versionName 0.7.0, versionCode 700), so Android and app stores
 # such as Obtainium see the real release number.
