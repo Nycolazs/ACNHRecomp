@@ -62,6 +62,11 @@ std::string ip_text(uint32_t ip) {
     return b;
 }
 
+bool lan_private_ip(uint32_t ip) {
+    return ip >> 24 == 10 || ip >> 24 == 127 || ip >> 20 == 0xAC1 || ip >> 16 == 0xC0A8 || ip >> 16 == 0xA9FE ||
+           ip >> 22 == (100u << 2 | 1);
+}
+
 // The island's name in the advertise data: UTF-16 at +0x1C, 10 characters at most (seen in the game's data), to UTF-8.
 std::string ldn_island_name(const uint8_t* info) {
     constexpr size_t kAdv = 0x26C, kName = 0x1C;

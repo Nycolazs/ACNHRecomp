@@ -959,7 +959,7 @@ void page_online() {
     {
         static bool shown = false;
         row("online.address", tr("online.address.desc"), [&](float w) {
-            ImGui::TextUnformatted(shown ? address.c_str() : "â¢â¢â¢â¢â¢â¢");
+            ImGui::TextUnformatted(shown ? address.c_str() : "\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2");
             const float half = (w - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
             if (ImGui::Button(tr(shown ? "online.hide" : "online.show"), ImVec2(half, 0))) shown = !shown;
             page_nav_item();

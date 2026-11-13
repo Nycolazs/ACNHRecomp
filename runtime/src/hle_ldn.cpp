@@ -460,9 +460,13 @@ bool ldn_link_info(uint8_t* out) {
     return true;
 }
 
-int ldn_link_add_node(const uint8_t* station) {
+int ldn_link_add_node(const uint8_t* station, uint32_t own_ip) {
     std::lock_guard lk(g_lock);
     if (g_state != AccessPointCreated) return -1;
+    if (own_ip && g_info[kNiNodeCount] == 1) {  // the network the first station came through: a virtual LAN's address
+        put32(g_info + kNiNodes + kNodeIp, own_ip);
+        g_own_ip = own_ip;
+    }
     const int max = g_info[kNiNodeMax];
     for (int i = 1; i < max && i < 8; i++) {
         uint8_t* node = g_info + kNiNodes + size_t(i) * 0x40;

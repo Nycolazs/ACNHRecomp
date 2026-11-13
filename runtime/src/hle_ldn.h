@@ -34,7 +34,9 @@ LinkStatus link_status();
 
 // What the link asks hle_ldn.cpp.
 bool ldn_link_info(uint8_t* out);           // the hosted network's NetworkInfo
-int ldn_link_add_node(const uint8_t* node);  // host: a station's NodeInfo (0x40) in a free slot: its number, or -1
+// host: a station's NodeInfo (0x40) in a free slot: its number, or -1. own_ip: this computer's address on the station's
+// connection, which becomes the host's node address when it is the first station (0: keep it).
+int ldn_link_add_node(const uint8_t* node, uint32_t own_ip);
 void ldn_link_remove_node(int node);
 void ldn_link_set_info(const uint8_t* info);  // station: the host's new NetworkInfo
 void ldn_link_lost();                         // station: the host is gone

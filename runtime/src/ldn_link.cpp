@@ -26,7 +26,7 @@ namespace nx {
 
 namespace {
 
-constexpr size_t kNiBssid = 0x20, kNiNodes = 0x68, kNodeIp = 0, kNodeMac = 4;
+constexpr size_t kNiBssid = 0x20, kNiNodeCount = 0x67, kNiNodes = 0x68, kNodeIp = 0, kNodeMac = 4;
 
 struct Peer {
     sock_t fd = kBadSock;
@@ -88,9 +88,16 @@ void udp_reader() {
                                    reinterpret_cast<sockaddr*>(&from), &fl));
         uint8_t type;
         if (n <= 0 || !lan_parse(in.data(), size_t(n), type, body)) continue;  // a timeout, or Windows' WSAECONNRESET
+        const uint32_t from_ip = ntohl(from.sin_addr.s_addr);
         if (type == kScan) {
+            // Only a local network answers: a 12-byte Scan gets a NetworkInfo back, which a stranger could aim elsewhere.
+            if (!lan_private_ip(from_ip)) continue;
             uint8_t info[kInfoSize];
             if (!ldn_link_info(info)) continue;
+            // Before anyone joins, the host's node holds this computer's address towards the asker: on a virtual LAN
+            // (Tailscale, ZeroTier) that is the virtual one, where the game's UDP must go, not the default route's.
+            if (!lan_bind_ip() && info[kNiNodeCount] == 1)
+                if (const uint32_t own = route_address(from_ip)) std::memcpy(info + kNiNodes + kNodeIp, &own, 4);
             const std::vector<uint8_t> p = lan_packet(kScanResp, info, kInfoSize);
             sendto(g_udp, reinterpret_cast<const char*>(p.data()), int(p.size()), 0,
                    reinterpret_cast<const sockaddr*>(&from), sizeof from);
@@ -99,7 +106,7 @@ void udp_reader() {
             if (!g_scanning) continue;
             Found f;
             std::memcpy(f.info, body.data(), kInfoSize);
-            f.from = ntohl(from.sin_addr.s_addr);
+            f.from = from_ip;
             g_found.push_back(f);
         }
     }
@@ -113,7 +120,9 @@ bool udp_open() {
     int one = 1;
     if (g_udp != kBadSock) {
         setsockopt(g_udp, SOL_SOCKET, SO_BROADCAST, reinterpret_cast<const char*>(&one), sizeof one);
+#ifndef _WIN32  // on Windows it would let another program take the port over
         setsockopt(g_udp, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&one), sizeof one);  // as ldn_mitm
+#endif
     }
     const sockaddr_in a = ipv4(lan_bind_ip(), kLanPort);
     if (g_udp == kBadSock || bind(g_udp, reinterpret_cast<const sockaddr*>(&a), sizeof a)) {
@@ -177,7 +186,12 @@ void host_accept() {
         uint8_t type = 0;
         std::vector<uint8_t> body;
         int node = -1;
-        if (lan_read(fd, type, body) && type == kConnect && body.size() == kNodeSize) node = ldn_link_add_node(body.data());
+        // This computer's address on the connection: the host's node takes it when this is the first station.
+        sockaddr_in me{};
+        socklen_t ml = sizeof me;
+        const uint32_t own = getsockname(fd, reinterpret_cast<sockaddr*>(&me), &ml) ? 0 : ntohl(me.sin_addr.s_addr);
+        if (lan_read(fd, type, body) && type == kConnect && body.size() == kNodeSize)
+            node = ldn_link_add_node(body.data(), lan_bind_ip() ? 0 : own);
         if (node < 1 || node >= kMaxNodes) {  // ldn_mitm closes the connection when it is full
             sock_close(fd);
             continue;

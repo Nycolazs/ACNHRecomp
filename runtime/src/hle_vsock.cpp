@@ -2,7 +2,10 @@
 // nodes' real addresses, as with ldn_mitm. Each game socket is a real UDP socket at the same port, whose datagrams a
 // thread puts in its queue; a broadcast goes to each other node of the network (a virtual LAN carries no broadcast).
 // Errors are the Switch's (Linux numbers), as are the socket options. Stream sockets are not carried yet.
+// The sockets listen on every interface, so a datagram is only taken from a node of the network (ldn_peer_ips): Pia
+// is not meant to face strangers, and on a public network anyone could otherwise send it packets.
 // Outside a local play session every call fails, as on a console with no network (hle_net.cpp).
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -102,12 +105,15 @@ void reader(int fd, uint32_t gen, sock_t r) {
         socklen_t fl = sizeof from;
         const int n = int(recvfrom(r, reinterpret_cast<char*>(buf.data()), int(buf.size()), 0,
                                    reinterpret_cast<sockaddr*>(&from), &fl));
+        uint32_t peers[8];
+        const int np = n < 0 ? 0 : ldn_peer_ips(peers);  // outside g_mu, as do_send asks
         std::lock_guard lk(g_mu);
         Sock* s = get(fd);
         if (!s || s->gen != gen) return;
         if (n < 0) continue;  // a timeout, or Windows' WSAECONNRESET from an earlier send
         const uint32_t ip = ntohl(from.sin_addr.s_addr);
         const uint16_t port = ntohs(from.sin_port);
+        if (std::find(peers, peers + np, ip) == peers + np) continue;  // not a node of this network
         if (s->rport && (s->rip != ip || s->rport != port)) continue;
         if (s->queue.size() >= kMaxQueued) continue;
         s->queue.push_back({ip, port, std::vector<uint8_t>(buf.begin(), buf.begin() + n)});

@@ -21,10 +21,14 @@ changed while the game runs: it is read when you next talk to Orville, and held 
 - **On the same network** (or a virtual LAN that forwards broadcasts: ZeroTier, Hamachi): nothing else. The host opens
   the airport, the others ask Orville to travel by Local Play and the island is listed. A Switch with ldn_mitm on works
   the same, as host or visitor (same game version).
-- **A virtual LAN without broadcasts** (Tailscale): the visitor types the host's address under "Friend's address"; the
-  Online page shows each computer's own address. Over the internet without a virtual LAN: not possible, as with ldn_mitm.
+- **A virtual LAN without broadcasts** (Tailscale): the visitor types the host's virtual LAN address under "Friend's
+  address"; the Online page shows each computer's own address. Nothing else to set: the host answers each search with
+  its address towards the one asking (the virtual LAN's, not the home network's), and keeps the address the first
+  visitor connected to. Over the internet without a virtual LAN: not possible, as with ldn_mitm.
 
-UDP and TCP port 11452 and the game's UDP port must be allowed by the firewall (Windows asks the first time).
+UDP and TCP port 11452 and the game's UDP port must be allowed by the firewall (Windows asks the first time). Only
+private, link-local, CGNAT (Tailscale) and loopback addresses get an answer to a search, and the game's sockets only take
+datagrams from the nodes of the network it is in, so an open port on a public network does not let strangers in.
 
 ## How it works
 
@@ -41,8 +45,10 @@ come compressed (a zero byte, then how many more zeros). This side sends them un
 | `ldn_net.h` | Sockets and the protocol's packets |
 
 Variables: `NX_LDN=1` forces it on, `NX_LDN_JOIN=host[:port],...` (addresses to scan besides the broadcast),
-`NX_LDN_IP=a.b.c.d` (the address to use and bind to: a virtual LAN's, or `127.0.0.2` to run a second copy on one PC with
-`NX_LDN_JOIN=127.0.0.1`). Lines starting with `ldn:` and `vsock:` in the log show the calls.
+`NX_LDN_IP=a.b.c.d` (the address to use and bind to). Two copies on one PC: `NX_LDN_IP=127.0.0.1` for the first, and
+`NX_LDN_IP=127.0.0.2` with `NX_LDN_JOIN=127.0.0.1` for the second (both need `NX_LDN_IP`: a copy bound to every address
+holds the port on 127.0.0.2 too on Linux; on macOS add 127.0.0.2 first, `sudo ifconfig lo0 alias 127.0.0.2`). Lines
+starting with `ldn:` and `vsock:` in the log show the calls.
 
 Known: one copy per address, as with ldn_mitm (ports 11452 and the game's are fixed); the subnet mask given to the game is
 /24. A visitor whose player id is already on the island does not see it (the game's own check, seen with copies of one
