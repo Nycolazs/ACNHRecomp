@@ -509,6 +509,12 @@ bool copy_if_changed(const std::string& src, const std::string& dst, std::string
 }
 }  // namespace
 
+// The folder whose game this process loaded (Home.java has it loaded before the game's activity starts), or "".
+std::string loaded_game_folder() {
+    std::lock_guard lk(g_game_mx);
+    return g_game_lib ? g_game_from : std::string();
+}
+
 std::string load_game(const std::string& folder, const std::string& own_dir) {
 #ifndef NX_GAME_DYNAMIC
     return "";  // linked in (NX_ANDROID_GAME_IN_APP)
@@ -1326,6 +1332,14 @@ extern "C" void android_main(android_app* app) {
     }
     // The picked folder wins over the app's own one; else the own one (adb push), else Internal storage/<title>.
     g_root = !chosen.empty() && has_data(chosen) ? chosen : has_data(own) ? own : shared;
+    // The home screen loaded the game from the folder it was given just before: that folder wins. Choosing another
+    // here (data_root.txt not written, its main.bin not readable from here, a copy in the app's own folder) only made
+    // load_game ask for a restart, which came back on every start (Discord, 0.9.0).
+    std::string passed_over;  // logged below, once the log is opened in the right folder (its first line opens it)
+    if (std::string loaded = loaded_game_folder(); !loaded.empty() && loaded != g_root) {
+        passed_over = g_root;
+        g_root = loaded;
+    }
     // config.txt's NX_* lines become environment variables (the NVN layer reads its switches with getenv), without
     // overriding a variable already set. Android defaults: handheld (720p, the lighter GPU load).
     {
@@ -1376,6 +1390,8 @@ extern "C" void android_main(android_app* app) {
 
     nx::log("%s (Switch recomp) on Android, data at %s (own folder %s: %s)", nx::game::kInfo.title, g_root.c_str(),
             own.c_str(), has_data(own) ? "has the data" : "no analysis/main.bin");
+    if (!passed_over.empty())
+        nx::log("app: the folder the home screen loaded, not %s (data_root.txt or its access disagreed)", passed_over.c_str());
     if (std::string why = load_game(g_root, g_cache_dir); !why.empty()) {
         nx::log("game library: %s", why.c_str());
         open_home(app, why);
