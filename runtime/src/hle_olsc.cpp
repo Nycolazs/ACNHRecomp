@@ -1,16 +1,21 @@
 // olsc:u — Island Backup (nn::olsc, "save data backup"), kept on this computer.
 //
 // Nextendo's cloud saves are reserved to its official applications (and limited to Splatoon 3, 5 MB), so the backup
-// the game makes is a local one: <data root>/user/backups/<island name>/<stamp>/, the same backups the settings screen
-// lists and restores (saves.cpp: the 10 newest of each island are kept). ACNH keeps one island per console, so each
+// the game makes is a local one: <data root>/user/backups/<island folder>/<stamp>.auto/, listed and restored by the
+// settings screen with the others (saves.cpp: the 3 newest automatic ones of each island are kept, apart from the
+// player's own, so automatic backups never push those out). ACNH keeps one island per console, so each
 // island (save profile) has one Island Backup, whatever user the game names; only the island being played is backed up.
 //
 // Like the Switch, the system side makes the backup, not the game: when the player has turned Island Backup on (the
 // game sets the system setting, cmd 14), the save is backed up if main.dat changed since the last Island Backup: at
 // boot (olsc Initialize, before the game writes), back at the title screen after Save and quit (cmd 13), and when the
-// window is closed (olsc_backup_on_exit, from the SDL quit event).
+// window is closed (olsc_backup_on_exit, from the SDL quit event on Windows, Linux and macOS; Android has no such
+// event, so there it is only at boot and at the title screen).
 //
-// Local state, per island (user/backups/<island name>/island_backup.txt): the setting (each save has its own Island
+// A restore the game asks for (cmd 26) swaps the save under the running game, like the settings screen's restore: the
+// settings screen then opens and only offers to quit, so the game cannot write the old island over the restored one.
+//
+// Local state, per island (user/backups/<island folder>/island_backup.txt): the setting (each save has its own Island
 // Backup option, which the game sends at boot), the game's 0x400-byte custom block (island name and the like, shown in
 // the restore list), and the Island Backup's name, time, custom block and main.dat stamp.
 #include <algorithm>
@@ -35,6 +40,7 @@
 #include "kernel.h"
 #include "platform.h"
 #include "saves.h"
+#include "ui/ui.h"
 
 namespace nx {
 namespace {
@@ -58,7 +64,7 @@ constexpr int kMaxWaitSeconds = 120;  // a backup copies 10-40 MB on this disk
 struct State {
     int setting = 0;      // 0 never set, 1 on, 2 off
     std::string custom;   // base64 of the custom block the game set last
-    std::string backup;   // its name in user/backups/<island name>, "" if none
+    std::string backup;   // its name as saves::list_backups gives it ("<island folder>/<stamp>.auto"), "" if none
     int64_t time = 0;     // posix time of the Island Backup
     std::string backup_custom;  // base64 of the custom block when it was made
     std::string stamp;    // main.dat size and write time when it was made
@@ -190,7 +196,7 @@ uint32_t make_backup() {
     if (!saves::has_save()) return kNoSave;
     const std::string stamp = save_stamp();
     std::string err;
-    const std::string name = saves::backup_now(&err);
+    const std::string name = saves::backup_now(&err, true);
     if (name.empty()) {
         log("olsc: cannot back up the island: %s", err.c_str());
         return kNoSave;
@@ -202,7 +208,7 @@ uint32_t make_backup() {
         s.backup_custom = s.custom;
         s.stamp = stamp;
     });
-    log("olsc: Island Backup saved as %s/%s", saves::backups_folder().c_str(), name.c_str());
+    log("olsc: Island Backup saved as %s", name.c_str());
     return 0;
 }
 
@@ -215,6 +221,7 @@ uint32_t restore() {
     }
     update_state([](State& st) { st.stamp = save_stamp(); });  // the restored save is the backup: nothing new
     log("olsc: restored the Island Backup %s", s.backup.c_str());
+    ui::ui_must_quit();
     return 0;
 }
 

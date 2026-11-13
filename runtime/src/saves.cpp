@@ -42,7 +42,8 @@ namespace nx::saves {
 namespace {
 
 constexpr const char* kTitle = "01006F8002326000";
-constexpr size_t kKeepBackups = 10;
+constexpr size_t kKeepBackups = 10;     // the player's own, and those made before an import or restore
+constexpr size_t kKeepAutoBackups = 3;  // the automatic Island Backups (hle_olsc.cpp)
 constexpr uint64_t kMaxZipBytes = 1ull << 30;  // a save is ~10-40 MB: anything past 1 GiB is not one (or a zip bomb)
 
 // One operation at a time: the settings screen may run them on a worker thread.
@@ -155,20 +156,11 @@ std::string hex8(uint32_t v) {
     return b;
 }
 
-// user/backups/<island> <8 hex landname hash><8 hex unix time>/: the backups of the save's island. The hash ties the
-// folder to the island (a rename starts a new one); the time, set when the folder is made, tells apart two islands
-// with the same name and hash. A folder from before these names (user/backups/<island>/) is renamed to one.
+// user/backups/<island> <8 hex landname hash>/: the backups of the save's island. The hash ties the folder to the
+// island (a rename starts a new one). The save holds nothing else that tells two islands of the same name apart, so
+// those share a folder; the Saves tab lists every folder, so no backup is ever out of reach.
 fs::path island_dir_for(const fs::path& save) {
-    const std::string head = island_folder(save) + " " + hex8(landname_hash(save));
-    for (const fs::path& p : subdirs(backups_root())) {
-        const std::string n = utf8(p.filename());
-        if (n.size() == head.size() + 8 && n.compare(0, head.size(), head) == 0) return p;
-    }
-    const fs::path made = backups_root() / u8(head + hex8(uint32_t(std::time(nullptr))));
-    std::error_code ec;
-    const fs::path legacy = backups_root() / u8(island_folder(save));
-    if (is_dir(legacy)) fs::rename(legacy, made, ec);  // on failure the old folder stays, and a new one is made
-    return made;
+    return backups_root() / u8(island_folder(save) + " " + hex8(landname_hash(save)));
 }
 
 fs::path backups_dir() { return island_dir_for(device_dir()); }
@@ -452,11 +444,13 @@ void migrate_flat_backups() {
     }
 }
 
-std::vector<std::string> backups_sorted() {
-    migrate_flat_backups();
+// The automatic Island Backups (hle_olsc.cpp) end in ".auto" and are pruned apart from the player's own.
+bool auto_backup(const std::string& n) { return n.size() > 5 && n.compare(n.size() - 5, 5, ".auto") == 0; }
+
+std::vector<std::string> backups_sorted(const fs::path& dir) {
     std::vector<std::string> v;
     std::error_code ec;
-    for (fs::directory_iterator it(backups_dir(), ec), end; !ec && it != end; it.increment(ec)) {
+    for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
         std::string n = utf8(it->path().filename());
         if (it->is_directory(ec) && backup_name(n)) v.push_back(n);
     }
@@ -469,19 +463,23 @@ std::vector<std::string> backups_sorted() {
     return v;
 }
 
-std::string backup_locked(std::string* error) {
+// Returns "<island folder>/<backup>", "" on failure. automatic: an Island Backup (".auto"), which only replaces the
+// older automatic ones, so a run of automatic backups never pushes out the player's own.
+std::string backup_locked(std::string* error, bool automatic = false) {
     fs::path dir = device_dir();
     if (!non_empty_dir(dir)) return set(error, "no save to back up"), std::string();
     std::error_code ec;
-    const fs::path bdir = backups_dir();  // fixed for this backup: the folder's time part is set when it is made
+    const fs::path bdir = backups_dir();
     fs::create_directories(bdir, ec);
     // Same second as an existing backup: a suffix past the highest one, not the first free name (pruning may have
     // freed the bare name, and reusing it would sort the newest backup as the oldest and prune it at once).
     std::string base = stamp("%Y%m%d-%H%M%S");
     int next = 0;
-    for (const std::string& n : backups_sorted())
-        if (n.compare(0, base.size(), base) == 0) next = std::max(next, n.size() > 16 ? std::atoi(n.c_str() + 16) : 1);
-    fs::path final_path = unique_in(bdir, next ? base + "-" + std::to_string(next + 1) : base);
+    for (const std::string& n : backups_sorted(bdir))
+        if (n.compare(0, base.size(), base) == 0)
+            next = std::max(next, n.size() > 16 && n[15] == '-' ? std::atoi(n.c_str() + 16) : 1);
+    fs::path final_path =
+        unique_in(bdir, next ? base + "-" + std::to_string(next + 1) : base, automatic ? ".auto" : "");
     fs::path tmp = u8(utf8(final_path) + ".tmp");
     fs::remove_all(tmp, ec);
     if (!copy_tree(dir, tmp, error)) {
@@ -493,13 +491,30 @@ std::string backup_locked(std::string* error) {
         fs::remove_all(tmp, ec);
         return set(error, "cannot finish the backup: " + ec.message()), std::string();
     }
-    std::string name = utf8(final_path.filename());
-    std::vector<std::string> all = backups_sorted();
-    for (size_t i = kKeepBackups; i < all.size(); ++i) fs::remove_all(bdir / u8(all[i]), ec);
+    std::string name = utf8(bdir.filename()) + "/" + utf8(final_path.filename());
+    size_t kept = 0;
+    for (const std::string& n : backups_sorted(bdir))
+        if (auto_backup(n) == automatic && ++kept > (automatic ? kKeepAutoBackups : kKeepBackups))
+            fs::remove_all(bdir / u8(n), ec);
     for (fs::directory_iterator it(bdir, ec), end; !ec && it != end; it.increment(ec))
         if (utf8(it->path().filename()).find(".tmp") != std::string::npos) fs::remove_all(it->path(), ec);
     log("saves: backup %s", name.c_str());
     return name;
+}
+
+// Every island's backups as "<island folder>/<backup>": the island being played first, then the others by folder
+// name, each newest first.
+std::vector<std::string> all_backups() {
+    migrate_flat_backups();
+    std::vector<fs::path> dirs;
+    for (const fs::path& d : subdirs(backups_root()))
+        if (!backup_name(utf8(d.filename()))) dirs.push_back(d);  // a flat backup that could not be moved
+    const fs::path current = backups_dir();
+    std::stable_partition(dirs.begin(), dirs.end(), [&](const fs::path& d) { return d == current; });
+    std::vector<std::string> v;
+    for (const fs::path& d : dirs)
+        for (const std::string& n : backups_sorted(d)) v.push_back(utf8(d.filename()) + "/" + n);
+    return v;
 }
 
 // Stages `from` (folder or zip) next to device_save, backs the current save up, swaps the staged one in.
@@ -823,11 +838,11 @@ bool export_save(const std::string& to, std::string* written, std::string* error
     }
 }
 
-std::string backup_now(std::string* error) {
+std::string backup_now(std::string* error, bool automatic) {
     try {
         std::lock_guard lk(g_lock);
         recover();
-        return backup_locked(error);
+        return backup_locked(error, automatic);
     } catch (...) {
         set(error, "unexpected error");
         return std::string();
@@ -839,7 +854,7 @@ std::string backups_folder() { return utf8(backups_dir()); }
 std::vector<std::string> list_backups() {
     try {
         std::lock_guard lk(g_lock);
-        return backups_sorted();
+        return all_backups();
     } catch (...) {
         return {};
     }
@@ -848,9 +863,14 @@ std::vector<std::string> list_backups() {
 bool restore_backup(const std::string& name, std::string* error) {
     try {
         std::lock_guard lk(g_lock);
-        if (name.empty() || name.find_first_of("/\\:") != std::string::npos || name.find("..") != std::string::npos)
+        // "<island folder>/<backup>", as list_backups gives them: nothing that could leave user/backups.
+        const size_t slash = name.find('/');
+        const std::string folder = name.substr(0, slash);
+        const std::string backup = slash == std::string::npos ? std::string() : name.substr(slash + 1);
+        if (folder.empty() || folder == "." || folder == ".." || backup.find('/') != std::string::npos ||
+            name.find_first_of("\\:") != std::string::npos || !backup_name(backup))
             return set(error, "invalid backup name"), false;
-        fs::path p = backups_dir() / u8(name);
+        fs::path p = backups_root() / u8(folder) / u8(backup);
         if (!is_dir(p)) return set(error, "backup not found: " + name), false;
         // The backup is staged before the current save is backed up, so the pruning that follows that backup cannot
         // delete the one being restored.

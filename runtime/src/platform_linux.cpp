@@ -57,6 +57,10 @@ namespace nx {
 void boot();
 }
 
+namespace nx {
+void olsc_backup_on_exit();  // hle_olsc.cpp
+}
+
 namespace nx::plat {
 
 namespace {
@@ -874,6 +878,7 @@ int main(int argc, char** argv) {
             switch (e.type) {
             case SDL_EVENT_QUIT:
                 nx::log("platform: quit requested (window closed)");
+                nx::olsc_backup_on_exit();
                 exit_process(0);
             case SDL_EVENT_WINDOW_MINIMIZED:
             case SDL_EVENT_WINDOW_HIDDEN:

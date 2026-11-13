@@ -852,6 +852,11 @@ void ui_open_online() {
     g_visible = true;
 }
 
+void ui_must_quit() {
+    settings_must_quit();
+    g_visible = true;
+}
+
 void ui_toggle() {
     g_visible = !g_visible;
     g_first_hint = false;
