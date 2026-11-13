@@ -109,6 +109,8 @@ echo "APK version $VNAME ($VCODE)"
 # The pt-BR translation and the SpeedFix files as assets, which the app copies into the game folder (mod_fetch.cpp).
 rm -rf "${OUT:?}/assets"
 tools/bundle_mods.sh "$OUT/assets"
+# Mbed TLS is linked into the game library (Nextendo Online): Apache 2.0 asks for its licence text in the package.
+mkdir -p "$OUT/assets/licenses" && cp "$BUILD/_deps/mbedtls-src/LICENSE" "$OUT/assets/licenses/LICENSE-mbedtls.txt"
 (cd "$OUT" && zip -q -r base.apk lib classes.dex && zip -q -r -0 base.apk assets)
 "$BT/zipalign" -f -P 16 4 "$OUT/base.apk" "$OUT/aligned.apk"
 KEY=private/android-debug.keystore
