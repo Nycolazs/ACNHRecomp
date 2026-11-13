@@ -908,6 +908,7 @@ void page_online() {
         } else if (acc.signed_in) {
             std::string desc = trf("online.nextendo.signed_in", acc.username);
             if (!acc.friend_code.empty()) desc += "\n" + trf("online.nextendo.friend_code", acc.friend_code);
+            desc += std::string("\n") + tr("online.nextendo.requirements");  // the game's only sign is a generic error
             row("online.nextendo.account", desc.c_str(), [&](float w) {
                 if (ImGui::Button(tr("online.nextendo.sign_out"), ImVec2(w, 0))) nxo::sign_out();
                 page_nav_item();
@@ -922,7 +923,7 @@ void page_online() {
                 page_nav_item();
             });
         } else {
-            std::string desc = tr("online.nextendo.desc");
+            std::string desc = std::string(tr("online.nextendo.desc")) + "\n" + tr("online.nextendo.requirements");
             if (nxo::client_id().empty()) desc += std::string("\n") + tr("online.nextendo.need_client_id");
             if (!nxo::last_error().empty()) desc += "\n" + nxo::last_error();
             row("online.nextendo.account", desc.c_str(), [&](float w) {

@@ -139,6 +139,7 @@ const Entry kEn[] = {
     {"online.server.game", "Game servers (islands, Dodo Codes)"},
     {"online.server.players", "Players in Animal Crossing now: {}"},
     {"online.nextendo.desc", "Sign in with your Nextendo account to use Dodo Codes and Search for a friend. Nintendo's servers are never contacted."},
+    {"online.nextendo.requirements", "Online play needs a Nextendo account with a confirmed e-mail and your Discord linked to it (on nextendo.network). Without them the game keeps connecting, then shows an error."},
     {"online.nextendo.sign_in", "Sign in with Nextendo"},
     {"online.nextendo.signing_in", "Waiting for browser…"},
     {"online.nextendo.sign_out", "Sign out"},

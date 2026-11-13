@@ -2581,12 +2581,14 @@ void page_online() {
                 ImGui::TextUnformatted(trf("online.nextendo.signed_in", acc.username).c_str());
                 if (!acc.friend_code.empty())
                     ImGui::TextUnformatted(trf("online.nextendo.friend_code", acc.friend_code).c_str());
+                ImGui::TextWrapped("%s", tr("online.nextendo.requirements"));
                 if (button(tr("online.nextendo.sign_out"), kWhite)) {
                     nx::nextendo::sign_out();
                     toast(tr("online.nextendo.sign_out"));
                 }
             } else {
                 ImGui::TextWrapped("%s", tr("online.nextendo.desc"));
+                ImGui::TextWrapped("%s", tr("online.nextendo.requirements"));
                 std::string cid = g_game_ini.get("online.nextendo.client_id", "");
                 if (cid.empty()) cid = nx::nextendo::client_id();
                 if (cid.empty()) {
