@@ -48,6 +48,7 @@
 #include <nx/game.h>
 #include <nx/runtime.h>
 
+#include "game_clock.h"
 #include "kernel.h"
 #include "platform.h"
 #include "config.h"
@@ -1049,6 +1050,7 @@ void on_cmd(android_app* app, int32_t cmd) {
         case APP_CMD_PAUSE:  // home, app switcher, screen off: the game holds (no window), so does its sound
             audio_pause(true);
             thermal_pause(true);  // and the phone gets the system's clock caps back
+            nx::game_clock_save();  // a faster clock's gained time: Android may end the app from the background
             break;
         case APP_CMD_RESUME:
             audio_pause(false);

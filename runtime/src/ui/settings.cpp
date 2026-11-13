@@ -570,9 +570,7 @@ void store_custom_game_time(int year, int month, int day, int hour, int minute) 
     tm.tm_hour = hour;
     tm.tm_min = minute;
     tm.tm_isdst = -1;
-    config_set("game.time_travel_offset", std::to_string(int64_t(std::mktime(&tm)) - game_clock_real_unix_seconds()));
-    config_save();
-    game_clock_apply_config();
+    game_clock_set_offset(int64_t(std::mktime(&tm)) - game_clock_real_unix_seconds());
 }
 
 void page_game() {
@@ -1248,8 +1246,7 @@ void page_video() {
     if (std::string answer; s_driver_pick && plat::pick_result(answer)) {
         s_driver_pick = false;
         if (answer.rfind("ok:", 0) == 0) {
-            store("video.gpu_driver", "custom");
-            config_save();
+            store("video.gpu_driver", "custom");  // saved by store()
             toast(trf("video.gpu_driver.import.ok", answer.substr(3)));
         } else if (answer.rfind("error:", 0) == 0) {
             toast(trf("video.gpu_driver.import.failed", answer.substr(6)));
