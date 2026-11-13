@@ -1363,8 +1363,8 @@ std::string g_confirm_import;  // a path waiting for the player's yes
 std::string g_confirm_restore;
 
 // After an import or a restore the running game must not save again (it would write the old island over the new
-// one): the screen then only offers to quit.
-bool g_must_quit = false;
+// one): the screen then only offers to quit. Also set by the game's own Island Backup restore (hle_olsc.cpp).
+std::atomic<bool> g_must_quit{false};
 
 void do_import(const std::string& from) {
     std::string err;
@@ -1443,9 +1443,15 @@ void page_saves() {
     }
     ImGui::Dummy(ImVec2(0, 6 * g_scale));
     ImGui::TextUnformatted(tr("saves.backups"));
+    std::string island;  // list_backups gives "<island folder>/<backup>", grouped by island
     for (const std::string& b : saves::list_backups()) {
+        const size_t slash = b.find('/');
+        if (b.compare(0, slash, island) != 0) {
+            island = b.substr(0, slash);
+            ImGui::TextDisabled("%s", island.c_str());
+        }
         ImGui::PushID(b.c_str());
-        ImGui::BulletText("%s", b.c_str());
+        ImGui::BulletText("%s", b.c_str() + slash + 1);
         ImGui::SameLine();
         if (ImGui::SmallButton(tr("saves.restore"))) g_confirm_restore = b;
         page_nav_item();
@@ -1654,6 +1660,7 @@ void settings_nav_item() {
 }
 
 void settings_show_online() { g_show_online = true; }
+void settings_must_quit() { g_must_quit = true; }
 
 bool settings_draw(float scale, ImFont* title, float opening) {
     g_scale = scale;

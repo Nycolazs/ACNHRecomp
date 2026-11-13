@@ -33,9 +33,15 @@ bool import_save(const std::string& from, std::string* error);
 // or into the zip `to` when it ends with .zip. written: the path written.
 bool export_save(const std::string& to, std::string* written, std::string* error);
 
-// <data root>/user/backups/<YYYYmmdd-HHMMSS>/; the 10 newest are kept. Returns the backup's name, "" on failure.
-std::string backup_now(std::string* error);
-std::vector<std::string> list_backups();  // newest first
-bool restore_backup(const std::string& name, std::string* error);  // backs up the current save first
+// <data root>/user/backups/<island name> <8 hex landname.dat hash>/<YYYYmmdd-HHMMSS>[.auto]/, for the island being
+// played. Two islands with the same name share a folder (the save holds nothing else that tells them apart). Per
+// island, the 10 newest manual backups and the 3 newest automatic ones (automatic: the Island Backup, hle_olsc.cpp)
+// are kept, each kind pruned on its own. Returns "<island folder>/<backup>", "" on failure.
+std::string backup_now(std::string* error, bool automatic = false);
+// Every island's backups as "<island folder>/<backup>": the island being played first, then the others, each newest
+// first. A missing or corrupt save, an import or a profile switch never hides a backup.
+std::vector<std::string> list_backups();
+bool restore_backup(const std::string& name, std::string* error);  // a list_backups name; backs up the current save first
+std::string backups_folder();  // <data root>/user/backups/<island folder> of the island being played
 
 }  // namespace nx::saves

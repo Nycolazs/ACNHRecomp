@@ -577,6 +577,7 @@ else()
 endif()
 target_sources(${NX_GAME} PRIVATE runtime/src/saves.cpp)
 target_link_libraries(${NX_GAME} PRIVATE nx_save_storage)
+target_sources(${NX_GAME} PRIVATE runtime/src/hle_olsc.cpp)  # the Island Backup, kept with the saves (saves.cpp)
 
 # Mbed TLS (Apache-2.0): the game's nn::ssl connections (NEX, the island services) and the signed account id_token
 # for Nextendo Online (docs/NEXTENDO.md). Fetched as a release archive on the first configure.

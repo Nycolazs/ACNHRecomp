@@ -64,6 +64,10 @@ void boot();
 void cpu_profile_register(const char* name);  // cpu_profile.cpp
 }
 
+namespace nx {
+void olsc_backup_on_exit();  // hle_olsc.cpp
+}
+
 namespace nx::plat {
 
 namespace {
@@ -954,6 +958,7 @@ int main(int argc, char** argv) {
             switch (e.type) {
             case SDL_EVENT_QUIT:
                 nx::log("platform: quit requested (window closed / Cmd-Q)");
+                nx::olsc_backup_on_exit();
                 exit_process(0);
             case SDL_EVENT_WINDOW_MINIMIZED:
             case SDL_EVENT_WINDOW_HIDDEN:

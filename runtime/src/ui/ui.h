@@ -36,6 +36,7 @@ bool ui_visible();
 bool ui_text_field();
 void ui_toggle();
 void ui_open_online();  // the settings screen, on its Online page: from any thread
+void ui_must_quit();    // any thread: the save was swapped under the game; the settings screen opens and only offers to quit
 // Any thread: a short message over the game for a few seconds (the screenshot key: "Screenshot saved: <file>").
 void ui_notice(const std::string& text);
 void ui_screenshot_saved(const std::string& file);
