@@ -178,8 +178,16 @@ void host_reader(int node) {
 
 void host_accept() {
     while (!g_stopping) {
-        const sock_t fd = accept(g_listen, nullptr, nullptr);
+        sockaddr_in peer{};
+        socklen_t pl = sizeof peer;
+        const sock_t fd = accept(g_listen, reinterpret_cast<sockaddr*>(&peer), &pl);
         if (fd == kBadSock) return;
+        // Only from a local network, as the Scan answers (above): a station joins the game's network and gets its
+        // packets, so the internet must not reach this port even with the firewall open.
+        if (!lan_private_ip(ntohl(peer.sin_addr.s_addr))) {
+            sock_close(fd);
+            continue;
+        }
         no_sigpipe(fd);
         no_delay(fd);
         set_timeout(fd, kHandshakeMs);  // nobody holds the accept loop for long

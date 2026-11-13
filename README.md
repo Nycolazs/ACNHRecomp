@@ -132,7 +132,7 @@ GPU; see [docs/STATUS.md](docs/STATUS.md) for the full, regularly updated log.
 | 60 fps | Native with ACNHRecomp-Importer 1.0.6+ ([credits](#credits-and-references)) |
 | Online features through Nintendo | Unavailable (never contacted) |
 | Online via Nextendo (Dodo Codes, Search for a friend) | Supported on 3.0.3; [docs/NEXTENDO.md](docs/NEXTENDO.md) |
-| Visits between PCs and Switches with ldn_mitm (airport, Local Play), over LAN or a virtual LAN | New: builds, not yet tested in game; [docs/LOCAL_PLAY.md](docs/LOCAL_PLAY.md) |
+| Visits between PCs and Switches with ldn_mitm (airport, Local Play), over LAN or a virtual LAN | New: PC ↔ Switch (ldn_mitm) tested on Windows; PC ↔ PC, Linux and macOS not yet; [docs/LOCAL_PLAY.md](docs/LOCAL_PLAY.md) |
 
 **Known issues**
 

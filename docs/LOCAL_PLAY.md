@@ -22,7 +22,8 @@ changed while the game runs: it is read when you next talk to Orville, and held 
   the airport, the others ask Orville to travel by Local Play and the island is listed. A Switch with ldn_mitm on works
   the same, as host or visitor (same game version).
 - **A virtual LAN without broadcasts** (Tailscale): the visitor types the host's virtual LAN address under "Friend's
-  address"; the Online page shows each computer's own address. Nothing else to set: the host answers each search with
+  address" (the address the virtual LAN's app shows, such as Tailscale's 100.x.y.z: the Online page shows the
+  computer's address on the local network, which a virtual LAN may not reach). Nothing else to set: the host answers each search with
   its address towards the one asking (the virtual LAN's, not the home network's), and keeps the address the first
   visitor connected to. Over the internet without a virtual LAN: not possible, as with ldn_mitm.
 

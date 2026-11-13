@@ -162,7 +162,7 @@ const Entry kEn[] = {
     {"online.enabled", "Local play over the network (ldn_mitm)"},
     {"online.enabled.desc", "At the airport, Local Play reaches islands on your network: other computers running this, or a Switch with ldn_mitm. Over the internet, use a virtual LAN (ZeroTier, Tailscale). Applies when you next talk to Orville."},
     {"online.address", "Your address"},
-    {"online.address.desc", "This computer's address on your network, for a friend on a virtual LAN that carries no broadcast."},
+    {"online.address.desc", "This computer's address on your local network. On a virtual LAN, give your friend the address its app shows instead (Tailscale: 100.x.y.z)."},
     {"online.copy", "Copy"},
     {"online.copied", "Copied"},
     {"online.show", "Show"},
