@@ -335,6 +335,9 @@ void discord_presence_file(const std::string& guest_path) {
 }
 
 void discord_presence_start() {
+#if defined(__ANDROID__)
+    return;  // no Discord desktop app to talk to: the thread would retry its pipe forever (the toggle is hidden too)
+#endif
     Settings s;
     s.client_id = config_get("discord.client_id", "1570205908682936351");  // the ACNHRecomp Discord application
     if (s.client_id.empty()) return;
