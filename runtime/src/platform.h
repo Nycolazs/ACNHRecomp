@@ -248,6 +248,9 @@ bool pick_result(std::string& path);           // true once, when an answer came
 // Settings > Video > GPU driver: a driver file picked and copied into <game folder>/drivers/; answer via pick_result
 // ("ok:<file>", "error:<why>", "" = cancelled).
 void import_gpu_driver();
+// Local Play (hle_ldn.cpp): Wi-Fi's multicast lock held while a session is open, so the phone gets the searches'
+// broadcasts (many drop them otherwise), and released after.
+void wifi_multicast(bool on);
 #endif
 
 // Audio: interleaved s16 at 48 kHz; channels is 2 or 6 (Android always opens stereo). `done` is called on any thread

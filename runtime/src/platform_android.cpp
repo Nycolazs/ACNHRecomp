@@ -936,6 +936,50 @@ void import_gpu_driver() {
     if (!g_picking) empty_answer();
 }
 
+void wifi_multicast(bool on) {
+    static std::mutex mu;
+    static jobject lock = nullptr;  // a global reference to the WifiManager.MulticastLock while held
+    std::lock_guard lk(mu);
+    if (on == (lock != nullptr)) return;
+    JniScope jni;
+    JNIEnv* env = jni.env;
+    if (!env) return;
+    if (!on) {
+        env->CallVoidMethod(lock, env->GetMethodID(env->GetObjectClass(lock), "release", "()V"));
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        env->DeleteGlobalRef(lock);
+        lock = nullptr;
+        nx::log("ldn: Wi-Fi multicast lock released");
+        return;
+    }
+    jobject act = g_app->activity->clazz;
+    jclass actc = env->GetObjectClass(act);
+    jobject wifi = env->CallObjectMethod(act, env->GetMethodID(actc, "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;"),
+                                         env->NewStringUTF("wifi"));
+    if (env->ExceptionCheck() || !wifi) {
+        env->ExceptionClear();
+        return;
+    }
+    jclass wc = env->GetObjectClass(wifi);
+    jobject ml = env->CallObjectMethod(wifi, env->GetMethodID(wc, "createMulticastLock",
+                                                              "(Ljava/lang/String;)Landroid/net/wifi/WifiManager$MulticastLock;"),
+                                       env->NewStringUTF("acnhrecomp-local-play"));
+    if (env->ExceptionCheck() || !ml) {
+        env->ExceptionClear();
+        return;
+    }
+    jclass mc = env->GetObjectClass(ml);
+    env->CallVoidMethod(ml, env->GetMethodID(mc, "setReferenceCounted", "(Z)V"), jboolean(JNI_FALSE));
+    env->CallVoidMethod(ml, env->GetMethodID(mc, "acquire", "()V"));
+    if (env->ExceptionCheck()) {  // no CHANGE_WIFI_MULTICAST_STATE, or no Wi-Fi: searches by broadcast may not arrive
+        env->ExceptionClear();
+        nx::log("ldn: no Wi-Fi multicast lock");
+        return;
+    }
+    lock = env->NewGlobalRef(ml);
+    nx::log("ldn: Wi-Fi multicast lock held");
+}
+
 // Android's picker activity chooses a folder. A file pick (Amiibo .bin) has no dialog here: answer empty.
 void pick_file(const std::string&, const char*) { empty_answer(); }
 

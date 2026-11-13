@@ -17,6 +17,7 @@
 
 #include <nx/runtime.h>
 
+#include "platform.h"
 #include "config.h"
 #include "hle_ldn.h"
 #include "kernel.h"
@@ -163,6 +164,9 @@ void Initialize(CPU& c) {
         return void(c.x[0] = kLdnDeviceDisabled);
     }
     g_session = true;
+#if defined(__ANDROID__)
+    plat::wifi_multicast(true);  // the searches are broadcasts, which a phone's Wi-Fi drops without the lock
+#endif
     std::lock_guard lk(g_lock);
     log("ldn: Initialize (%s)", hle_current_name());
     if (g_state == None) set_state(Initialized);
@@ -174,6 +178,9 @@ void Finalize(CPU& c) {
         link_stop();
         vsock_reset();
     }
+#if defined(__ANDROID__)
+    plat::wifi_multicast(false);
+#endif
     std::lock_guard lk(g_lock);
     if (enabled()) log("ldn: Finalize");
     g_session = false;
