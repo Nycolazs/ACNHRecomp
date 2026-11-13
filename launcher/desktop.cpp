@@ -534,6 +534,12 @@ UpdateProgress update_progress() {
     return g_install;
 }
 
+bool update_busy() {
+    const UpdateStage s = update_progress().stage;
+    return s == UpdateStage::Downloading || s == UpdateStage::Checking || s == UpdateStage::Unpacking ||
+           s == UpdateStage::Installing;
+}
+
 void update_restart() {
     if (update_progress().stage != UpdateStage::Done || g_relaunch.empty()) return;
 #if defined(__APPLE__)
@@ -582,7 +588,7 @@ void update_cleanup() {
             if (e) left.push_back(rel);
             continue;
         }
-        if (present(old)) {  // a file, or on macOS the old bundle
+        if (present(old)) {
             fs::remove_all(old, e);
             if (e || present(old)) left.push_back(rel);
         }

@@ -1421,7 +1421,9 @@ void opening_overlay() {
     // Once the game's window is there the launcher's hides, and goes when its sound logo has played out.
     static bool hidden = false;
     if (!hidden && (game_window_shown() || t > kGiveUp)) SDL_HideWindow(g_window), hidden = true;
-    if (hidden && !start_sound_playing()) g_exit = true;
+    // Play hides the launcher and then quits it: an update being installed finishes first (closing the window is
+    // still possible until its files are being swapped, pages_close_requested)
+    if (hidden && !start_sound_playing() && !update_busy()) g_exit = true;
     auto out_quart = [](double x) { return float(1 - std::pow(1 - std::clamp(x, 0.0, 1.0), 4.0)); };
     ImDrawList* dl = ImGui::GetForegroundDrawList();
     ImVec2 size = ImGui::GetIO().DisplaySize;
@@ -3061,11 +3063,6 @@ bool pages_draw(float scale, ImFont* title) {
                        g_addons_open || g_saves_open || g_mods_open;
     opening_overlay();
     ImGui::End();
-    // Not while an update is being installed (Play hides the launcher and quits it): the update finishes first.
-    const UpdateStage us = update_progress().stage;
-    if (us == UpdateStage::Downloading || us == UpdateStage::Checking || us == UpdateStage::Unpacking ||
-        us == UpdateStage::Installing)
-        return true;
     return !g_exit;
 }
 

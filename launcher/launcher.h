@@ -127,6 +127,7 @@ struct UpdateProgress {
 bool update_can_install();     // a release folder this user can write, with a package for this computer
 void update_install_start();
 UpdateProgress update_progress();
+bool update_busy();            // downloading, checking, unpacking or installing
 void update_restart();         // the updated launcher started, this one quits
 void update_cleanup();         // at start: what the last update renamed aside, removed
 
