@@ -9,6 +9,8 @@
     <uses-feature android:glEsVersion="0x00030000" android:required="true"/>
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"/>
     <uses-permission android:name="android.permission.VIBRATE"/>
+    <!-- Sockets: Local Play (hle_ldn / ldn_link) and the online services; without it every socket() fails with EACCES -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <!-- About: the Instagram and GitHub buttons open those apps when installed (platform_android open_url_in_app) -->
     <queries>
         <package android:name="com.instagram.android"/>
