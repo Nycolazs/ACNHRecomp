@@ -1303,6 +1303,13 @@ void present_image(const int32_t* crop, Record&& record) {
             VkClearColorValue black{{0.0f, 0.0f, 0.0f, 1.0f}};
             VkImageSubresourceRange rr{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
             p_vkCmdClearColorImage(g_cb, dst.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &black, 1, &rr);
+            // The blit below writes the same image: without a barrier the two transfer writes may overlap, and
+            // AMD's clear landed over parts of the picture (#71, black stair-stepped blocks at the top on 16:10).
+            VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+            mb.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            mb.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            p_vkCmdPipelineBarrier(g_cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &mb, 0,
+                                   nullptr, 0, nullptr);
         }
         plat::set_picture_box(float(bx) / tw, float(by) / th, float(bw) / tw, float(bh) / th);  // mouse clicks (hle_hid.cpp)
         p_vkCmdBlitImage(g_cb, src->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, dst.image,
