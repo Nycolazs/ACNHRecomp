@@ -161,6 +161,7 @@ inline bool key_types(int usage) { return (usage >= 4 && usage <= 39) || (usage 
 // across the landscape screen), radius r (a fraction of its height), opacity alpha. 0 where nothing is drawn.
 struct OverlayShape {
     float x, y, r, alpha;
+    uint32_t label = 0;  // its letters for present.frag: (first + 1) | (second + 1) << 8 into "ABXYRLZ+-"; 0: none
 };
 size_t touch_overlay(OverlayShape* out, size_t max);
 void set_gamepad_connected(bool connected);  // Android: a controller connected hides the touch controls

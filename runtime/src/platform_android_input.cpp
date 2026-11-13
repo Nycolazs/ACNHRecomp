@@ -264,7 +264,19 @@ size_t touch_overlay(OverlayShape* out, size_t max) {
         if (t.left) stick = &t;
         held |= t.button;
     }
-    for (size_t i = 0; i < n && k < max; i++) out[k++] = {b[i].x, b[i].y, b[i].r, std::min(1.0f, (held & b[i].button ? 0.5f : 0.2f) * shade)};
+    // A button's letters ("A", "ZR", "+") in the glyphs present.frag draws: "ABXYRLZ+-"; nothing for the d-pad and gear.
+    auto label_code = [](const char* t) {
+        static const char kGlyphs[] = "ABXYRLZ+-";
+        uint32_t code = 0;
+        for (int c = 0; c < 2 && t[c]; c++) {
+            const char* at = std::strchr(kGlyphs, t[c]);
+            if (!at) return 0u;  // a letter there is no glyph for: none rather than half a label
+            code |= uint32_t(at - kGlyphs + 1) << (8 * c);
+        }
+        return code;
+    };
+    for (size_t i = 0; i < n && k < max; i++)
+        out[k++] = {b[i].x, b[i].y, b[i].r, std::min(1.0f, (held & b[i].button ? 0.5f : 0.2f) * shade), label_code(touch_label(i))};
     if (stick && k + 2 <= max) {
         float r = 0.12f, dx = (stick->x - stick->x0) / g_h, dy = (stick->y - stick->y0) / g_h;
         float len = std::hypot(dx, dy), s = len > r ? r / len : 1.f;
