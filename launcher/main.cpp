@@ -30,6 +30,7 @@
 using namespace launcher;
 
 int main(int argc, char** argv) {
+    launcher::update_cleanup();  // the files the last update renamed aside, now that they no longer run
     (void)argc, (void)argv;
     SDL_SetAppMetadata("ACNHRecomp", NX_VERSION_STRING, "io.github.acnhrecomp");
     if (!SDL_Init(SDL_INIT_VIDEO)) {

@@ -2248,8 +2248,21 @@ void mods_popup() {
 void update_notice() {
     const UpdateInfo u = update_info();
     if (!u.available) return;
-    const std::string msg = trf("launcher.update.available", u.version);
-    const char* get = tr("launcher.update.get");
+    // In place when it can be (update_can_install), else the release page; then the restart into it.
+    const UpdateProgress pr = update_progress();
+    const bool busy = pr.stage != UpdateStage::Idle && pr.stage != UpdateStage::Done && pr.stage != UpdateStage::Failed;
+    const bool in_place = update_can_install() || pr.stage != UpdateStage::Idle;
+    std::string msg = trf("launcher.update.available", u.version);
+    const char* get = tr(in_place ? "launcher.update.install" : "launcher.update.get");
+    switch (pr.stage) {
+        case UpdateStage::Downloading: msg = tr("launcher.update.downloading"); break;
+        case UpdateStage::Checking: msg = tr("launcher.update.checking"); break;
+        case UpdateStage::Unpacking:
+        case UpdateStage::Installing: msg = tr("launcher.update.installing"); break;
+        case UpdateStage::Done: msg = trf("launcher.update.installed", u.version), get = tr("launcher.update.restart"); break;
+        case UpdateStage::Failed: msg = trf("launcher.update.failed", pr.error), get = tr("launcher.update.get"); break;
+        default: break;
+    }
     const float r = S(11), pad = S(12), vpad = S(6), gap = ImGui::GetStyle().ItemSpacing.x;
     const float h = ImGui::GetFrameHeight() + 2 * vpad;
     const float w = pad + 2 * r + gap + ImGui::CalcTextSize(msg.c_str()).x + gap + button_width(get) + pad;
@@ -2262,7 +2275,15 @@ void update_notice() {
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted(msg.c_str());
     ImGui::SameLine();
-    if (button(get, kGreen)) SDL_OpenURL(u.url.c_str());
+    if (busy) {
+        ImGui::BeginDisabled();
+        button(get, kGreen);
+        ImGui::EndDisabled();
+    } else if (button(get, kGreen)) {
+        if (pr.stage == UpdateStage::Done) update_restart();
+        else if (pr.stage != UpdateStage::Failed && in_place) update_install_start();
+        else SDL_OpenURL(u.url.c_str());
+    }
     ImGui::SetCursorScreenPos(ImVec2(at.x, p.y + h));
     ImGui::Dummy(ImVec2(0, S(6)));
 }

@@ -112,10 +112,23 @@ DesktopResult add_to_desktop();  // a shortcut with the app's icon: desktop + St
 struct UpdateInfo {
     bool done = false, available = false;
     std::string version, url;  // the latest release's tag and page
+    std::string asset_url, asset_sha256;  // its package for this computer and GitHub's SHA-256 of it ("" if none)
 };
 std::string current_version();  // "v0.6.1"
 void update_check_start();      // once per start, unless launcher.update_check = 0
 UpdateInfo update_info();
+// Installing the newer release over this one: its package downloaded, checked against GitHub's SHA-256, unpacked and
+// put in place of this folder's files (the ones in use renamed aside, removed at the next start); then a restart.
+enum class UpdateStage { Idle, Downloading, Checking, Unpacking, Installing, Done, Failed };
+struct UpdateProgress {
+    UpdateStage stage = UpdateStage::Idle;
+    std::string error;  // Failed: why
+};
+bool update_can_install();     // a release folder this user can write, with a package for this computer
+void update_install_start();
+UpdateProgress update_progress();
+void update_restart();         // the updated launcher started, this one quits
+void update_cleanup();         // at start: what the last update renamed aside, removed
 
 // The player beside the launcher (a release, whose game code comes from the game folder): its path, else "".
 std::string own_dir();        // the launcher's own folder (Contents/MacOS inside ACNHRecomp.app)

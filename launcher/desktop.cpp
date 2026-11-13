@@ -14,6 +14,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <mutex>
 #include <string>
 #include <iterator>
@@ -38,6 +39,7 @@ extern char** environ;
 #endif
 
 #include "launcher.h"
+#include "sha256.h"
 
 namespace launcher {
 
@@ -238,6 +240,22 @@ std::string json_string(const std::string& json, const char* key) {
     return end == std::string::npos ? "" : json.substr(at + 1, end - at - 1);
 }
 
+// The value of "key": "..." after `from` (a release asset's fields follow its name).
+std::string json_string_after(const std::string& json, size_t from, const char* key) {
+    return from == std::string::npos ? "" : json_string(json.substr(from), key);
+}
+
+// This computer's package in a release (the names tools/package_release_*.sh give them).
+std::string package_name(const std::string& tag) {
+#if defined(_WIN32)
+    return "ACNHRecomp-" + tag + "-windows-x64.zip";
+#elif defined(__APPLE__)
+    return "ACNHRecomp-" + tag + "-macOS-arm64.zip";
+#else
+    return "ACNHRecomp-" + tag + "-linux-x64.tar.gz";
+#endif
+}
+
 // The launcher's version; NX_LAUNCHER_VERSION=<v> pretends another (tests of the notice).
 std::string own_version() {
     const char* e = std::getenv("NX_LAUNCHER_VERSION");
@@ -277,7 +295,203 @@ void update_check_start() {
         g_update.version = tag;
         g_update.url = url.rfind("https://github.com/Nycolazs/ACNHRecomp/", 0) == 0
                            ? url : "https://github.com/Nycolazs/ACNHRecomp/releases/latest";
+        // The package for this computer, with GitHub's digest of it ("sha256:<hex>"): without both, no update in place.
+        const size_t at = newer ? json.find("\"" + package_name(tag) + "\"") : std::string::npos;
+        const std::string asset = json_string_after(json, at, "browser_download_url");
+        const std::string digest = json_string_after(json, at, "digest");
+        if (asset.rfind("https://github.com/Nycolazs/ACNHRecomp/releases/download/", 0) == 0 &&
+            digest.rfind("sha256:", 0) == 0 && digest.size() == 7 + 64) {
+            g_update.asset_url = asset;
+            g_update.asset_sha256 = digest.substr(7);
+        }
     }).detach();
+}
+
+namespace {
+
+std::mutex g_install_lock;
+UpdateProgress g_install;
+std::atomic<bool> g_install_started{false};
+fs::path g_relaunch;  // the launcher to start after the update (its path from before any file was renamed)
+
+void install_stage(UpdateStage s, const std::string& error = "") {
+    std::lock_guard lk(g_install_lock);
+    g_install.stage = s, g_install.error = error;
+}
+
+// The folder the package's ACNHRecomp/ goes over: the launcher's own, or on macOS the one holding ACNHRecomp.app.
+fs::path install_root() {
+    fs::path d = p8(own_dir());
+#if defined(__APPLE__)
+    d = d.parent_path().parent_path().parent_path();  // Contents/MacOS -> Contents -> ACNHRecomp.app -> its folder
+#endif
+    return d;
+}
+
+fs::path own_exe() {
+#if defined(_WIN32)
+    wchar_t b[MAX_PATH * 4];
+    const DWORD n = GetModuleFileNameW(nullptr, b, DWORD(std::size(b)));
+    return n ? fs::path(std::wstring(b, n)) : fs::path();
+#elif defined(__APPLE__)
+    return install_root() / "ACNHRecomp.app";  // started again through `open`
+#else
+    std::error_code ec;
+    return fs::read_symlink("/proc/self/exe", ec);
+#endif
+}
+
+std::string file_sha256(const fs::path& p) {
+    std::FILE* f = nullptr;
+#if defined(_WIN32)
+    f = _wfopen(p.c_str(), L"rb");
+#else
+    f = std::fopen(p.c_str(), "rb");
+#endif
+    if (!f) return "";
+    nx::Sha256 h;
+    std::vector<char> buf(1 << 20);
+    for (size_t n; (n = std::fread(buf.data(), 1, buf.size(), f)) > 0;) h.update(buf.data(), n);
+    std::fclose(f);
+    return h.hex();
+}
+
+// Every file of `from` put at the same place under `to`: copied beside as .update-new, the old one renamed to
+// .update-old (a running executable or a loaded library can be renamed, even on Windows, but not overwritten), the new
+// one renamed into place. On a failure everything renamed so far is put back. The .update-old names are listed in
+// .update-old.txt, for update_cleanup at the next start.
+bool put_in_place(const fs::path& from, const fs::path& to, std::string& error) {
+    std::error_code ec;
+    std::vector<std::pair<fs::path, fs::path>> moved;  // {old aside, its place}
+    std::vector<fs::path> added;
+    auto undo = [&] {
+        std::error_code e2;
+        for (const fs::path& p : added) fs::remove(p, e2);
+        for (auto it = moved.rbegin(); it != moved.rend(); ++it) fs::rename(it->first, it->second, e2);
+    };
+    for (auto it = fs::recursive_directory_iterator(from, ec); !ec && it != fs::recursive_directory_iterator();
+         it.increment(ec)) {
+        const fs::path src = it->path(), rel = fs::relative(src, from, ec), dst = to / rel;
+        if (ec) break;
+        if (it->is_directory(ec) && !it->is_symlink(ec)) {
+            fs::create_directories(dst, ec);
+            if (ec) break;
+            continue;
+        }
+        const fs::path fresh = dst.string() + ".update-new", old = dst.string() + ".update-old";
+        fs::remove(fresh, ec);
+        if (it->is_symlink(ec)) fs::copy_symlink(src, fresh, ec);
+        else fs::copy_file(src, fresh, fs::copy_options::overwrite_existing, ec);
+        if (ec) break;
+        if (!it->is_symlink()) fs::permissions(fresh, fs::status(src).permissions(), ec), ec.clear();
+        if (fs::exists(fs::symlink_status(dst, ec))) {
+            fs::remove(old, ec);
+            fs::rename(dst, old, ec);
+            if (ec) {
+                fs::remove(fresh);
+                break;
+            }
+            moved.push_back({old, dst});
+        } else {
+            added.push_back(dst);
+        }
+        fs::rename(fresh, dst, ec);
+        if (ec) break;
+    }
+    if (ec) {
+        error = ec.message();
+        undo();
+        return false;
+    }
+    std::ofstream list(to / ".update-old.txt", std::ios::app);
+    for (const auto& [old, place] : moved) list << s8(fs::relative(old, to, ec)) << "\n";
+    return true;
+}
+
+void install(UpdateInfo u) {
+    std::error_code ec;
+    const fs::path root = install_root(), work = fs::temp_directory_path(ec) / ("acnhrecomp-update-" + u.version);
+    fs::remove_all(work, ec);
+    fs::create_directories(work / "x", ec);
+    const fs::path pkg = work / package_name(u.version);
+    g_relaunch = own_exe();
+    install_stage(UpdateStage::Downloading);
+    if (!run_ok({"curl", "-sSfL", "--connect-timeout", "15", "-A", "ACNHRecomp-launcher", "-o", s8(pkg), u.asset_url}))
+        return install_stage(UpdateStage::Failed, "download");
+    install_stage(UpdateStage::Checking);
+    if (file_sha256(pkg) != u.asset_sha256) return install_stage(UpdateStage::Failed, "checksum");
+    install_stage(UpdateStage::Unpacking);
+#if defined(__APPLE__)
+    const bool unpacked = run_ok({"/usr/bin/ditto", "-x", "-k", s8(pkg), s8(work / "x")});
+#else
+    const bool unpacked = run_ok({"tar", "-xf", s8(pkg), "-C", s8(work / "x")});  // Windows 10+: bsdtar reads .zip
+#endif
+    const fs::path top = work / "x" / "ACNHRecomp";
+    if (!unpacked || !fs::is_directory(top, ec)) return install_stage(UpdateStage::Failed, "unpack");
+    install_stage(UpdateStage::Installing);
+    std::string why;
+    if (!put_in_place(top, root, why)) return install_stage(UpdateStage::Failed, why);
+    fs::remove_all(work, ec);
+    install_stage(UpdateStage::Done);
+}
+
+}  // namespace
+
+bool update_can_install() {
+    const UpdateInfo u = update_info();
+    if (!u.available || u.asset_url.empty() || player_beside().empty()) return false;
+    std::error_code ec;
+    const fs::path probe = install_root() / ".update-probe";
+    const bool writable = static_cast<bool>(std::ofstream(probe));  // this user may write the folder (not Program Files)
+    fs::remove(probe, ec);
+    return writable;
+}
+
+void update_install_start() {
+    if (!update_can_install() || g_install_started.exchange(true)) return;
+    std::thread(install, update_info()).detach();
+}
+
+UpdateProgress update_progress() {
+    std::lock_guard lk(g_install_lock);
+    return g_install;
+}
+
+void update_restart() {
+    if (update_progress().stage != UpdateStage::Done || g_relaunch.empty()) return;
+#if defined(__APPLE__)
+    if (!run_ok({"/usr/bin/open", "-n", s8(g_relaunch)})) return;
+#elif defined(_WIN32)
+    STARTUPINFOW si{};
+    si.cb = sizeof si;
+    PROCESS_INFORMATION pi{};
+    std::wstring cmd = L"\"" + g_relaunch.wstring() + L"\"";
+    if (!CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &si, &pi)) return;
+    CloseHandle(pi.hThread), CloseHandle(pi.hProcess);
+#else
+    const std::string exe = s8(g_relaunch);
+    char* args[] = {const_cast<char*>(exe.c_str()), nullptr};
+    pid_t child = 0;
+    if (posix_spawn(&child, exe.c_str(), nullptr, nullptr, args, environ) != 0) return;
+#endif
+    std::exit(0);
+}
+
+void update_cleanup() {
+    std::error_code ec;
+    const fs::path root = install_root(), list = root / ".update-old.txt";
+    std::ifstream in(list);
+    if (!in) return;
+    for (std::string rel; std::getline(in, rel);) {
+        while (!rel.empty() && rel.back() == '\r') rel.pop_back();
+        // only names an update wrote: under the folder, ending in .update-old
+        if (rel.empty() || rel.find("..") != std::string::npos || rel.size() < 11 ||
+            rel.compare(rel.size() - 11, 11, ".update-old") != 0)
+            continue;
+        fs::remove(root / p8(rel), ec);
+    }
+    in.close();
+    fs::remove(list, ec);
 }
 
 UpdateInfo update_info() {
