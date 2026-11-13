@@ -3061,6 +3061,11 @@ bool pages_draw(float scale, ImFont* title) {
                        g_addons_open || g_saves_open || g_mods_open;
     opening_overlay();
     ImGui::End();
+    // Not while an update is being installed (Play hides the launcher and quits it): the update finishes first.
+    const UpdateStage us = update_progress().stage;
+    if (us == UpdateStage::Downloading || us == UpdateStage::Checking || us == UpdateStage::Unpacking ||
+        us == UpdateStage::Installing)
+        return true;
     return !g_exit;
 }
 
