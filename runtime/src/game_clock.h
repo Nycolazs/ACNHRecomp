@@ -1,5 +1,5 @@
 // In-game clock: the host's time plus the time-travel offset (game.time_travel_* in config.ini, or NX_TIME_OFFSET
-// set before the game, which wins).
+// set before the game, which wins). With a custom time, game.clock_speed (1-60) makes it run that many times faster.
 #pragma once
 
 #include <cstdint>

@@ -189,7 +189,7 @@ void apply_live(const std::string& key, const std::string& value) {
     }
     else if (key == "audio.volume") plat::set_master_volume(std::clamp(std::atoi(value.c_str()), 0, 100) / 100.0f);
     else if (key == "ui.language") ui_set_language(value);
-    else if (key == "game.time_travel_enabled") game_clock_apply_config();
+    else if (key == "game.time_travel_enabled" || key == "game.clock_speed") game_clock_apply_config();
     if (needs_restart(key)) g_restart_note = true;
 }
 
@@ -629,6 +629,12 @@ void page_game() {
             ImGui::SameLine(0, gap);
             changed |= int_dropdown("minute", s_minute, 0, 59, "%02d", part);
             if (changed) store_custom_game_time(s_year, s_month, s_day, s_hour, s_minute);
+        });
+        row("game.clock_speed", "game.clock_speed.desc", [&](float w) {
+            combo("game.clock_speed", "1",
+                  {{"1", tr("game.clock_speed.real")}, {"2", "2×"}, {"4", "4×"}, {"12", trf("game.clock_speed.day", "2 h")},
+                   {"24", trf("game.clock_speed.day", "1 h")}, {"60", "60×"}},
+                  w);
         });
         {
             const std::tm now_tm = local_tm_from_unix(game_clock_unix_seconds());
