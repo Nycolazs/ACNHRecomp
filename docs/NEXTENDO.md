@@ -17,7 +17,7 @@ Nextendo supports ACNH **3.0.3** fully online: island visits (friends and Dodo C
 | Sockets | `hle_hostnet.cpp` | Host TCP/UDP sockets with the Switch’s ABI: option numbers, errno values, poll, non-blocking I/O. |
 | TLS | `hle_ssl.cpp` | `nn::ssl` (libcurl’s C API and NEX’s C++ calls) on [Mbed TLS](https://github.com/Mbed-TLS/mbedtls) 3.6, fetched by CMake. SNI is the host the game named, or the one its address was resolved from. Nextendo presents certificates for Nintendo names, so instead of the certificate chain the server's public key is checked: the SHA-256 of its SubjectPublicKeyInfo must be one of the pins in `hle_ssl.cpp` (or `online.nextendo.tls_pins`), after the handshake and before anything is sent. Mbed TLS is built with its threading layer (`runtime/src/mbedtls/`). ALPN offers `http/1.1` only. |
 
-Not yet on Nextendo’s side (server updates): best friends between an emulator and a real Switch, and Island Backup.
+Not yet on Nextendo’s side (server updates): best friends between an emulator and a real Switch. Island Backup is kept on this computer instead (Nextendo caps cloud saves at 5 MB): its backups go to `user/backups/` (README, *Saves*).
 
 ## Modes (`online.mode` in `config.ini`)
 

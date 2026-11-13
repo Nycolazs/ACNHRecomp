@@ -1444,7 +1444,12 @@ void page_saves() {
     ImGui::Dummy(ImVec2(0, 6 * g_scale));
     ImGui::TextUnformatted(tr("saves.backups"));
     std::string island;  // list_backups gives "<island folder>/<backup>", grouped by island
-    for (const std::string& b : saves::list_backups()) {
+    // Read again every 2 s, not every frame: it walks every island's folder under the saves' lock, which a backup
+    // being copied (10-40 MB, at boot) holds.
+    static std::vector<std::string> backups;
+    static double listed = -100;
+    if (ImGui::GetTime() - listed > 2) backups = saves::list_backups(), listed = ImGui::GetTime();
+    for (const std::string& b : backups) {
         const size_t slash = b.find('/');
         if (b.compare(0, slash, island) != 0) {
             island = b.substr(0, slash);
@@ -1661,6 +1666,7 @@ void settings_nav_item() {
 
 void settings_show_online() { g_show_online = true; }
 void settings_must_quit() { g_must_quit = true; }
+bool settings_quit_pending() { return g_must_quit; }
 
 bool settings_draw(float scale, ImFont* title, float opening) {
     g_scale = scale;

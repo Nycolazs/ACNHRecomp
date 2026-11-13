@@ -187,7 +187,8 @@ std::string save_stamp() {
     if (ec) return {};
     const auto t = fs::last_write_time(main, ec);
     if (ec) return {};
-    return std::to_string(size) + ":" + std::to_string(t.time_since_epoch().count());
+    // libc++ (Android, macOS) keeps file times in __int128, which to_string has no overload for; 64 bits are plenty here
+    return std::to_string(size) + ":" + std::to_string(static_cast<long long>(t.time_since_epoch().count()));
 }
 
 std::atomic<bool> g_transfer{false};  // one backup or restore at a time

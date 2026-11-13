@@ -543,8 +543,11 @@ From the **Saves** page you can import a save from:
 | **Ryujinx** / **Ryubing** | Detected automatically, including Flatpak installs |
 | Another **ACNHRecomp** folder | |
 
-- **Before every import or restore, the current save is backed up** to `private/acnh/user/backups/`. The 10 newest
-  backups are kept, and "Back up now" makes one on demand.
+- **Before every import or restore, the current save is backed up** to `user/backups/<island> <id>/`, a folder per
+  island (two islands with the same name share one). Per island, the 10 newest backups are kept, and "Back up now"
+  makes one on demand. The game's own *Island Backup* makes automatic ones (`.auto`) at the start, at the title screen
+  and when quitting (not on Android), of which the 3 newest are kept apart from the others. The Saves tab lists every
+  island's backups.
 - Imports are staged next to the save folder and moved in at once, so a failure never leaves a half-written save.
 - After an import or restore, **quit and restart the game**, so it does not write the old island over the new one.
 - **Export** writes the save to a folder (`ACNH-<date>-<time>/`) or a `.zip` in the layout that JKSV and Checkpoint

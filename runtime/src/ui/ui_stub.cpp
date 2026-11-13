@@ -16,6 +16,8 @@ bool ui_pad(uint64_t, int32_t, int32_t) { return false; }
 uint64_t ui_filter_game_buttons(uint64_t buttons, bool) { return buttons; }
 bool ui_visible() { return false; }
 void ui_toggle() {}
+void ui_open_online() {}
+void ui_must_quit() {}
 bool ui_touch(float, float, bool) { return false; }
 
 }  // namespace nx::ui

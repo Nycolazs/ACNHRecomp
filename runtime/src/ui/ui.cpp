@@ -858,6 +858,9 @@ void ui_must_quit() {
 }
 
 void ui_toggle() {
+    // After an import or a restore the save under the game is another one: F1, +/- or the gear must not close the
+    // screen that only offers to quit, or the game would write the old island over the new save.
+    if (g_visible && settings_quit_pending()) return;
     g_visible = !g_visible;
     g_first_hint = false;
     log("ui: settings %s", g_visible ? "opened" : "closed");
