@@ -3022,6 +3022,9 @@ bool pages_draw(float scale, ImFont* title) {
     const bool center = g_page == Page::Welcome || g_page == Page::Done || g_page == Page::Home;
     // Home's update notice floats at the top of the card, in the space above the centred page: it moves nothing
     // when it appears.
+    // NX_LAUNCHER_UPDATE_AUTO=1 (tests, with NX_LAUNCHER_VERSION): the update installed at once, on any page
+    static const bool auto_install = std::getenv("NX_LAUNCHER_UPDATE_AUTO") != nullptr;
+    if (auto_install && update_progress().stage == UpdateStage::Idle && update_can_install()) update_install_start();
     if (g_page == Page::Home) {
         const ImVec2 at = ImGui::GetCursorPos();
         update_notice();
