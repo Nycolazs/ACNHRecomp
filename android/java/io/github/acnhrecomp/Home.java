@@ -50,10 +50,26 @@ public class Home extends Activity {
 
     private String t(String en, String ptBr) { return pt ? ptBr : en; }
 
+    // The app started again in a new process (the chosen folder is saved: it opens straight into it). Android keeps a
+    // closed app's process, with the game of the last folder loaded, so "close and open again" was not enough.
+    private void restartProcess() {
+        Intent i = getPackageManager().getLaunchIntentForPackage(getPackageName());
+        if (i != null) {
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+            startActivity(i);
+        }
+        finishAffinity();
+        Runtime.getRuntime().exit(0);
+    }
+
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
         String error = getIntent().getStringExtra("error");
+        if ("restart".equals(error)) {  // another folder than the game loaded in this process: a new process takes it
+            restartProcess();
+            return;
+        }
         boolean ask = getIntent().getBooleanExtra("pick", false) || error != null;
         String saved = ask ? "" : readSaved();
         if (!saved.isEmpty() && hasPackage(new File(saved)) && canRead(saved)) {
@@ -280,7 +296,7 @@ public class Home extends Activity {
                     View p = box.findViewWithTag("progress");
                     if (p != null) box.removeView(p);
                 }
-                if (!why.isEmpty()) {
+                if (!why.isEmpty() && !why.equals("restart")) {
                     if (message == null) show(null);
                     say(explain(why), true);
                     return;
@@ -289,6 +305,10 @@ public class Home extends Activity {
                     o.write((folder + "\n").getBytes(StandardCharsets.UTF_8));
                 } catch (Exception e) {
                     // the game still starts; next time the folder is asked for again
+                }
+                if (why.equals("restart")) {  // this process has another folder's game loaded: a new one takes this folder
+                    restartProcess();
+                    return;
                 }
                 Intent game = new Intent();
                 game.setClassName(getPackageName(), "android.app.NativeActivity");
