@@ -115,10 +115,10 @@ std::string spki_sha256_b64(const mbedtls_x509_crt& crt) {
 
 bool nextendo_peer_pinned(const mbedtls_ssl_context* ssl, const std::string& host) {
     std::string extra = config_get("online.nextendo.tls_pins", "");
-    const char* e = std::getenv("NEXTENDO_TLS_PINS");
+    const char* env_pins = std::getenv("NEXTENDO_TLS_PINS");
     // "any" as the whole variable only: a pin is base64 and may start with those letters (config.ini can't turn it off)
-    if (e && std::strcmp(e, "any") == 0) return true;
-    if (e && e[0]) extra = std::string(e) + "," + extra;
+    if (env_pins && std::strcmp(env_pins, "any") == 0) return true;
+    if (env_pins && env_pins[0]) extra = std::string(env_pins) + "," + extra;
     const mbedtls_x509_crt* crt = mbedtls_ssl_get_peer_cert(ssl);
     const std::string key = crt ? spki_sha256_b64(*crt) : std::string();
     if (key.empty()) {

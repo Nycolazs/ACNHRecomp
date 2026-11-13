@@ -176,6 +176,7 @@ HttpResponse http_request(const std::string& method, const std::string& url,
     const std::string req_hdr_path = temp_path("nx_http_req_");
     if (!header_lines.empty()) {
         if (!write_file(req_hdr_path, header_lines)) {
+            fs::remove(out_path, ec), fs::remove(hdr_path, ec), fs::remove(body_path, ec);  // the body: tokens too
             r.error = "could not write request headers";
             return r;
         }

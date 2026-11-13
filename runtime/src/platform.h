@@ -99,7 +99,7 @@ float default_render_scale();
 // The app started again from its launcher activity, and this process ended (settings that take effect at start).
 [[noreturn]] void restart_app();
 // Android: `url` in the app `package` when it is installed (Instagram, GitHub), else in the browser (platform_android).
-void open_url_in_app(const std::string& url, const char* package);
+bool open_url_in_app(const std::string& url, const char* package);  // false: nothing opened it
 // An HTTPS request on java.net.HttpURLConnection (Android's TLS and certificate store): nextendo_http.cpp, as Android
 // has no curl. status 0 and `error` when nothing came back.
 bool https_request(const std::string& method, const std::string& url,

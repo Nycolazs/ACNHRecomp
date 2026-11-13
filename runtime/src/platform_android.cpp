@@ -170,10 +170,10 @@ void restart_app() {
     exit_process(0);
 }
 
-void open_url_in_app(const std::string& url, const char* package) {
+bool open_url_in_app(const std::string& url, const char* package) {
     JniScope jni;  // Nextendo's sign-in thread opens the browser and then ends
     JNIEnv* env = jni.env;
-    if (!env) return;
+    if (!env) return false;
     jobject act = g_app->activity->clazz;
     jclass actc = env->GetObjectClass(act);
     jclass uric = env->FindClass("android/net/Uri");
@@ -193,11 +193,13 @@ void open_url_in_app(const std::string& url, const char* package) {
         env->CallVoidMethod(act, start, intent);
         if (!env->ExceptionCheck()) {
             nx::log("app: opened %s%s%s", url.c_str(), pkg ? " in " : "", pkg ? pkg : "");
-            return;
+            return true;
         }
         env->ExceptionClear();
         if (!pkg) break;
     }
+    nx::log("app: nothing opens %s", url.c_str());
+    return false;
 }
 
 // nextendo_http.cpp on Android, where there is no curl: java.net.HttpURLConnection, so Android's own TLS and its
@@ -245,28 +247,35 @@ bool https_request(const std::string& method, const std::string& url,
     if (failed("bad URL")) return done(false);
     jobject conn = keep(env->CallObjectMethod(u, env->GetMethodID(urlc, "openConnection", "()Ljava/net/URLConnection;")));
     if (failed("could not open the connection") || !conn) return done(false);
+    // Every call that may throw is checked before the next one: JNI must not be called with an exception pending.
     env->CallVoidMethod(conn, env->GetMethodID(connc, "setRequestMethod", "(Ljava/lang/String;)V"),
                         keep(env->NewStringUTF(method.c_str())));
+    if (failed("bad method")) return done(false);
     env->CallVoidMethod(conn, env->GetMethodID(connc, "setConnectTimeout", "(I)V"), jint(15000));  // as curl's
     env->CallVoidMethod(conn, env->GetMethodID(connc, "setReadTimeout", "(I)V"), jint(45000));
     env->CallVoidMethod(conn, env->GetMethodID(connc, "setInstanceFollowRedirects", "(Z)V"), jboolean(JNI_TRUE));
     env->CallVoidMethod(conn, env->GetMethodID(connc, "setUseCaches", "(Z)V"), jboolean(JNI_FALSE));
+    if (failed("could not set up the connection")) return done(false);
     jmethodID setp = env->GetMethodID(connc, "setRequestProperty", "(Ljava/lang/String;Ljava/lang/String;)V");
-    for (const auto& [k, v] : headers)
+    for (const auto& [k, v] : headers) {
         env->CallVoidMethod(conn, setp, keep(env->NewStringUTF(k.c_str())), keep(env->NewStringUTF(v.c_str())));
-    if (failed("bad request")) return done(false);
+        if (failed("bad request header")) return done(false);
+    }
     if (!body.empty()) {
         env->CallVoidMethod(conn, env->GetMethodID(connc, "setDoOutput", "(Z)V"), jboolean(JNI_TRUE));
         jobject os = keep(env->CallObjectMethod(conn, env->GetMethodID(connc, "getOutputStream", "()Ljava/io/OutputStream;")));
         if (failed("could not connect") || !os) return done(false);
         jbyteArray b = static_cast<jbyteArray>(keep(env->NewByteArray(jsize(body.size()))));
+        if (failed("out of memory") || !b) return done(false);
         env->SetByteArrayRegion(b, 0, jsize(body.size()), reinterpret_cast<const jbyte*>(body.data()));
         env->CallVoidMethod(os, env->GetMethodID(osc, "write", "([B)V"), b);
+        if (failed("could not send the request")) return done(false);
         env->CallVoidMethod(os, env->GetMethodID(osc, "close", "()V"));
         if (failed("could not send the request")) return done(false);
     }
     status = env->CallIntMethod(conn, env->GetMethodID(connc, "getResponseCode", "()I"));
-    if (failed("no response")) {
+    if (failed("no response") || status <= 0) {  // -1: not a valid HTTP response
+        if (status <= 0 && error.empty()) error = "not a valid HTTP response";
         status = 0;
         return done(false);
     }
@@ -275,6 +284,7 @@ bool https_request(const std::string& method, const std::string& url,
     if (env->ExceptionCheck()) env->ExceptionClear(), in = nullptr;  // no body (a 204, or an error without one)
     if (in) {
         jbyteArray buf = static_cast<jbyteArray>(keep(env->NewByteArray(16384)));
+        if (failed("out of memory") || !buf) return done(false);
         jmethodID rd = env->GetMethodID(isc, "read", "([B)I");
         for (;;) {
             const jint n = env->CallIntMethod(in, rd, buf);

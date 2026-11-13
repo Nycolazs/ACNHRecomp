@@ -314,8 +314,7 @@ std::string percent_encode(const std::string& s) {
 
 bool open_browser(const std::string& url) {
 #if defined(__ANDROID__)
-    plat::open_url_in_app(url, nullptr);  // the phone's browser (it logs what it opened, or that it could not)
-    return true;
+    return plat::open_url_in_app(url, nullptr);  // the phone's browser (it logs what it opened, or that nothing did)
 #elif defined(NX_HAVE_SDL3)
     return SDL_OpenURL(url.c_str());
 #elif defined(_WIN32)

@@ -933,7 +933,6 @@ void page_online() {
                 page_nav_item();
             });
         }
-#if !defined(__ANDROID__)
         const std::string sdesc = status_text();
         row("online.server", sdesc.c_str(), [&](float w) {
             if (ImGui::Button(tr(g_status.running ? "online.server.checking_button" : "online.server.check"),
@@ -941,7 +940,6 @@ void page_online() {
                 status_check_start();
             page_nav_item();
         });
-#endif
     }
     section("online.section.local");
     const bool busy = ldn_enabled();  // held until the session ends (hle_ldn.cpp): no switch to touch

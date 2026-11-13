@@ -90,7 +90,7 @@ void window_px(uint64_t present, uint32_t& w, uint32_t& h) {
 
 // video.aspect / NX_ULTRAWIDE: "16:9" (or empty, "0": the game's own), "auto" ("window", "1": the window's shape),
 // "21:9", "2560x1080", ... k = that aspect over 16:9. video.resolution / NX_RENDER_HEIGHT: "native" (the game's own
-// 1080 rows, 720 in handheld mode), a row count for the 16:9 part of the picture (540 .. 2160), or "window" (the
+// 1080 rows, 720 in handheld mode), a row count for the 16:9 part of the picture (360 .. 2160), or "window" (the
 // rows the picture takes in the window).
 std::atomic<uint32_t> g_display_rows{0};  // the window's rows when the scale was taken (uw_resize's cap)
 

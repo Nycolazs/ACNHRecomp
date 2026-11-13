@@ -32,7 +32,7 @@ Local Play peer visits ([LOCAL_PLAY.md](LOCAL_PLAY.md)) are separate and work in
 
 - Game version **3.0.3** exactly. Nextendo refuses other versions online (error 2306-0819). Other versions can still use Local mode.
 - A Nextendo account in good standing: confirmed e-mail, linked Discord account. A login is refused, with a generic game error, otherwise, or while the account is online elsewhere.
-- `curl` on `PATH` (as for the launcher’s update check) for the account API.
+- `curl` on `PATH` (as for the launcher’s update check) for the account API on Windows, macOS and Linux. Android has no curl: the app makes those requests with `HttpURLConnection` (Android's own TLS and certificates), and sign-in opens the phone's browser, which returns to the app on `127.0.0.1`. Keep the game open in the background while signing in: Android may close it if it needs the memory, and then the sign-in has to be started again.
 
 ## Setup
 
