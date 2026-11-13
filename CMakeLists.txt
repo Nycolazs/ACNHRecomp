@@ -261,6 +261,7 @@ set(NX_RUNTIME_SOURCES
     runtime/src/hle_hid.cpp
     runtime/src/hle_hid_system_nfc.cpp
     runtime/src/hle_net.cpp
+    runtime/src/hle_web.cpp
     runtime/src/hle_hostnet.cpp
     runtime/src/hle_ldn.cpp
     runtime/src/hle_vsock.cpp
