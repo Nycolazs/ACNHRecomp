@@ -517,8 +517,8 @@ std::string load_game(const std::string& folder, const std::string& own_dir) {
     // One game library per process. The same folder may come spelled another way (/sdcard, /storage/emulated/0):
     // compared as real paths, else the app asked to restart for the folder it already had.
     auto same_folder = [](const std::string& a, const std::string& b) {
-        char ra[PATH_MAX], rb[PATH_MAX];
-        return a == b || (realpath(a.c_str(), ra) && realpath(b.c_str(), rb) && std::strcmp(ra, rb) == 0);
+        std::error_code ec;
+        return a == b || std::filesystem::equivalent(a, b, ec);  // same device and inode; false when one is missing
     };
     if (g_game_lib) return same_folder(g_game_from, folder) ? "" : "restart";
     std::string err, lib = own_dir + "/game/" + game_lib_name();
