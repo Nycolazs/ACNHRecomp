@@ -244,6 +244,11 @@ void open_path(const std::string& path);       // shows a folder in the file man
 void pick_path(bool zip, const std::string& title);
 void pick_file(const std::string& title, const char* extension);  // a single file (e.g. Amiibo .bin)
 bool pick_result(std::string& path);           // true once, when an answer came ("" = cancelled)
+#if defined(__ANDROID__)
+// Settings > Video > GPU driver: a driver file picked and copied into <game folder>/drivers/; answer via pick_result
+// ("ok:<file>", "error:<why>", "" = cancelled).
+void import_gpu_driver();
+#endif
 
 // Audio: interleaved s16 at 48 kHz; channels is 2 or 6 (Android always opens stereo). `done` is called on any thread
 // when a submitted buffer has been played.

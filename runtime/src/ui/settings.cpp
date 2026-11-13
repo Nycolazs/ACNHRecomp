@@ -1237,6 +1237,24 @@ void page_video() {
                {"system", tr("video.gpu_driver.system")}, {"custom", tr("video.gpu_driver.custom")}},
               w);
     });
+    // A custom driver without moving files by hand: picked here, copied into drivers/ and chosen.
+    static bool s_driver_pick = false;
+    row("video.gpu_driver.import", "video.gpu_driver.import.desc", [&](float w) {
+        ImGui::BeginDisabled(s_driver_pick);
+        if (ImGui::Button(tr("video.gpu_driver.import.button"), ImVec2(w, 0))) s_driver_pick = true, plat::import_gpu_driver();
+        ImGui::EndDisabled();
+        page_nav_item();
+    });
+    if (std::string answer; s_driver_pick && plat::pick_result(answer)) {
+        s_driver_pick = false;
+        if (answer.rfind("ok:", 0) == 0) {
+            store("video.gpu_driver", "custom");
+            config_save();
+            toast(trf("video.gpu_driver.import.ok", answer.substr(3)));
+        } else if (answer.rfind("error:", 0) == 0) {
+            toast(trf("video.gpu_driver.import.failed", answer.substr(6)));
+        }
+    }
 #endif
 }
 

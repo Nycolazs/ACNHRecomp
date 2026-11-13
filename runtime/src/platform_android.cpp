@@ -890,7 +890,7 @@ namespace {
 std::string pick_answer_file() { return std::string(g_app ? g_app->activity->internalDataPath : "") + "/pick_result.txt"; }
 std::atomic<bool> g_picking{false};
 
-bool start_picker(const char* key, const std::string& value) {
+bool start_picker(const char* key, const std::string& value, const char* key2 = nullptr, const std::string& value2 = "") {
     JNIEnv* env = nullptr;
     if (!g_app || g_app->activity->vm->AttachCurrentThread(&env, nullptr) != JNI_OK || !env) return false;
     jobject act = g_app->activity->clazz;
@@ -900,8 +900,9 @@ bool start_picker(const char* key, const std::string& value) {
     jobject pkg = env->CallObjectMethod(act, env->GetMethodID(actc, "getPackageName", "()Ljava/lang/String;"));
     env->CallObjectMethod(intent, env->GetMethodID(ic, "setClassName", "(Ljava/lang/String;Ljava/lang/String;)Landroid/content/Intent;"),
                           pkg, env->NewStringUTF("io.github.acnhrecomp.Picker"));
-    env->CallObjectMethod(intent, env->GetMethodID(ic, "putExtra", "(Ljava/lang/String;Ljava/lang/String;)Landroid/content/Intent;"),
-                          env->NewStringUTF(key), env->NewStringUTF(value.c_str()));
+    jmethodID put = env->GetMethodID(ic, "putExtra", "(Ljava/lang/String;Ljava/lang/String;)Landroid/content/Intent;");
+    env->CallObjectMethod(intent, put, env->NewStringUTF(key), env->NewStringUTF(value.c_str()));
+    if (key2) env->CallObjectMethod(intent, put, env->NewStringUTF(key2), env->NewStringUTF(value2.c_str()));
     env->CallVoidMethod(act, env->GetMethodID(actc, "startActivity", "(Landroid/content/Intent;)V"), intent);
     if (env->ExceptionCheck()) {
         env->ExceptionClear();
@@ -924,6 +925,14 @@ void pick_path(bool, const std::string&) {
     std::remove(pick_answer_file().c_str());
     g_picking = start_picker("out", pick_answer_file());
     if (!g_picking) empty_answer();  // no picker: an empty answer, so the screen does not wait forever
+}
+
+// A GPU driver (.so, or the .zip emulators' drivers come in) copied into the game folder's drivers/ by the picker
+// activity (Picker.java): pick_result then gives "ok:<file>", "error:<why>" or "" (cancelled).
+void import_gpu_driver() {
+    std::remove(pick_answer_file().c_str());
+    g_picking = start_picker("driver", g_root + "/drivers", "out", pick_answer_file());
+    if (!g_picking) empty_answer();
 }
 
 // Android's picker activity chooses a folder. A file pick (Amiibo .bin) has no dialog here: answer empty.
