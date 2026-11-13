@@ -29,10 +29,31 @@ mkdir -p "$OUT"
 IMGUI=private/third_party/imgui
 [ -f "$IMGUI/imgui.cpp" ] || { mkdir -p "$IMGUI" && curl -fsSL https://github.com/ocornut/imgui/archive/refs/tags/v1.91.9.tar.gz |
                                tar -xz --strip-components=1 -C "$IMGUI"; }
+# Temporal AA and frame generation (nvn_temporal.cpp): AMD's FidelityFX SDK and NVIDIA's DLSS SDK, the files and
+# versions tools/setup_acnh.py fetches. Without them CMake builds the player with stubs (no FSR, DLAA or FFX frame
+# generation) while the settings still offer them.
+FFX=v2.4.0 DLSS=v310.9.16  # as tools/setup_acnh.py
+FFX_URL=https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/$FFX/Kits/FidelityFX
+DLSS_URL=https://raw.githubusercontent.com/NVIDIA/DLSS/$DLSS
+get() {  # <file under private/third_party> <url>
+    local out=private/third_party/$1
+    [ -f "$out" ] || { mkdir -p "$(dirname "$out")" && curl -fsSL -o "$out.download" "$2" && mv "$out.download" "$out"; }
+}
+for h in api/include/ffx_api.h api/include/ffx_api_types.h api/include/vk/ffx_api_vk.h upscalers/include/ffx_upscale.h \
+         framegeneration/include/ffx_framegeneration.h framegeneration/include/ffx_framegeneration_api_types.h \
+         framegeneration/include/vk/ffx_api_framegeneration_vk.h; do get "ffx/$h" "$FFX_URL/$h"; done
+get ffx/LICENSE.md "$FFX_URL/docs/license.md"
+for d in amd_fidelityfx_loader_vk.dll amd_fidelityfx_upscaler_vk.dll amd_fidelityfx_framegeneration_vk.dll; do
+    get "ffx/bin/$d" "$FFX_URL/signedbin/$d"; done
+for h in nvsdk_ngx.h nvsdk_ngx_defs.h nvsdk_ngx_defs_vk.h nvsdk_ngx_helpers.h nvsdk_ngx_helpers_vk.h nvsdk_ngx_params.h \
+         nvsdk_ngx_vk.h; do get "dlss/include/$h" "$DLSS_URL/include/$h"; done
+get dlss/LICENSE.txt "$DLSS_URL/LICENSE.txt"
+get dlss/lib/nvsdk_ngx_d.lib "$DLSS_URL/lib/Windows_x86_64/x64/nvsdk_ngx_d.lib"
+get dlss/bin/nvngx_dlss.dll "$DLSS_URL/lib/Windows_x86_64/rel/nvngx_dlss.dll"
 
 echo "== launcher and player (clang-cl)"
-[ -f "$BUILD/CMakeCache.txt" ] ||
-  cmake -S . -B "$BUILD" -G Ninja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DNX_GAME=acnh \
+# Configured every time: CMake looks for the FidelityFX and DLSS SDKs when it configures.
+cmake -S . -B "$BUILD" -G Ninja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DNX_GAME=acnh \
         -DNX_GEN_DIR="$PWD/$BUILD/no-gen" -DCMAKE_BUILD_TYPE=Release -DNX_GAME_FROM_FOLDER=ON \
         "-DCMAKE_PREFIX_PATH=$SDL;$MOVIE" "-DNX_VULKAN_INCLUDE=$VKH" >/dev/null
 cmake --build "$BUILD" --target acnhrecomp_launcher acnh
@@ -42,6 +63,15 @@ mkdir -p "$R"
 cp "$BUILD/acnhrecomp_launcher.exe" "$R/ACNHRecomp Launcher.exe"
 cp "$BUILD/acnh.exe" "$R/acnh.exe"
 cp "$SDL/lib/x64/SDL3.dll" "$R/"
+# The FidelityFX and DLSS DLLs the player loads at run time (the build copies them beside acnh.exe only when it
+# compiled FSR / DLAA / FFX frame generation in), and their licences.
+for d in amd_fidelityfx_loader_vk.dll amd_fidelityfx_upscaler_vk.dll amd_fidelityfx_framegeneration_vk.dll nvngx_dlss.dll; do
+    [ -f "$BUILD/$d" ] || { echo "$BUILD/$d not found: the player was built without FidelityFX / DLSS"; exit 1; }
+    cp "$BUILD/$d" "$R/"
+done
+mkdir -p "$R/licenses"
+cp private/third_party/ffx/LICENSE.md "$R/licenses/FidelityFX-LICENSE.md"
+cp private/third_party/dlss/LICENSE.txt "$R/licenses/DLSS-LICENSE.txt"
 # The Visual C++ runtime the executables import (app-local: no installer needed).
 CRT=$(ls -d "$(cygpath -u "$VCToolsRedistDir")"/x64/Microsoft.VC*.CRT | head -1)
 cp "$CRT"/vcruntime140*.dll "$CRT"/msvcp140*.dll "$R/"  # msvcp140_1 too (the player's <memory_resource>)
