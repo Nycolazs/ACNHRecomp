@@ -909,6 +909,7 @@ void page_online() {
             std::string desc = trf("online.nextendo.signed_in", acc.username);
             if (!acc.friend_code.empty()) desc += "\n" + trf("online.nextendo.friend_code", acc.friend_code);
             desc += std::string("\n") + tr("online.nextendo.requirements");  // the game's only sign is a generic error
+            if (!nxo::last_error().empty()) desc += "\n" + nxo::last_error();  // a refused game token says why
             row("online.nextendo.account", desc.c_str(), [&](float w) {
                 if (ImGui::Button(tr("online.nextendo.sign_out"), ImVec2(w, 0))) nxo::sign_out();
                 page_nav_item();
