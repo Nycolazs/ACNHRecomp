@@ -903,13 +903,6 @@ void page_online() {
     });
     if (nextendo) {
         section("online.section.nextendo");
-#if defined(__ANDROID__)
-        // The account API's HTTPS goes through curl (nextendo_http.cpp), which Android does not have: no sign-in here
-        // until it moves onto Mbed TLS.
-        if (true) {
-            ImGui::TextWrapped("%s", tr("online.nextendo.android"));
-        } else
-#endif
         if (!nxo::version_ok_for_nextendo()) {
             ImGui::TextWrapped("%s", tr("online.nextendo.need_303"));
         } else if (acc.signed_in) {

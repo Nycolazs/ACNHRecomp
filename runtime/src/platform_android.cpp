@@ -72,6 +72,27 @@ std::string g_root;
 std::atomic<ANativeWindow*> g_window{nullptr};
 std::atomic<uint64_t> g_window_gen{0};  // bumped for every new window
 std::atomic<bool> g_visible{false};
+
+// This thread's JNIEnv: attached for the scope when it was not already, and detached again at its end. A thread that
+// ends while attached aborts the app (ART: "Native thread exited without calling DetachCurrentThread"), which is what
+// the short-lived threads of Nextendo's sign-in and requests are.
+struct JniScope {
+    JNIEnv* env = nullptr;
+    bool attached = false;
+    JniScope() {
+        if (!g_app) return;
+        JavaVM* vm = g_app->activity->vm;
+        if (vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) == JNI_OK) return;
+        env = nullptr;
+        if (vm->AttachCurrentThread(&env, nullptr) == JNI_OK && env) attached = true;
+        else env = nullptr;
+    }
+    ~JniScope() {
+        if (attached) g_app->activity->vm->DetachCurrentThread();
+    }
+    JniScope(const JniScope&) = delete;
+    JniScope& operator=(const JniScope&) = delete;
+};
 }  // namespace
 
 // ---- memory ---------------------------------------------------------------------------------------------------
@@ -150,8 +171,9 @@ void restart_app() {
 }
 
 void open_url_in_app(const std::string& url, const char* package) {
-    JNIEnv* env = nullptr;
-    if (!g_app || g_app->activity->vm->AttachCurrentThread(&env, nullptr) != JNI_OK || !env) return;
+    JniScope jni;  // Nextendo's sign-in thread opens the browser and then ends
+    JNIEnv* env = jni.env;
+    if (!env) return;
     jobject act = g_app->activity->clazz;
     jclass actc = env->GetObjectClass(act);
     jclass uric = env->FindClass("android/net/Uri");
@@ -176,6 +198,102 @@ void open_url_in_app(const std::string& url, const char* package) {
         env->ExceptionClear();
         if (!pkg) break;
     }
+}
+
+// nextendo_http.cpp on Android, where there is no curl: java.net.HttpURLConnection, so Android's own TLS and its
+// certificate store check nextendo.network. Redirects are followed (same protocol); errors read the error stream.
+bool https_request(const std::string& method, const std::string& url,
+                   const std::vector<std::pair<std::string, std::string>>& headers, const std::string& body,
+                   int& status, std::string& out, std::string& error) {
+    status = 0, out.clear(), error.clear();
+    JniScope jni;
+    JNIEnv* env = jni.env;
+    if (!env) {
+        error = "no Java VM";
+        return false;
+    }
+    std::vector<jobject> refs;  // local references, released at the end (a request can run on a long-lived thread)
+    auto keep = [&](jobject o) { if (o) refs.push_back(o); return o; };
+    auto failed = [&](const char* what) {
+        if (!env->ExceptionCheck()) return false;
+        jthrowable t = env->ExceptionOccurred();
+        env->ExceptionClear();
+        error = what;
+        if (t) {
+            jclass tc = env->GetObjectClass(t);
+            if (jstring m = static_cast<jstring>(env->CallObjectMethod(t, env->GetMethodID(tc, "toString", "()Ljava/lang/String;")))) {
+                const char* c = env->GetStringUTFChars(m, nullptr);
+                if (c) error += std::string(": ") + c, env->ReleaseStringUTFChars(m, c);
+                env->DeleteLocalRef(m);
+            }
+            if (env->ExceptionCheck()) env->ExceptionClear();
+            env->DeleteLocalRef(tc), env->DeleteLocalRef(t);
+        }
+        return true;
+    };
+    auto done = [&](bool ok) {
+        for (jobject o : refs) env->DeleteLocalRef(o);
+        return ok;
+    };
+    jclass urlc = static_cast<jclass>(keep(env->FindClass("java/net/URL")));
+    jclass connc = static_cast<jclass>(keep(env->FindClass("java/net/HttpURLConnection")));
+    jclass osc = static_cast<jclass>(keep(env->FindClass("java/io/OutputStream")));
+    jclass isc = static_cast<jclass>(keep(env->FindClass("java/io/InputStream")));
+    if (failed("Java classes") || !urlc || !connc || !osc || !isc) return done(false);
+    jobject u = keep(env->NewObject(urlc, env->GetMethodID(urlc, "<init>", "(Ljava/lang/String;)V"),
+                                    keep(env->NewStringUTF(url.c_str()))));
+    if (failed("bad URL")) return done(false);
+    jobject conn = keep(env->CallObjectMethod(u, env->GetMethodID(urlc, "openConnection", "()Ljava/net/URLConnection;")));
+    if (failed("could not open the connection") || !conn) return done(false);
+    env->CallVoidMethod(conn, env->GetMethodID(connc, "setRequestMethod", "(Ljava/lang/String;)V"),
+                        keep(env->NewStringUTF(method.c_str())));
+    env->CallVoidMethod(conn, env->GetMethodID(connc, "setConnectTimeout", "(I)V"), jint(15000));  // as curl's
+    env->CallVoidMethod(conn, env->GetMethodID(connc, "setReadTimeout", "(I)V"), jint(45000));
+    env->CallVoidMethod(conn, env->GetMethodID(connc, "setInstanceFollowRedirects", "(Z)V"), jboolean(JNI_TRUE));
+    env->CallVoidMethod(conn, env->GetMethodID(connc, "setUseCaches", "(Z)V"), jboolean(JNI_FALSE));
+    jmethodID setp = env->GetMethodID(connc, "setRequestProperty", "(Ljava/lang/String;Ljava/lang/String;)V");
+    for (const auto& [k, v] : headers)
+        env->CallVoidMethod(conn, setp, keep(env->NewStringUTF(k.c_str())), keep(env->NewStringUTF(v.c_str())));
+    if (failed("bad request")) return done(false);
+    if (!body.empty()) {
+        env->CallVoidMethod(conn, env->GetMethodID(connc, "setDoOutput", "(Z)V"), jboolean(JNI_TRUE));
+        jobject os = keep(env->CallObjectMethod(conn, env->GetMethodID(connc, "getOutputStream", "()Ljava/io/OutputStream;")));
+        if (failed("could not connect") || !os) return done(false);
+        jbyteArray b = static_cast<jbyteArray>(keep(env->NewByteArray(jsize(body.size()))));
+        env->SetByteArrayRegion(b, 0, jsize(body.size()), reinterpret_cast<const jbyte*>(body.data()));
+        env->CallVoidMethod(os, env->GetMethodID(osc, "write", "([B)V"), b);
+        env->CallVoidMethod(os, env->GetMethodID(osc, "close", "()V"));
+        if (failed("could not send the request")) return done(false);
+    }
+    status = env->CallIntMethod(conn, env->GetMethodID(connc, "getResponseCode", "()I"));
+    if (failed("no response")) {
+        status = 0;
+        return done(false);
+    }
+    jobject in = keep(env->CallObjectMethod(conn, env->GetMethodID(connc, status >= 400 ? "getErrorStream" : "getInputStream",
+                                                                    "()Ljava/io/InputStream;")));
+    if (env->ExceptionCheck()) env->ExceptionClear(), in = nullptr;  // no body (a 204, or an error without one)
+    if (in) {
+        jbyteArray buf = static_cast<jbyteArray>(keep(env->NewByteArray(16384)));
+        jmethodID rd = env->GetMethodID(isc, "read", "([B)I");
+        for (;;) {
+            const jint n = env->CallIntMethod(in, rd, buf);
+            if (failed("the response was cut off")) return done(false);
+            if (n < 0) break;
+            const size_t at = out.size();
+            out.resize(at + size_t(n));
+            env->GetByteArrayRegion(buf, 0, n, reinterpret_cast<jbyte*>(out.data() + at));
+            if (out.size() > (16u << 20)) {  // the account API's answers are small
+                error = "response too large";
+                break;
+            }
+        }
+        env->CallVoidMethod(in, env->GetMethodID(isc, "close", "()V"));
+        if (env->ExceptionCheck()) env->ExceptionClear();
+    }
+    env->CallVoidMethod(conn, env->GetMethodID(connc, "disconnect", "()V"));
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    return done(error.empty());
 }
 
 void sleep_ns(int64_t ns) {

@@ -313,7 +313,10 @@ std::string percent_encode(const std::string& s) {
 }
 
 bool open_browser(const std::string& url) {
-#if defined(NX_HAVE_SDL3)
+#if defined(__ANDROID__)
+    plat::open_url_in_app(url, nullptr);  // the phone's browser (it logs what it opened, or that it could not)
+    return true;
+#elif defined(NX_HAVE_SDL3)
     return SDL_OpenURL(url.c_str());
 #elif defined(_WIN32)
     return (uintptr_t)ShellExecuteA(nullptr, "open", url.c_str(), nullptr, nullptr, SW_SHOWNORMAL) > 32;
@@ -518,13 +521,7 @@ bool version_ok_for_nextendo() {
     return v == "3.0.3";
 }
 
-bool online_services_active() {
-#if defined(__ANDROID__)
-    return false;  // the account API needs curl (nextendo_http.cpp), which Android lacks; the Online page says so
-#else
-    return is_nextendo() && signed_in() && version_ok_for_nextendo();
-#endif
-}
+bool online_services_active() { return is_nextendo() && signed_in() && version_ok_for_nextendo(); }
 
 bool ldn_wanted() {
     if (const char* e = std::getenv("NX_LDN"); e && e[0] == '1') return true;

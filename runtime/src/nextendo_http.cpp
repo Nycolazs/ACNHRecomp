@@ -1,6 +1,8 @@
 // HTTPS via curl on PATH (Windows 10+, macOS, Linux) — same pattern as launcher/desktop.cpp.
 #include "nextendo_http.h"
 
+#include "platform.h"
+
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -138,6 +140,15 @@ HttpResponse http_request(const std::string& method, const std::string& url,
                           const std::map<std::string, std::string>& headers, const std::string& body,
                           const std::string& content_type) {
     HttpResponse r;
+#if defined(__ANDROID__)
+    // No curl on a phone: HttpURLConnection (platform_android.cpp), with the same headers and body.
+    std::vector<std::pair<std::string, std::string>> h(headers.begin(), headers.end());
+    if (!content_type.empty()) h.emplace_back("Content-Type", content_type);
+    if (!plat::https_request(method, url, h, body, r.status, r.body, r.error) && r.error.empty())
+        r.error = "the request failed";
+    if (r.status == 0 && r.error.empty()) r.error = "no response from Nextendo";
+    return r;
+#endif
     const std::string body_path = temp_path("nx_http_body_");
     const std::string out_path = temp_path("nx_http_out_");
     const std::string hdr_path = temp_path("nx_http_hdr_");

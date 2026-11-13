@@ -1,4 +1,5 @@
-// Minimal HTTPS helper for Nextendo API / OAuth (curl subprocess, same approach as launcher update check).
+// Minimal HTTPS helper for Nextendo API / OAuth: a curl subprocess (as the launcher's update check), and on Android,
+// which has no curl, HttpURLConnection (platform_android.cpp).
 #pragma once
 
 #include <map>

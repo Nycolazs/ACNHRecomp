@@ -7,6 +7,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <string>
+#include <utility>
+#include <vector>
 
 // The runtime's functions and variables the recompiled code calls (cpu.h, runtime.h, the generated funcs.h). On
 // Android the game's code is its own library (lib<game>_game.so) and these are exported to it from the app's.
@@ -98,6 +100,11 @@ float default_render_scale();
 [[noreturn]] void restart_app();
 // Android: `url` in the app `package` when it is installed (Instagram, GitHub), else in the browser (platform_android).
 void open_url_in_app(const std::string& url, const char* package);
+// An HTTPS request on java.net.HttpURLConnection (Android's TLS and certificate store): nextendo_http.cpp, as Android
+// has no curl. status 0 and `error` when nothing came back.
+bool https_request(const std::string& method, const std::string& url,
+                   const std::vector<std::pair<std::string, std::string>>& headers, const std::string& body,
+                   int& status, std::string& out, std::string& error);
 #endif
 // thermal.cpp: the share of the asked rows the GPU keeps up with now (dynamic resolution; 1 elsewhere).
 float dynamic_render_scale();
