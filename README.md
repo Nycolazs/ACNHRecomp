@@ -17,8 +17,8 @@
   </a>
 </p>
 
-ACNHRecomp turns the Switch code of *Animal Crossing: New Horizons* (title ID `01006F8002326000`; version 3.0.2
-recommended, 3.0.3, 2.0.7 and 1.0.0 supported) into native code for your computer. It is not an emulator: the game's AArch64 machine code is
+ACNHRecomp turns the Switch code of *Animal Crossing: New Horizons* (title ID `01006F8002326000`; version 3.0.3
+recommended, which Nextendo Online needs; 3.0.2, 2.0.7 and 1.0.0 supported) into native code for your computer. It is not an emulator: the game's AArch64 machine code is
 translated ahead of time into C++ and compiled for the host, the system services the game calls are reimplemented
 natively, and the game's NVN graphics calls are translated to **Vulkan**. It is built on the framework of
 [SuperMarioWonderRecomp](https://github.com/BelmanteGu/SuperMarioWonderRecomp).
@@ -190,7 +190,8 @@ The folder's layout:
 | `game.ini`, `.import/` | What ACNHRecomp-Importer imported (title, update version, main's build id) and its record of a finished import: how the launcher and the setup recognise its folders | Yes |
 | `gen/` | The game's code recompiled to C++ by the importer. When it was made by the same recompiler as this repository's `recomp/`, the setup uses it instead of recompiling | Optional |
 
-Version 3.0.2 (or 3.0.3) gets every fix of the port (native 60 FPS, wide screens, the mouse); 2.0.7 and 1.0.0 play
+Version 3.0.3 (or 3.0.2) gets every fix of the port (native 60 FPS, wide screens, the mouse), and 3.0.3 plays online
+with Nextendo; 2.0.7 and 1.0.0 play
 with picture, sound and the mouse; any other version is built as it is ([docs/VERSIONS.md](docs/VERSIONS.md)). The
 setup links to this folder instead of copying it: keep it where it is.
 
@@ -651,8 +652,8 @@ The game folder has not been linked yet: pass `--game <your game folder>` on the
 
 **The launcher or the setup says the folder was not prepared by ACNHRecomp-Importer.**
 ACNHRecomp only accepts game folders made by ACNHRecomp-Importer. Download it on our Discord
-([discord.gg/VJW9Dtdu7a](https://discord.gg/VJW9Dtdu7a)), prepare your game with it (your NSP or XCI, update 3.0.2 and
-your console's keys) and choose the folder it writes. A folder it is still working on, or that it stopped preparing, is
+([discord.gg/VJW9Dtdu7a](https://discord.gg/VJW9Dtdu7a)), prepare your own copy of the game with it (update 3.0.3
+recommended) and choose the folder it writes. A folder it is still working on, or that it stopped preparing, is
 not accepted either: let it finish.
 
 **The setup says the game folder has no exefs/ and romfs/, or that romfs/ has no Shader/ folder.**
