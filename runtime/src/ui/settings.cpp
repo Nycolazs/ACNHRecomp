@@ -1292,6 +1292,7 @@ void page_controls() {
     row("controls.touch", "controls.touch.desc", [&](float w) { toggle("input.touch_controls", true, w); });
     row("controls.touch_opacity", nullptr, [&](float w) { slider("input.touch_opacity", 10, 100, 60, "%d%%", w); });
     row("controls.touch_size", nullptr, [&](float w) { slider("input.touch_size", 50, 150, 100, "%d%%", w); });
+    row("controls.touch_run", "controls.touch_run.desc", [&](float w) { toggle("input.touch_run", true, w); });
     if (plat::touch_group(0)) {
         row("controls.touch_layout", "controls.touch_layout.desc", [&](float w) {
             if (button(tr(g_touch_edit ? "controls.touch_layout.done" : "controls.touch_layout.edit"), w))

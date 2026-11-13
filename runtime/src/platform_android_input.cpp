@@ -43,6 +43,7 @@
 #include "kernel.h"
 #include "platform.h"
 #include "platform_android.h"
+#include "config.h"
 #include "touch_layout.h"
 #include "ui/ui.h"
 
@@ -215,9 +216,10 @@ void read_pad(PadState& p) {
             p.lx = int32_t(std::clamp(dx, -1.f, 1.f) * kStickMax);
             p.ly = int32_t(std::clamp(-dy, -1.f, 1.f) * kStickMax);
             // A drawn layout's stick pushed nearly all the way also holds the run button (Wonder: Y, dash; ACNH: B,
-            // run), so running needs no second thumb on the right side.
+            // run), so running needs no second thumb on the right side. input.touch_run = 0 (Settings > Controls) turns
+            // it off: in ACNH's menus B is also Cancel, so a stick pushed to the edge there backed out of them.
             static const uint64_t run = std::strcmp(nx::game::kInfo.id, "acnh") == 0 ? kB : kY;
-            if (drawn && std::hypot(dx, dy) > 0.9f) p.buttons |= run;
+            if (drawn && std::hypot(dx, dy) > 0.9f && config_get_bool("input.touch_run", true)) p.buttons |= run;
         } else {
             p.buttons |= t.button;
         }
