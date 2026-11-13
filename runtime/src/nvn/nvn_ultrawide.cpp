@@ -656,6 +656,7 @@ struct PaneFix {
     float base[2] = {};     // the game's own
     uint32_t tset[2] = {};  // a background's translate written last, and the game's own
     float tbase[2] = {};
+    float applied[2] = {1.0f, 1.0f};  // the scale written last (in the global matrix of the next Calculate)
 };
 std::mutex g_pane_lock;
 std::unordered_map<uint64_t, PaneFix> g_panes;
@@ -843,8 +844,13 @@ void pane_calculate(CPU& c) {
         full = (wide && kx > 1.0f) || (tall && ty > 1.0f) || (wide && tall);
         // Already as large as the whole target on the axes that grew (the NookPhone's 2940x2272 frame around its
         // screen, a glow scaled up by its animation): scaling it moved its cut-out off the phone, a dark band beside it.
+        // Its own size, without the scale written here last frame: with it, a 1920-wide background covered exactly
+        // as much as the target, was taken for one already that large and given its own scale back, every other frame
+        // (the sides of loading screens and menus flickered at 21:9).
         const float TW = r->second.base[0] * 0.5f * kx, TH = r->second.base[1] * 0.5f * ty;
-        if (full && (kx <= 1.0f || (mx - hw <= -TW && mx + hw >= TW)) && (ty <= 1.0f || (my - hh <= -TH && my + hh >= TH)))
+        const float hw1 = hw / fix.applied[0], hh1 = hh / fix.applied[1];
+        if (full && (kx <= 1.0f || (mx - hw1 <= -TW && mx + hw1 >= TW)) &&
+            (ty <= 1.0f || (my - hh1 <= -TH && my + hh1 >= TH)))
             full = false;
         // A band as tall as the layout on one side (to the middle at most), past its edge (the circle wipe's P_L_00 /
         // P_R_00, 1019 wide, to 1125 of 960; they meet in the middle when it closes): stretched outward about its inner edge, so its outer edge passes the target's by as much. The
@@ -898,6 +904,7 @@ void pane_calculate(CPU& c) {
     }
     follow(pane, 0x48, fix.set, fix.base, want);
     follow(pane, 0x30, fix.tset, fix.tbase, shift, true);
+    fix.applied[0] = side ? 1.0f : want[0], fix.applied[1] = side ? 1.0f : want[1];  // side bands: `cur` above
     static const bool trace = std::getenv("NX_UW_LAYOUT_TRACE") != nullptr;
     static std::set<uint64_t> traced;
     if (trace && traced.insert(pane).second) {
