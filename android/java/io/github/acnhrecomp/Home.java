@@ -168,6 +168,14 @@ public class Home extends Activity {
                     "Esta pasta não tem o jogo preparado (" + GAME_LIB + "). Prepare o seu jogo com o "
                             + "ACNHRecomp-Importer (baixe no nosso Discord: discord.gg/VJW9Dtdu7a) e depois no "
                             + "computador com tools/android_install.sh.");
+        if (why.contains("cannot locate symbol"))  // a library from ACNHRecomp-Importer before 1.0.4 (no DT_NEEDED)
+            return t("The game in this folder was prepared by an older ACNHRecomp-Importer (before 1.0.4), whose "
+                            + "library the app can't load. Prepare it again with the latest Importer (on our Discord: "
+                            + "discord.gg/VJW9Dtdu7a): it keeps what it extracted and builds the library again.\n\n" + why,
+                    "O jogo desta pasta foi preparado por um ACNHRecomp-Importer antigo (anterior ao 1.0.4), cuja "
+                            + "biblioteca o app não consegue carregar. Prepare de novo com o Importer mais novo (no nosso "
+                            + "Discord: discord.gg/VJW9Dtdu7a): ele reaproveita o que já extraiu e refaz a biblioteca.\n\n"
+                            + why);
         if (why.equals("restart"))
             return t("Close the app and open it again to use another folder.",
                     "Feche o app e abra de novo para usar outra pasta.");
