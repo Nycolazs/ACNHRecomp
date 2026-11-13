@@ -2,6 +2,7 @@
 #include "nextendo_http.h"
 
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <random>
@@ -37,7 +38,8 @@ std::string temp_path(const char* prefix) {
     GetTempPathA(MAX_PATH, dir);
     return std::string(dir) + name;
 #else
-    return std::string("/tmp/") + name;
+    const char* t = std::getenv("TMPDIR");  // per-user on macOS; else the shared /tmp (the files are 0600 there)
+    return std::string(t && *t ? t : "/tmp") + "/" + name;
 #endif
 }
 
@@ -142,6 +144,13 @@ HttpResponse http_request(const std::string& method, const std::string& url,
     std::error_code ec;
     if (!body.empty() && !write_file(body_path, body)) {
         r.error = "could not write request body";
+        return r;
+    }
+    // The response (its access, refresh and NEX tokens) and its headers: created here, owner-only, so curl only
+    // writes into them; made by curl they would take the umask (0644 in a shared /tmp).
+    if (!write_file(out_path, "") || !write_file(hdr_path, "")) {
+        fs::remove(out_path, ec), fs::remove(hdr_path, ec), fs::remove(body_path, ec);
+        r.error = "could not create the response files";
         return r;
     }
 

@@ -15,7 +15,7 @@ Nextendo supports ACNH **3.0.3** fully online: island visits (friends and Dodo C
 | Presence | `nextendo.cpp` | `POST /api/presence` every 60 s while online (the server shows a player offline after 90 s), status 2 inside an online session. |
 | DNS | `nextendo.cpp`, `hle_hostnet.cpp` | Nintendo names resolve to the Nextendo server; the NAT-check names to the second NAT address. Other names resolve normally. |
 | Sockets | `hle_hostnet.cpp` | Host TCP/UDP sockets with the Switch’s ABI: option numbers, errno values, poll, non-blocking I/O. |
-| TLS | `hle_ssl.cpp` | `nn::ssl` (libcurl’s C API and NEX’s C++ calls) on [Mbed TLS](https://github.com/Mbed-TLS/mbedtls) 3.6, fetched by CMake. SNI is the host the game named, or the one its address was resolved from. Certificates are not verified (Nextendo presents certificates for Nintendo names). ALPN offers `http/1.1` only. |
+| TLS | `hle_ssl.cpp` | `nn::ssl` (libcurl’s C API and NEX’s C++ calls) on [Mbed TLS](https://github.com/Mbed-TLS/mbedtls) 3.6, fetched by CMake. SNI is the host the game named, or the one its address was resolved from. Nextendo presents certificates for Nintendo names, so instead of the certificate chain the server's public key is checked: the SHA-256 of its SubjectPublicKeyInfo must be one of the pins in `hle_ssl.cpp` (or `online.nextendo.tls_pins`), after the handshake and before anything is sent. Mbed TLS is built with its threading layer (`runtime/src/mbedtls/`). ALPN offers `http/1.1` only. |
 
 Not yet on Nextendo’s side (server updates): best friends between an emulator and a real Switch, and Island Backup.
 
@@ -60,6 +60,8 @@ Tokens are stored in `<data root>/nextendo_account.json`. Do not share that file
 | `NEXTENDO_AUTH` | Browser authorize host (same rule) | same as `NEXTENDO_API` |
 | `NEXTENDO_SERVER_IP` | Address the Nintendo names resolve to | `51.178.29.194` |
 | `NEXTENDO_NAT_IP` | Second NAT-check address (must differ from the server’s) | `164.132.111.120` |
+| `NEXTENDO_TLS_PINS` (or `online.nextendo.tls_pins`) | More server key pins, comma-separated base64 SHA-256 of the SubjectPublicKeyInfo, for when Nextendo changes a key before a new release. `NEXTENDO_TLS_PINS=any` (the whole value, environment only) turns the check off, for a developer's own test server. | the pins in `hle_ssl.cpp` |
+| `online.nextendo.server` / `online.nextendo.nat` (`config.ini`) | Same as `NEXTENDO_SERVER_IP` / `NEXTENDO_NAT_IP`; an address or a host name | as below |
 | `NEXTENDO_BAAS_SIGNING_KEY` | RSA key (PEM text or a path) to sign the `id_token`; also read from `<data root>/nextendo_baas.pem` | a key generated for each run |
 
 ACNH only forwards the `id_token`; the server trusts the `nnex` game token inside it, so the generated key is enough.
