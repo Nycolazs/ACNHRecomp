@@ -259,6 +259,7 @@ set(NX_RUNTIME_SOURCES
     runtime/src/hle_audio.cpp
     runtime/src/hle_pl.cpp
     runtime/src/hle_album.cpp
+    runtime/src/hle_jpeg.cpp
     runtime/src/hle_nfp.cpp
     runtime/src/nfp_host.cpp
     runtime/src/acnh_amiibo_hook.cpp
