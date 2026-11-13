@@ -1,7 +1,8 @@
 #!/bin/bash
 # The text files of a release package (tools/package_release_*.sh), in <folder>: README.txt (how to play, for that
-# system), LICENSE (this project's) and THIRD-PARTY.txt (the libraries beside the executables).
-# usage: tools/release_readme.sh <folder> windows|macos|linux [<version>]
+# system), LICENSE (this project's), THIRD-PARTY.txt (the libraries beside the executables) and, with <build>,
+# LICENSE-mbedtls.txt (Mbed TLS is linked into acnh; Apache 2.0 asks for its licence text in the package).
+# usage: tools/release_readme.sh <folder> windows|macos|linux [<version>] [<build>]
 cd "$(dirname "$0")/.." || exit 1
 set -e
 DIR=${1:?usage: tools/release_readme.sh <folder> windows|macos|linux}
@@ -85,6 +86,9 @@ EOF
 }
 text | sed "s/\$/${EOL%$'\n'}/" > "$DIR/README.txt"
 cp LICENSE "$DIR/LICENSE.txt"
+if [ -n "$4" ]; then
+  cp "$4/_deps/mbedtls-src/LICENSE" "$DIR/LICENSE-mbedtls.txt"
+fi
 {
   echo "ACNHRecomp release packages carry these libraries, unmodified, under their own licences:"
   echo
@@ -93,5 +97,6 @@ cp LICENSE "$DIR/LICENSE.txt"
   echo "SDL3: https://github.com/libsdl-org/SDL (zlib). Vulkan loader: https://github.com/KhronosGroup/Vulkan-Loader"
   echo "(Apache 2.0). MoltenVK: https://github.com/KhronosGroup/MoltenVK (Apache 2.0). libvpx: https://chromium.googlesource.com/webm/libvpx"
   echo "(BSD 3-clause). libvorbis and libogg: https://xiph.org (BSD 3-clause). Dear ImGui (in the launcher and the"
-  echo "settings screen): https://github.com/ocornut/imgui (MIT)."
+  echo "settings screen): https://github.com/ocornut/imgui (MIT). Mbed TLS (linked into acnh, for Nextendo Online):"
+  echo "https://github.com/Mbed-TLS/mbedtls (Apache 2.0, text in LICENSE-mbedtls.txt)."
 } | sed "s/\$/${EOL%$'\n'}/" > "$DIR/THIRD-PARTY.txt"

@@ -20,6 +20,8 @@ add_executable(acnhrecomp_launcher WIN32
     launcher/main.cpp launcher/pages.cpp launcher/files.cpp launcher/pipeline.cpp launcher/desktop.cpp
     launcher/cpu_check.cpp
     runtime/src/ldn_upnp.cpp
+    runtime/src/nextendo.cpp
+    runtime/src/nextendo_http.cpp
     launcher/save_log_stub.cpp
     runtime/src/ui/theme.cpp runtime/src/ui/i18n.cpp runtime/src/ui/ui_cjk_font.cpp runtime/src/app_icon.cpp
     $<$<PLATFORM_ID:Windows>:${CMAKE_SOURCE_DIR}/assets/acnhrecomp.rc>
@@ -39,7 +41,7 @@ foreach(t acnhrecomp_launcher nx_save_storage nx_mod_manager)
 endforeach()
 target_link_libraries(acnhrecomp_launcher PRIVATE SDL3::SDL3 Threads::Threads nx_save_storage nx_mod_manager)
 if(WIN32)
-    target_link_libraries(acnhrecomp_launcher PRIVATE ole32 shell32 uuid ws2_32)  # desktop.cpp: the shortcuts
+    target_link_libraries(acnhrecomp_launcher PRIVATE ole32 shell32 uuid ws2_32 bcrypt)  # desktop + Nextendo PKCE
 endif()
 # A release build (.github/workflows/build.yml) names its version: git describe would give the previous tag when the
 # packages are built before the release's tag exists, and 0.8.0 then called itself 0.7.0 (issue #76).

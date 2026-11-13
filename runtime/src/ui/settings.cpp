@@ -5,6 +5,8 @@
 // when the screen is narrow or portrait), each setting a row with its name and a short explanation on the left and
 // the control on the right (under them when narrow). Sizes are in design pixels times `scale` (ui.cpp).
 #include "../hle_ldn.h"
+#include "../nextendo.h"
+#include "../save_unlink.h"
 #include "ui/settings.h"
 
 #if !defined(__ANDROID__)
@@ -15,6 +17,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <filesystem>
@@ -138,7 +141,11 @@ void toast(const std::string& text) {
 // frame generation are read while the game runs (nvn_present.cpp, nvn_framegen.cpp); elsewhere they are not (the
 // desktop's present pass is chosen at start).
 bool needs_restart(const std::string& key) {
-    if (key.rfind("online.", 0) == 0) return false;  // read when the game next starts local play (hle_ldn.cpp)
+    if (key.rfind("online.", 0) == 0) {
+        if (key == "online.mode")
+            ::nx::nextendo::presence_start();  // starts once, when signed in and in Nextendo mode; idles while not online
+        return false;  // LDN reads online.enabled at session start; Nextendo reads mode live
+    }
 #if defined(__ANDROID__)
     for (const char* k : {"video.upscaler", "video.fsr_sharpness_pct", "video.antialiasing", "video.frame_gen"})
         if (key == k) return false;
@@ -667,8 +674,283 @@ void section(const char* key) {
 // The choice that matches the console, tagged as such ("1080p (TV mode) · console original").
 std::string console(const char* key) { return std::string(tr(key)) + " · " + tr("common.console_tag"); }
 
-// Direct play over the internet: the switch, what the router allows, the address to share, a friend's address.
+// ---- Nextendo: server status and the Friends view of the Online page ------------------------------------------
+
+namespace nxo = ::nx::nextendo;
+
+// The status check runs on a worker thread (its HTTP requests take a moment); the page shows the last result.
+struct StatusCheck {
+    std::mutex mu;
+    std::atomic<bool> running{false};
+    bool done = false;
+    nxo::ServiceStatus result;
+} g_status;
+
+void status_check_start() {
+    if (g_status.running.exchange(true)) return;
+    std::thread([] {
+        const nxo::ServiceStatus s = nxo::check_service_status();
+        std::lock_guard lk(g_status.mu);
+        g_status.result = s;
+        g_status.done = true;
+        g_status.running = false;
+    }).detach();
+}
+
+// One system's line: "Account service: OK" / "...: degraded (HTTP 502)" / "...: no answer". `any_answer`: any HTTP
+// status means up (the game servers answer their root with an error page).
+std::string status_line(const char* name_key, int http, bool any_answer, int& ok, int& total) {
+    total++;
+    std::string s = std::string(tr(name_key)) + ": ";
+    if (http >= 200 && (any_answer || http < 300)) {
+        ok++;
+        return s + tr("online.server.ok");
+    }
+    if (http) return s + trf("online.server.degraded", std::to_string(http));
+    return s + tr("online.server.down");
+}
+
+std::string status_text() {
+    if (g_status.running) return tr("online.server.checking");
+    std::lock_guard lk(g_status.mu);
+    if (!g_status.done) return tr("online.server.desc");
+    const nxo::ServiceStatus& s = g_status.result;
+    int ok = 0, total = 0;
+    std::string lines = status_line("online.server.health", s.health, false, ok, total) + "\n";
+    if (s.account) lines += status_line("online.server.account", s.account, false, ok, total) + "\n";
+    lines += status_line("online.server.game", s.game, true, ok, total);
+    if (s.players >= 0) lines += "\n" + trf("online.server.players", std::to_string(s.players));
+    const char* overall = ok == total ? "online.server.operational" : ok ? "online.server.partial" : "online.server.offline";
+    return std::string(tr(overall)) + "\n" + lines;
+}
+
+// Friend actions (send a request, accept, decline) run on a worker thread too; their outcome shows on the Friends view.
+struct FriendAction {
+    std::mutex mu;
+    std::atomic<bool> busy{false};
+    std::string message;
+} g_friend_action;
+
+void friend_action(std::function<bool(std::string&)> fn, const char* done_key) {
+    if (g_friend_action.busy.exchange(true)) return;
+    std::thread([fn = std::move(fn), done_key] {
+        std::string message;
+        const bool ok = fn(message);
+        std::lock_guard lk(g_friend_action.mu);
+        g_friend_action.message = ok && message.empty() ? tr(done_key) : message;
+        g_friend_action.busy = false;
+    }).detach();
+}
+
+bool g_friends_view = false;  // the Online page shows the Friends view instead of its rows
+
+std::string friend_state(const nxo::Friend& f) {
+    if (f.status == 0) return tr("online.friends.offline");
+    if (!f.app_id.empty() && std::strtoull(f.app_id.c_str(), nullptr, 16) == nxo::kAcnhTitleId)
+        return tr(f.status == 2 ? "online.friends.acnh_online" : "online.friends.acnh");
+    return tr(f.app_id.empty() ? "online.friends.online" : "online.friends.other_game");
+}
+
+// A line of the Friends view: the name and its state on the left, `buttons` (may be none) on the right.
+void friend_line(const nxo::Friend& f, const std::string& state, const std::vector<std::pair<const char*, std::function<void()>>>& buttons) {
+    ImGui::PushID(int(f.pid));
+    const float avail = ImGui::GetContentRegionAvail().x;
+    const float bw = 150.0f * g_scale, gap = ImGui::GetStyle().ItemSpacing.x;
+    ImGui::BeginGroup();
+    ImGui::TextUnformatted(f.name.c_str());
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.47f, 0.39f, 0.31f, 1.0f));
+    ImGui::SetWindowFontScale(0.86f);
+    ImGui::TextUnformatted(state.c_str());
+    ImGui::SetWindowFontScale(1.0f);
+    ImGui::PopStyleColor();
+    ImGui::EndGroup();
+    float x = avail - float(buttons.size()) * (bw + gap) + gap;
+    for (const auto& [label, act] : buttons) {
+        ImGui::SameLine(x);
+        if (ImGui::Button(tr(label), ImVec2(bw, 0)) && !g_friend_action.busy) act();
+        page_nav_item();
+        x += bw + gap;
+    }
+    ImGui::PopID();
+    ImGui::Separator();
+}
+
+void page_friends() {
+    row("online.friends.back", nullptr, [&](float w) {
+        if (ImGui::Button(tr("online.friends.back"), ImVec2(w, 0))) g_friends_view = false;
+        page_nav_item();
+    });
+    const nxo::Account acc = nxo::account();
+    std::string add_desc;
+    {
+        std::lock_guard lk(g_friend_action.mu);
+        add_desc = g_friend_action.busy ? tr("online.friends.sending") : g_friend_action.message;
+    }
+    if (add_desc.empty()) add_desc = trf("online.friends.add.desc", acc.friend_code.empty() ? "-" : acc.friend_code);
+    row("online.friends.add", add_desc.c_str(), [&](float w) {
+        static char code[40] = {};
+        ImGui::SetNextItemWidth(w);
+        ImGuiContext& ctx = *ImGui::GetCurrentContext();
+        if (ctx.NavActivateId == ImGui::GetID("##friend_code") && ctx.NavInputSource == ImGuiInputSource_Gamepad)
+            ctx.NavActivateFlags |= ImGuiActivateFlags_PreferInput;
+        ImGui::InputTextWithHint("##friend_code", "SW-0000-0000-0000", code, sizeof code);
+        page_nav_item();
+        if (ImGui::Button(tr("online.friends.send"), ImVec2(w, 0)) && code[0] && !g_friend_action.busy) {
+            const std::string c = code;
+            friend_action([c](std::string& m) { return nxo::send_friend_request(c, m); }, "online.friends.sent");
+            code[0] = 0;
+        }
+        page_nav_item();
+    });
+    const nxo::FriendLists lists = nxo::friend_lists_cached();
+    if (!lists.loaded) {
+        ImGui::TextWrapped("%s", tr("online.friends.loading"));
+        return;
+    }
+    if (!lists.incoming.empty()) {
+        section("online.friends.incoming");
+        for (const auto& f : lists.incoming) {
+            const uint64_t pid = f.pid;
+            friend_line(f, tr("online.friends.wants"),
+                        {{"online.friends.accept",
+                          [pid] {
+                              friend_action([pid](std::string& m) { return nxo::answer_friend_request(pid, true, m); },
+                                            "online.friends.accepted");
+                          }},
+                         {"online.friends.decline", [pid] {
+                              friend_action([pid](std::string& m) { return nxo::answer_friend_request(pid, false, m); },
+                                            "online.friends.declined");
+                          }}});
+        }
+    }
+    if (!lists.outgoing.empty()) {
+        section("online.friends.outgoing");
+        for (const auto& f : lists.outgoing) friend_line(f, tr("online.friends.pending"), {});
+    }
+    section("online.friends.list");
+    if (lists.friends.empty()) ImGui::TextWrapped("%s", tr("online.friends.none"));
+    std::vector<nxo::Friend> sorted = lists.friends;  // online first, then by name
+    std::stable_sort(sorted.begin(), sorted.end(), [](const nxo::Friend& a, const nxo::Friend& b) {
+        if ((a.status != 0) != (b.status != 0)) return a.status != 0;
+        return a.name < b.name;
+    });
+    for (const auto& f : sorted) friend_line(f, friend_state(f), {});
+}
+
+bool g_fix_link_view = false;  // the Online page shows the "Fix Save Linked Account" page instead of its rows
+
+bool red_button(const char* text, float width) {
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.70f, 0.16f, 0.16f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.82f, 0.22f, 0.22f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.58f, 0.12f, 0.12f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
+    const bool pressed = ImGui::Button(text, ImVec2(width, 0));
+    ImGui::PopStyleColor(4);
+    return pressed;
+}
+
+#if !defined(__ANDROID__)
+// Everything the player should know before the fix, then the fix itself (save_unlink.h): the game restarts, the save
+// is copied unaltered to backups/save-link-fix, and the online account link is cleared from every resident.
+void page_fix_link() {
+    row("online.friends.back", nullptr, [&](float w) {
+        if (ImGui::Button(tr("online.friends.back"), ImVec2(w, 0))) g_fix_link_view = false;
+        page_nav_item();
+    });
+    section("online.fix_link");
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.42f, 0.42f, 1.0f));
+    ImGui::TextWrapped("%s", tr("online.fix_link.experimental"));
+    ImGui::PopStyleColor();
+    ImGui::Spacing();
+    ImGui::TextWrapped("%s", tr("online.fix_link.what"));
+    section("online.fix_link.when_title");
+    ImGui::TextWrapped("%s", tr("online.fix_link.when"));
+    section("online.fix_link.warn_title");
+    ImGui::TextWrapped("%s", tr("online.fix_link.warn"));
+    section("online.fix_link.backup_title");
+    ImGui::TextWrapped("%s", tr("online.fix_link.backup"));
+    if (const std::string r = save_unlink::last_result(); !r.empty()) {
+        section("online.fix_link.result_title");
+        ImGui::TextWrapped("%s", r.c_str());
+    }
+    ImGui::Spacing();
+    if (red_button(tr("online.fix_link.button"), ImGui::GetContentRegionAvail().x) && !save_unlink::request_restart())
+        toast(tr("online.fix_link.fail"));  // request_restart returns only on failure
+    page_nav_item();
+}
+#endif
+
+// Network mode: Local Only (no Nextendo at all) or Nextendo (account, server status, friends). Local Play peer visits
+// (docs/LOCAL_PLAY.md) follow their own switch in both.
 void page_online() {
+    const bool nextendo = config_get("online.mode", "nextendo") == "nextendo";
+    const nxo::Account acc = nxo::account();
+    if (g_friends_view && nextendo && acc.signed_in) return page_friends();
+    g_friends_view = false;
+#if !defined(__ANDROID__)
+    if (g_fix_link_view) return page_fix_link();
+#endif
+    row("online.mode", tr("online.mode.desc"), [&](float w) {
+        [[maybe_unused]] const float x = ImGui::GetCursorPosX();  // the control column, on the right
+        combo("online.mode", "nextendo", {{"local", tr("online.mode.local")}, {"nextendo", tr("online.mode.nextendo")}}, w);
+#if !defined(__ANDROID__)
+        // A save linked on another network (Rustendo, Pretendo, a console) refuses to load here: the red button,
+        // under the dropdown in either mode, opens the page that explains the fix and runs it (save_unlink.h).
+        ImGui::SetCursorPosX(x);
+        if (red_button(tr("online.fix_link"), w)) g_fix_link_view = true;
+        page_nav_item();
+#endif
+    });
+    if (nextendo) {
+        section("online.section.nextendo");
+#if defined(__ANDROID__)
+        // The account API's HTTPS goes through curl (nextendo_http.cpp), which Android does not have: no sign-in here
+        // until it moves onto Mbed TLS.
+        if (true) {
+            ImGui::TextWrapped("%s", tr("online.nextendo.android"));
+        } else
+#endif
+        if (!nxo::version_ok_for_nextendo()) {
+            ImGui::TextWrapped("%s", tr("online.nextendo.need_303"));
+        } else if (acc.signed_in) {
+            std::string desc = trf("online.nextendo.signed_in", acc.username);
+            if (!acc.friend_code.empty()) desc += "\n" + trf("online.nextendo.friend_code", acc.friend_code);
+            row("online.nextendo.account", desc.c_str(), [&](float w) {
+                if (ImGui::Button(tr("online.nextendo.sign_out"), ImVec2(w, 0))) nxo::sign_out();
+                page_nav_item();
+            });
+            const nxo::FriendLists lists = nxo::friend_lists_cached();
+            int online = 0;
+            for (const auto& f : lists.friends) online += f.status != 0;
+            std::string fdesc = trf("online.friends.desc", std::to_string(online));
+            if (!lists.incoming.empty()) fdesc += "\n" + trf("online.friends.desc.requests", std::to_string(lists.incoming.size()));
+            row("online.friends", fdesc.c_str(), [&](float w) {
+                if (ImGui::Button(tr("online.friends.open"), ImVec2(w, 0))) g_friends_view = true;
+                page_nav_item();
+            });
+        } else {
+            std::string desc = tr("online.nextendo.desc");
+            if (nxo::client_id().empty()) desc += std::string("\n") + tr("online.nextendo.need_client_id");
+            if (!nxo::last_error().empty()) desc += "\n" + nxo::last_error();
+            row("online.nextendo.account", desc.c_str(), [&](float w) {
+                const bool busy = nxo::sign_in_busy();
+                if (ImGui::Button(tr(busy ? "online.nextendo.signing_in" : "online.nextendo.sign_in"), ImVec2(w, 0)) &&
+                    !busy)
+                    nxo::sign_in_start();
+                page_nav_item();
+            });
+        }
+#if !defined(__ANDROID__)
+        const std::string sdesc = status_text();
+        row("online.server", sdesc.c_str(), [&](float w) {
+            if (ImGui::Button(tr(g_status.running ? "online.server.checking_button" : "online.server.check"),
+                              ImVec2(w, 0)))
+                status_check_start();
+            page_nav_item();
+        });
+#endif
+    }
+    section("online.section.local");
     const bool busy = ldn_enabled();  // held until the session ends (hle_ldn.cpp): no switch to touch
     row("online.enabled", tr(busy ? "online.enabled.busy" : "online.enabled.desc"), [&](float w) {
         if (busy) ImGui::TextDisabled("%s", tr("common.on"));

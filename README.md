@@ -130,8 +130,9 @@ GPU; see [docs/STATUS.md](docs/STATUS.md) for the full, regularly updated log.
 | Free roaming on the island | Working, 30 fps on an Intel Iris Xe |
 | First save (written at the end of the first day) | Not yet verified in a full playthrough |
 | 60 fps | Native with ACNHRecomp-Importer 1.0.6+ ([credits](#credits-and-references)) |
-| Online features through Nintendo (Dodo codes, Nook Link, Dream Suite) | Unavailable |
-| Visits between PCs (airport, Local Play), over LAN or the internet, no server | Works on Windows; [docs/LOCAL_PLAY.md](docs/LOCAL_PLAY.md) |
+| Online features through Nintendo | Unavailable (never contacted) |
+| Online via Nextendo (Dodo Codes, Search for a friend) | Supported on 3.0.3; [docs/NEXTENDO.md](docs/NEXTENDO.md) |
+| Visits between PCs (airport, Local Play), over LAN or the internet, no server | Local mode, works on Windows; [docs/LOCAL_PLAY.md](docs/LOCAL_PLAY.md) |
 
 **Known issues**
 
@@ -140,8 +141,8 @@ GPU; see [docs/STATUS.md](docs/STATUS.md) for the full, regularly updated log.
 - The first save only happens at the end of the first in-game day, and that path has not been verified end to end
   in a full playthrough. Back up and be prepared for surprises.
 - 60 fps - When shooting down a balloon game will fatal crash, fix is to switch to 30fps for any balloon challenges or DIYs.
-- Nintendo's online services are not available: the game sees a console with no internet connection. Visits between
-  PCs go through Local Play instead (page Online in the settings, [docs/LOCAL_PLAY.md](docs/LOCAL_PLAY.md)).
+- Nintendo's online services are not available. Use **Nextendo Online** (default) for Dodo Codes / Search for a friend
+  ([docs/NEXTENDO.md](docs/NEXTENDO.md)), or **Local** peer visits ([docs/LOCAL_PLAY.md](docs/LOCAL_PLAY.md)).
 
 **Platforms**
 
@@ -673,9 +674,8 @@ Some GNOME setups make libdecor/GTK abort the process; the runtime prefers X11/X
 `private/acnh/nx_play.log`.
 
 **Can I visit friends or use Nook Link?**
-Visiting friends: yes, through Local Play at the airport, on a LAN or over the internet (page Online in the settings,
-[docs/LOCAL_PLAY.md](docs/LOCAL_PLAY.md)). Nook Link and the rest of Nintendo's online services: no, they answer as a
-console without an internet connection.
+Visiting friends: **Nextendo Online** (Dodo / Search, [docs/NEXTENDO.md](docs/NEXTENDO.md)) or **Local** peer play
+([docs/LOCAL_PLAY.md](docs/LOCAL_PLAY.md)). Nintendo's own online services (including Nook Link) are never used.
 
 **Does time pass on my island?**
 Yes. The island follows your computer's date, time and time zone.

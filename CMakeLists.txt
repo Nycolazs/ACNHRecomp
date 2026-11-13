@@ -90,6 +90,16 @@ if(NX_TESTS AND NOT ANDROID)
     target_compile_definitions(gpu_pick_test PRIVATE NX_GPU_PICK_STANDALONE)
     target_include_directories(gpu_pick_test PRIVATE runtime/src/nvn)
     add_test(NAME gpu_pick COMMAND gpu_pick_test)
+    add_executable(nextendo_test tests/nextendo_test.cpp runtime/src/nextendo.cpp runtime/src/nextendo_http.cpp)
+    target_compile_definitions(nextendo_test PRIVATE NX_LAUNCHER_UI)
+    target_include_directories(nextendo_test PRIVATE runtime/src)
+    if(WIN32)
+        target_link_libraries(nextendo_test PRIVATE ws2_32 bcrypt shell32)
+    else()
+        find_package(Threads REQUIRED)
+        target_link_libraries(nextendo_test PRIVATE Threads::Threads)
+    endif()
+    add_test(NAME nextendo COMMAND nextendo_test)
     add_executable(tiling_test tests/tiling_test.cpp runtime/src/nvn/nvn_tiling.cpp)
     target_include_directories(tiling_test PRIVATE runtime/src/nvn)
     add_test(NAME tiling COMMAND tiling_test --selftest)
@@ -251,11 +261,15 @@ set(NX_RUNTIME_SOURCES
     runtime/src/hle_hid.cpp
     runtime/src/hle_hid_system_nfc.cpp
     runtime/src/hle_net.cpp
+    runtime/src/hle_web.cpp
+    runtime/src/hle_hostnet.cpp
     runtime/src/hle_ldn.cpp
     runtime/src/hle_vsock.cpp
     runtime/src/ldn_link.cpp
     runtime/src/ldn_discovery.cpp
     runtime/src/ldn_upnp.cpp
+    runtime/src/nextendo.cpp
+    runtime/src/nextendo_http.cpp
     runtime/src/hle_audio.cpp
     runtime/src/hle_pl.cpp
     runtime/src/hle_album.cpp
@@ -563,6 +577,23 @@ else()
 endif()
 target_sources(${NX_GAME} PRIVATE runtime/src/saves.cpp)
 target_link_libraries(${NX_GAME} PRIVATE nx_save_storage)
+
+# Mbed TLS (Apache-2.0): the game's nn::ssl connections (NEX, the island services) and the signed account id_token
+# for Nextendo Online (docs/NEXTENDO.md). Fetched as a release archive on the first configure.
+include(FetchContent)
+set(ENABLE_PROGRAMS OFF CACHE BOOL "" FORCE)
+set(ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+set(MBEDTLS_FATAL_WARNINGS OFF CACHE BOOL "" FORCE)
+set(USE_SHARED_MBEDTLS_LIBRARY OFF CACHE BOOL "" FORCE)
+set(USE_STATIC_MBEDTLS_LIBRARY ON CACHE BOOL "" FORCE)
+FetchContent_Declare(mbedtls
+    URL https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-3.6.7/mbedtls-3.6.7.tar.bz2
+    URL_HASH SHA256=a7e8bcbec0e6f761b4af24f25677626b35f762f68eef79c08677a363212d11f6
+    EXCLUDE_FROM_ALL)
+FetchContent_MakeAvailable(mbedtls)
+target_sources(${NX_GAME} PRIVATE runtime/src/hle_ssl.cpp runtime/src/hle_npns.cpp runtime/src/nextendo_token.cpp
+    runtime/src/nextendo_status.cpp runtime/src/save_unlink.cpp)
+target_link_libraries(${NX_GAME} PRIVATE mbedtls mbedx509 mbedcrypto)
 if(WIN32)
     set(ZLIB_USE_STATIC_LIBS ON)  # vcpkg's static zlib (tools/setup_acnh.py): zs.lib
 endif()

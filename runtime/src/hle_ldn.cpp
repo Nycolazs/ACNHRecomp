@@ -20,6 +20,7 @@
 #include "config.h"
 #include "hle_ldn.h"
 #include "kernel.h"
+#include "nextendo.h"
 #include "ui/ui.h"
 
 namespace nx {
@@ -42,11 +43,8 @@ const char* state_name(uint32_t s) {
 std::atomic<bool> g_session{false};
 
 bool wanted() {
-    static const bool forced = [] {
-        const char* e = std::getenv("NX_LDN");
-        return e && e[0] == '1';
-    }();
-    return forced || config_get("online.enabled") == "1";
+    // Local-mode peer visits only (docs/LOCAL_PLAY.md). Nextendo mode uses Nintendo Online → Nextendo instead.
+    return nextendo::ldn_wanted();
 }
 
 bool enabled() { return g_session; }

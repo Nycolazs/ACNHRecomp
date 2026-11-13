@@ -82,7 +82,9 @@ Result of `spirv_harness --batch`: **6,200 distinct blocks (23,455 stages), 6,17
   so naming the island and the player does not go through the system's swkbd applet.
 - **Clock:** the game's day and season come from `nn::time` (the user system clock). The runtime answers it from the
   host clock (`runtime/src/svc_time.cpp`), so the island follows the computer's date and time.
-- **Online:** NEX/Pia/friends/bcat/nifm are answered offline (no network connection), as in Hades and Wonder.
+- **Online:** by default Nextendo mode can enable nifm/sockets/DNS redirects and account tokens for Dodo / Search
+  ([docs/NEXTENDO.md](NEXTENDO.md)). Local mode keeps NEX/Pia/friends offline and uses LDN peer play
+  ([docs/LOCAL_PLAY.md](LOCAL_PLAY.md)). Nintendo servers are never contacted.
 - **Touch / mouse:** the left mouse button over the picture is the touch screen (`runtime/src/hle_hid.cpp`), and a
   click is answered by the game's two UI systems (`games/acnh/pointer.cpp`):
   - `guiTouchManager::update()` (main+31c3b50), the game's own touch support, reads `GetTouchScreenStates<16>`: a

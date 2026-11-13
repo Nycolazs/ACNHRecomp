@@ -14,6 +14,7 @@
 // of 1.2 the two-column parts stack.
 #include "launcher.h"
 #include "ldn_upnp.h"
+#include "nextendo.h"
 
 #include <thread>
 #include <atomic>
@@ -2543,9 +2544,75 @@ void online_check_start() {
 }
 
 void page_online() {
-    heading(tr("tab.online"), tr("online.enabled.desc"));
+    heading(tr("tab.online"), tr("online.mode.desc"));
     ImGui::PushStyleColor(ImGuiCol_ChildBg, col4(kPaper));
     ImGui::BeginChild("##rows", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_NavFlattened);
+    std::string mode = g_game_ini.get("online.mode", "nextendo");
+    if (mode != "local" && mode != "nextendo") mode = "nextendo";
+    ImGui::TextUnformatted(tr("online.mode"));
+    text_small(tr("online.mode.desc"));
+    if (ImGui::RadioButton(tr("online.mode.nextendo"), mode == "nextendo")) {
+        mode = "nextendo";
+        g_game_ini.set("online.mode", mode);
+        if (!g_game_ini.save()) toast(tr("launcher.settings.save_failed"));
+    }
+    nav_item();
+    if (ImGui::RadioButton(tr("online.mode.local"), mode == "local")) {
+        mode = "local";
+        g_game_ini.set("online.mode", mode);
+        if (!g_game_ini.save()) toast(tr("launcher.settings.save_failed"));
+    }
+    nav_item();
+    ImGui::Separator();
+    if (mode == "nextendo") {
+        nx::nextendo::set_data_root(g_build.data);
+        nx::nextendo::set_mode_override("nextendo");
+        nx::nextendo::set_client_id_override(g_game_ini.get("online.nextendo.client_id", ""));
+        BuildContents c = build_contents(g_build.data);
+        if (!c.version.empty()) nx::nextendo::set_game_version(c.version);
+        nx::nextendo::load_account();
+        if (!nx::nextendo::version_ok_for_nextendo()) {
+            ImGui::TextWrapped("%s", tr("online.nextendo.need_303"));
+        } else {
+            auto acc = nx::nextendo::account();
+            if (acc.signed_in) {
+                ImGui::TextUnformatted(trf("online.nextendo.signed_in", acc.username).c_str());
+                if (!acc.friend_code.empty())
+                    ImGui::TextUnformatted(trf("online.nextendo.friend_code", acc.friend_code).c_str());
+                if (button(tr("online.nextendo.sign_out"), kWhite)) {
+                    nx::nextendo::sign_out();
+                    toast(tr("online.nextendo.sign_out"));
+                }
+            } else {
+                ImGui::TextWrapped("%s", tr("online.nextendo.desc"));
+                std::string cid = g_game_ini.get("online.nextendo.client_id", "");
+                if (cid.empty()) cid = nx::nextendo::client_id();
+                if (cid.empty()) {
+                    ImGui::TextWrapped("%s", tr("online.nextendo.need_client_id"));
+                    static char client_id_buf[128] = {};
+                    static bool loaded_cid = false;
+                    if (!loaded_cid) {
+                        loaded_cid = true;
+                        std::snprintf(client_id_buf, sizeof client_id_buf, "%s",
+                                      g_game_ini.get("online.nextendo.client_id").c_str());
+                    }
+                    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+                    if (ImGui::InputText("##nx_client", client_id_buf, sizeof client_id_buf)) {
+                        g_game_ini.set("online.nextendo.client_id", client_id_buf);
+                        nx::nextendo::set_client_id_override(client_id_buf);
+                        if (!g_game_ini.save()) toast(tr("launcher.settings.save_failed"));
+                    }
+                    nav_item();
+                }
+                const bool busy = nx::nextendo::sign_in_busy();
+                if (button(tr(busy ? "online.nextendo.signing_in" : "online.nextendo.sign_in"), kMint, !busy))
+                    nx::nextendo::sign_in_start();
+                if (!nx::nextendo::last_error().empty())
+                    ImGui::TextWrapped("%s", nx::nextendo::last_error().c_str());
+            }
+        }
+        ImGui::Separator();
+    }
     bool on = g_game_ini.get("online.enabled", "0") == "1";
     bool enabled_changed = ImGui::Checkbox(tr("online.enabled"), &on);
     nav_item();
