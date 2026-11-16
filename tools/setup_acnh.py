@@ -210,18 +210,18 @@ def msvc_env():
     return env
 
 
-DISCORD = "https://discord.gg/VJW9Dtdu7a"  # where ACNHRecomp-Importer is downloaded
+DISCORD = "https://discord.gg/VJW9Dtdu7a"  # help
 
 
 def from_importer(game):
-    """Whether ACNHRecomp-Importer prepared the folder (and finished): its game.ini says so and .import/complete is
-    there."""
+    """Whether the folder was prepared (and that finished): its game.ini's first line names ACNHRecomp (the launcher's
+    preparation, prepare/, or ACNHRecomp-Importer's) and .import/complete is there."""
     try:
         with open(os.path.join(game, "game.ini"), encoding="utf-8", errors="replace") as f:
             first = f.readline()
     except OSError:
         return False
-    return "ACNHRecomp-Importer" in first and os.path.exists(os.path.join(game, ".import", "complete"))
+    return "ACNHRecomp" in first and os.path.exists(os.path.join(game, ".import", "complete"))
 
 
 def find_game(game):
@@ -238,10 +238,13 @@ def find_game(game):
     exefs = sub_dir("exefs")
     romfs = sub_dir("romfs") or (os.path.join(game, "extract", "romfs") if os.path.isdir(os.path.join(game, "extract", "romfs")) else "")
     if not exefs or not romfs:
-        fail(f"{game} must hold exefs/ and romfs/ (the game's executables and files from your own dump)")
+        fail(f"{game} must hold exefs/ and romfs/ (the game's executables and files from your own dump; a folder "
+             f"prepared with its RomFS in romfs.pak is played by a release's player, not built here: prepare it in place "
+             f"instead, acnh_prepare --in-place)")
     if not from_importer(game):
-        fail(f"{game} was not prepared by ACNHRecomp-Importer. ACNHRecomp only takes game folders the importer "
-             f"prepared: get it on our Discord ({DISCORD}), prepare your game with it, then pass its folder here.")
+        fail(f"{game} is not prepared yet: prepare it first from the ExeFS and RomFS you extracted from your own copy "
+             f"(the launcher's Prepare this folder, or acnh_prepare {game} --in-place), then pass it here. "
+             f"Help: our Discord ({DISCORD}).")
     for m in ("main", "sdk", "subsdk0"):
         f = os.path.join(exefs, m)
         if not os.path.isfile(f):

@@ -213,7 +213,8 @@ const std::vector<fs::path>& mod_roots() {
     return roots;
 }
 
-// The RomFS with the update applied, loose: <data root>/romfs (the game folder ACNHRecomp-Importer prepares) or
+// The RomFS with the update applied, loose: <data root>/romfs (a game folder prepared in place, or by
+// ACNHRecomp-Importer) or
 // <data root>/extract/romfs (a setup's data folder).
 fs::path romfs_root() {
     static const fs::path p = [] {
@@ -447,7 +448,7 @@ void GetEntryType(CPU& c) {  // (DirectoryEntryType* out, path)
     c.x[0] = kOk;
 }
 
-// The RomFS files ACNHRecomp-Importer wrote (.import/index.tsv: kind, size, crc, path from the game folder: romfs/,
+// The RomFS files the preparation wrote or found (.import/index.tsv: kind, size, crc, path from the game folder: romfs/,
 // extract/romfs/ or aoc/<n>/). One of them gone from the folder (an antivirus took it, a copy stopped half way) is said
 // in nx.log, once per file, with what to do: the game asks for it and goes on without it, or crashes later with no sign
 // of why. Read on the first such miss only, kept as sorted hashes of the paths (the RomFS has ~100,000 files).
@@ -492,8 +493,8 @@ void note_lost_file(const fs::path& p) {  // with g_fs held
     static std::set<std::string> told;
     if (!std::binary_search(files.begin(), files.end(), std::hash<std::string>{}(rel)) || !told.insert(rel).second) return;
     log("fs: %s was written when the game was prepared but is no longer in the game folder (an antivirus or an "
-        "unfinished copy may have removed it): run ACNHRecomp-Importer again on this folder with the same game files, "
-        "it writes back only what is missing", rel.c_str());
+        "unfinished copy may have removed it): prepare the game folder again in the ACNHRecomp launcher from the same "
+        "extracted files (a RomFS prepared in place: extract it again), what is right is kept", rel.c_str());
 }
 
 void OpenFile(CPU& c) {  // (FileHandle* out, path, int mode: 1 read, 2 write, 4 append)

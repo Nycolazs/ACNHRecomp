@@ -893,7 +893,7 @@ void game_thread() {
 }  // namespace
 
 int main(int argc, char** argv) {
-    // acnh <game folder>: the folder ACNHRecomp-Importer prepared (else NX_DATA_ROOT, else the setup's data folder)
+    // acnh <game folder>: the prepared game folder (else NX_DATA_ROOT, else the setup's data folder)
     if (argc > 1) setenv("NX_DATA_ROOT", argv[1], 1);
     nx::config_apply();  // config.ini -> NX_* defaults, before anything reads them (config.h)
     if (nx::report_mode()) return 0;

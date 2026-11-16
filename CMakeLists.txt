@@ -200,7 +200,7 @@ if(NOT ANDROID AND NOT NX_GEN_PROBE)
     include(prepare/prepare.cmake)  # the game library's build (gamelib), the stages, acnh_prepare
 endif()
 
-# Desktop: the game's code from the game folder (game/<platform>/lib<game>_game, which ACNHRecomp-Importer builds)
+# Desktop: the game's code from the game folder (game/<platform>/lib<game>_game, which the preparation builds)
 # instead of linked into the executable: the player then only needs the folder.
 option(NX_GAME_FROM_FOLDER "Desktop: load the game's code from the game folder" OFF)
 
