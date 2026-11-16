@@ -2032,6 +2032,7 @@ bool settings_draw(float scale, ImFont* title, float opening) {
             if (g_restart_note && msg == tr("common.restart_needed")) {
                 ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(124, 194, 103, 255));
                 if (ImGui::Button(tr("common.restart_now"))) {
+                    game_clock_save();  // a faster or stopped clock's last seconds (saved every 10 s otherwise)
                     save_settings();
                     plat::restart_app();
                 }
@@ -2072,6 +2073,7 @@ bool settings_draw(float scale, ImFont* title, float opening) {
         const float gap = 12.0f * scale;
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (ImGui::GetContentRegionAvail().x - yes_w - no_w - gap) * 0.5f));
         if (ImGui::Button(tr("common.yes"), ImVec2(yes_w, 0))) {
+            game_clock_save();
             save_settings();
             plat::exit_process(0);
         }
@@ -2085,7 +2087,7 @@ bool settings_draw(float scale, ImFont* title, float opening) {
     if (g_must_quit) ImGui::OpenPopup("must_quit");
     if (ImGui::BeginPopupModal("must_quit", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar)) {
         ImGui::TextWrapped("%s", tr("saves.import.ok"));
-        if (ImGui::Button(tr("common.quit_game"))) plat::exit_process(0);
+        if (ImGui::Button(tr("common.quit_game"))) game_clock_save(), plat::exit_process(0);
         ImGui::EndPopup();
     }
     // Cancel (B / Escape) closes the screen when nothing else wants it (never after an import: see g_must_quit).

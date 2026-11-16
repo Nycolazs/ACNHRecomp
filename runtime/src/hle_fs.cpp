@@ -447,12 +447,17 @@ void GetEntryType(CPU& c) {  // (DirectoryEntryType* out, path)
     c.x[0] = kOk;
 }
 
-// The RomFS files ACNHRecomp-Importer wrote (.import/index.tsv: kind, size, crc, path from the game folder). One of
-// them gone from the folder (an antivirus took it, a copy stopped half way) is said in nx.log, once per file, with what
-// to do: the game asks for it and goes on without it, or crashes later with no sign of why.
-const std::set<std::string>& imported_files() {
-    static const std::set<std::string> files = [] {
-        std::set<std::string> out;
+// The RomFS files ACNHRecomp-Importer wrote (.import/index.tsv: kind, size, crc, path from the game folder: romfs/,
+// extract/romfs/ or aoc/<n>/). One of them gone from the folder (an antivirus took it, a copy stopped half way) is said
+// in nx.log, once per file, with what to do: the game asks for it and goes on without it, or crashes later with no sign
+// of why. Read on the first such miss only, kept as sorted hashes of the paths (the RomFS has ~100,000 files).
+bool game_file_path(const std::string& rel) {
+    return rel.compare(0, 6, "romfs/") == 0 || rel.compare(0, 14, "extract/romfs/") == 0 || rel.compare(0, 4, "aoc/") == 0;
+}
+
+const std::vector<uint64_t>& imported_files() {
+    static const std::vector<uint64_t> files = [] {
+        std::vector<uint64_t> out;
         FILE* f = plat::fopen_utf8(plat::data_root() + "/.import/index.tsv", "rb");
         if (!f) return out;
         char line[4096];
@@ -463,9 +468,13 @@ const std::set<std::string>& imported_files() {
             if (l.compare(0, 6, "romfs\t") != 0 || (t = l.find('\t', t + 1)) == std::string::npos ||
                 (t = l.find('\t', t + 1)) == std::string::npos)
                 continue;
-            out.insert(l.substr(t + 1));
+            std::string rel = l.substr(t + 1);
+            std::replace(rel.begin(), rel.end(), '\\', '/');
+            if (game_file_path(rel)) out.push_back(std::hash<std::string>{}(rel));
         }
         std::fclose(f);
+        std::sort(out.begin(), out.end());
+        log("fs: .import/index.tsv: %zu files of the game, checked when one is missing", out.size());
         return out;
     }();
     return files;
@@ -475,13 +484,16 @@ void note_lost_file(const fs::path& p) {  // with g_fs held
     std::string full = utf8(p), root = utf8(data_root());
     std::replace(full.begin(), full.end(), '\\', '/');
     std::replace(root.begin(), root.end(), '\\', '/');
+    while (!root.empty() && root.back() == '/') root.pop_back();
     if (full.size() <= root.size() + 1 || full.compare(0, root.size(), root) != 0 || full[root.size()] != '/') return;
     const std::string rel = full.substr(root.size() + 1);
+    if (!game_file_path(rel)) return;  // saves, cache: not the import's
+    const auto& files = imported_files();
     static std::set<std::string> told;
-    if (!imported_files().count(rel) || !told.insert(rel).second) return;
+    if (!std::binary_search(files.begin(), files.end(), std::hash<std::string>{}(rel)) || !told.insert(rel).second) return;
     log("fs: %s was written when the game was prepared but is no longer in the game folder (an antivirus or an "
-        "unfinished copy may have removed it): run ACNHRecomp-Importer again on this folder, it writes back only what "
-        "is missing", rel.c_str());
+        "unfinished copy may have removed it): run ACNHRecomp-Importer again on this folder with the same game files, "
+        "it writes back only what is missing", rel.c_str());
 }
 
 void OpenFile(CPU& c) {  // (FileHandle* out, path, int mode: 1 read, 2 write, 4 append)
