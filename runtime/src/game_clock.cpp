@@ -46,11 +46,11 @@ void speed_ticker() {
         // time, offset + steady clock, then moves when the clocks below are rewritten, not a second before (which
         // would make a stopped clock read X, X+1, X).
         const uint64_t now = plat::monotonic_ns();
-        std::this_thread::sleep_for(std::chrono::nanoseconds((now / 1000000000ull + 1) * 1000000000ull + 2000000ull - now));
-        const int k = g_speed.load(std::memory_order_relaxed);
+        std::this_thread::sleep_for(std::chrono::nanoseconds((now / 1000000000ull + 1) * 1000000000ull + 100000ull - now));
         bool save = false;
         {
             std::lock_guard lk(g_mu);
+            const int k = g_speed.load(std::memory_order_acquire);  // under the lock: a reload can't slip in between
             const bool online = nextendo::online_services_active();
             if (k == 0) {
                 const int64_t real = game_clock_real_unix_seconds();
@@ -104,7 +104,7 @@ int64_t game_clock_real_unix_seconds() {
 
 int64_t game_clock_unix_seconds() {
     // stopped: the moment itself, not real time + an offset last worked out up to a second ago
-    if (g_speed.load(std::memory_order_relaxed) == 0) return g_frozen.load(std::memory_order_relaxed);
+    if (g_speed.load(std::memory_order_acquire) == 0) return g_frozen.load(std::memory_order_relaxed);
     return game_clock_real_unix_seconds() + g_offset.load(std::memory_order_relaxed);
 }
 
@@ -131,11 +131,11 @@ void game_clock_apply_config() {
         g_frozen.store(at.empty() ? real + offset : std::strtoll(at.c_str(), nullptr, 10));
         offset = g_frozen.load() - real;
         config_set("game.clock_frozen_at", std::to_string(g_frozen.load()));
-    } else if (!config_get("game.clock_frozen_at").empty()) {
+    } else if (!s_override && !config_get("game.clock_frozen_at").empty()) {
         config_set("game.clock_frozen_at", "");  // a moment from an earlier stop must not come back
     }
     g_offset.store(offset, std::memory_order_relaxed);
-    g_speed.store(speed, std::memory_order_relaxed);
+    g_speed.store(speed, std::memory_order_release);  // after g_frozen: a reader that sees 0 sees the moment
     if (speed != 1) {
         static std::once_flag started;
         std::call_once(started, [] { std::thread(speed_ticker).detach(); });
