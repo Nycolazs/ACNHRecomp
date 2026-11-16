@@ -69,10 +69,24 @@ float g_w = 1, g_h = 1;
 bool g_gamepad = false;  // the last input came from a controller: the drawn touch controls hide
 bool g_pad_connected = false;  // a controller is connected (platform_android.cpp polls the system's input devices)
 
+// Settings > Controls > Confirm / cancel buttons (input.layout), as on the other hosts (platform_sdl.cpp): "console"
+// keeps the game's A on the right face button, "xbox" puts it on the bottom one. Read again when the config changes.
+bool xbox_layout() {
+    static uint64_t gen = ~0ull;
+    static bool xbox = false;
+    if (uint64_t g = config_generation(); g != gen) {
+        gen = g;
+        xbox = config_get("input.layout", "console") == "xbox";
+    }
+    return xbox;
+}
+
 uint64_t key_to_button(int32_t k) {
     switch (k) {
-        case AKEYCODE_BUTTON_A: return kB;  // bottom face button = Nintendo B
-        case AKEYCODE_BUTTON_B: return kA;  // right face button = Nintendo A
+        // Android names the face buttons by position, as Xbox labels them: BUTTON_A is the bottom one, BUTTON_B the
+        // right one. Console layout: bottom = Nintendo B, right = Nintendo A; Xbox layout: the other way round.
+        case AKEYCODE_BUTTON_A: return xbox_layout() ? kA : kB;
+        case AKEYCODE_BUTTON_B: return xbox_layout() ? kB : kA;
         case AKEYCODE_BUTTON_X: return kY;
         case AKEYCODE_BUTTON_Y: return kX;
         case AKEYCODE_BUTTON_L1: return kL;
@@ -107,6 +121,9 @@ int32_t on_input(android_app*, AInputEvent* e) {
     int32_t type = AInputEvent_getType(e);
     int32_t src = AInputEvent_getSource(e);
     if (type == AINPUT_EVENT_TYPE_KEY) {
+        // The layout changed (the settings screen) while A or B was held: its release now names the other button.
+        static bool layout_was = xbox_layout();
+        if (xbox_layout() != layout_was) layout_was = !layout_was, g_pad_buttons.buttons &= ~(kA | kB);
         uint64_t b = key_to_button(AKeyEvent_getKeyCode(e));
         if (!b) return 0;
         g_gamepad = true;
