@@ -447,6 +447,43 @@ void GetEntryType(CPU& c) {  // (DirectoryEntryType* out, path)
     c.x[0] = kOk;
 }
 
+// The RomFS files ACNHRecomp-Importer wrote (.import/index.tsv: kind, size, crc, path from the game folder). One of
+// them gone from the folder (an antivirus took it, a copy stopped half way) is said in nx.log, once per file, with what
+// to do: the game asks for it and goes on without it, or crashes later with no sign of why.
+const std::set<std::string>& imported_files() {
+    static const std::set<std::string> files = [] {
+        std::set<std::string> out;
+        FILE* f = plat::fopen_utf8(plat::data_root() + "/.import/index.tsv", "rb");
+        if (!f) return out;
+        char line[4096];
+        while (std::fgets(line, sizeof line, f)) {
+            std::string l = line;
+            while (!l.empty() && (l.back() == '\n' || l.back() == '\r')) l.pop_back();
+            size_t t = l.find('\t');
+            if (l.compare(0, 6, "romfs\t") != 0 || (t = l.find('\t', t + 1)) == std::string::npos ||
+                (t = l.find('\t', t + 1)) == std::string::npos)
+                continue;
+            out.insert(l.substr(t + 1));
+        }
+        std::fclose(f);
+        return out;
+    }();
+    return files;
+}
+
+void note_lost_file(const fs::path& p) {  // with g_fs held
+    std::string full = utf8(p), root = utf8(data_root());
+    std::replace(full.begin(), full.end(), '\\', '/');
+    std::replace(root.begin(), root.end(), '\\', '/');
+    if (full.size() <= root.size() + 1 || full.compare(0, root.size(), root) != 0 || full[root.size()] != '/') return;
+    const std::string rel = full.substr(root.size() + 1);
+    static std::set<std::string> told;
+    if (!imported_files().count(rel) || !told.insert(rel).second) return;
+    log("fs: %s was written when the game was prepared but is no longer in the game folder (an antivirus or an "
+        "unfinished copy may have removed it): run ACNHRecomp-Importer again on this folder, it writes back only what "
+        "is missing", rel.c_str());
+}
+
 void OpenFile(CPU& c) {  // (FileHandle* out, path, int mode: 1 read, 2 write, 4 append)
     std::lock_guard lk(g_fs);
     std::string guest = cstr(c.x[1]);
@@ -489,6 +526,7 @@ void OpenFile(CPU& c) {  // (FileHandle* out, path, int mode: 1 read, 2 write, 4
     if (p.empty() || !fs::is_regular_file(p, ec)) {
         note_open("OpenFile", guest, p.empty() ? "unknown mount" : "not found");
         if (trace_fs() || (mode & 2)) log("fs: OpenFile(%s, %d) not found", guest.c_str(), mode);
+        if (!p.empty()) note_lost_file(p);
         c.x[0] = kPathNotFound;
         return;
     }
