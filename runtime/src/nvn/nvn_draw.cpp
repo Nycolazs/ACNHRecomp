@@ -200,6 +200,13 @@ void begin_rendering(VkCommandBuffer cb, const Targets& t) {
         // A worker of the parallel replay renders only into images already rendered (GENERAL): the first time is the
         // replay thread's (docs/PARALLEL_REPLAY.md).
         if ((img->layout != VK_IMAGE_LAYOUT_GENERAL || !img->rendered) && worker_bail("target not rendered yet")) continue;
+        // CPU texel writes queued before this pass land first. Applied later (at the next sample or copy) they wiped
+        // what the pass drew: ACNH clears its Slumber Island map with WriteTexels, draws it, then copies it out for
+        // the JPEG thumbnail, which came out black.
+        if (Texture* tex = get<Texture>(t.colors[k]); tex && tex->has_writes.load(std::memory_order_acquire)) {
+            if (worker_bail("target has texel writes")) continue;
+            apply_texel_writes(cb, *tex, *img);
+        }
         if (img->layout == VK_IMAGE_LAYOUT_UNDEFINED && !load_undefined) fresh |= 1u << k;
         transition(cb, *img, VK_IMAGE_LAYOUT_GENERAL);  // rendered images stay GENERAL (sampled while rendered)
         if (!img->rendered) img->rendered = true;

@@ -163,6 +163,8 @@ VkImageView sampled_view(VkCommandBuffer cb, uint64_t texture, const ImageShape&
 // The image behind a texture with its contents in place (uploaded, CPU writes applied, never-written ones cleared);
 // null for an unknown texture. Records transfers: outside render passes.
 GpuImage* ensure_contents(VkCommandBuffer cb, uint64_t texture);
+// Pending nvnTextureWriteTexels regions into the image now (a transfer: outside render passes).
+void apply_texel_writes(VkCommandBuffer cb, Texture& t, GpuImage& img);
 // nvn_upload.cpp: the texture's pool memory untiled (or taken row by row, pitch-linear) into the image, every level
 // and layer; cleared instead when the copies would read past what was staged. Marks it uploaded.
 // [lo, hi): the bytes of a texture already uploaded that changed (pitch-linear ones send only their rows).
