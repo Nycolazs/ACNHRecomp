@@ -29,11 +29,14 @@ struct RomfsPakLayout {
 
 // The pack's index and size without writing it. `exclude_root`: names at the RomFS's top left out (a folder that
 // holds the ExeFS's files beside the RomFS's, inputs.h Layout::Mixed); empty for pack_romfs.py's exact output.
+// `skip_packages`: game packages (inputs.h is_game_package: files, and folders such as yuzu's NCA ones) left out
+// wherever they are, never read; no RomFS of the game has one.
 bool romfs_pak_layout(const std::string& romfs_dir, RomfsPakLayout& out, std::string& error,
-                      const std::vector<std::string>& exclude_root = {});
+                      const std::vector<std::string>& exclude_root = {}, bool skip_packages = false);
 
 struct RomfsPakOptions : PakOptions {
     std::vector<std::string> exclude_root;
+    bool skip_packages = false;
 };
 
 // Writes <out_path>.part, then renames it to out_path. The files are streamed, never held whole in memory.

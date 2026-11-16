@@ -3,8 +3,10 @@
 // the RomFS of add-on content. probe() finds them in the folders picked and says everything that is wrong, before
 // anything is written.
 //
-// ACNHRecomp never reads NSP, XCI, NSZ, XCZ or NCA files and never uses console keys: a folder that holds such a file
-// is refused with the advice to extract the ExeFS and RomFS with the emulator. Nothing here decrypts.
+// ACNHRecomp never reads NSP, XCI, NSZ, XCZ or NCA files and never uses console keys: such a file picked is refused
+// with the advice to extract the ExeFS and RomFS with the emulator; one lying in a folder picked (beside the extracted
+// ExeFS and RomFS, where players keep the game) is a warning, left alone, never opened and never packed. Nothing here
+// decrypts.
 //
 // Layouts accepted:
 //   Parent        one folder holding exefs/ and romfs/ (any case; or extract/romfs/), and aoc/<index>/ for add-ons;
@@ -65,7 +67,9 @@ struct RomfsInfo {
 
 struct DlcInfo {
     std::string path;   // the add-on's RomFS folder
-    int index = -1;     // aoc/<index>/ in the game folder; -1: unknown, ask the player
+    // aoc/<index>/ in the game folder: the player's choice (ProbeOptions::dlc_index), else from the path, else 1 (ACNH
+    // has one paid add-on, Happy Home Paradise) with the warning prepare.dlc.unknown_index
+    int index = -1;
     uint64_t title_id = 0;  // from the path, 0 when it names none
     uint64_t files = 0, bytes = 0;
 };
@@ -90,6 +94,7 @@ struct ProbeResult {
 
 struct ProbeOptions {
     std::vector<std::string> dlc;  // folders the player picked as add-on content (one RomFS each)
+    std::vector<int> dlc_index;    // the index the player chose for dlc[i] (1-4095; -1 or none: from the path)
     bool verify_nso = true;        // decompress the modules and check their SHA-256 (else the headers only)
     bool walk_romfs = true;        // count every RomFS file (seconds on a phone's shared storage); else its top only
     // A complete RomFS of 3.0.x has about 103,000 files and 10.5 GB (docs/ACNH.md): fewer is said, as a warning (a
@@ -108,6 +113,9 @@ struct KnownVersion {
     std::string build_id, version;
 };
 std::vector<KnownVersion> known_versions(const std::string& text = "");
+
+// Whether a file's name is a game package's (.nsp, .xci, .xc0, .nsz, .xcz, .nca, any case): never read.
+bool is_game_package(const std::string& name);
 
 // The add-on index a path names: the last three hex digits of a 01006F8002327xxx title id in the folder's name (or
 // its parent's, for <title>/romfs), else <...>/aoc/<n>; -1 when none. `title_id` gets the title found (0 none).

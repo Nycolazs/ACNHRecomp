@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <system_error>
 
+#include "inputs.h"
 #include "io_util.h"
 
 namespace nx::prepare {
@@ -40,7 +41,7 @@ std::string index_bytes(const RomfsPakLayout& l) {
 }  // namespace
 
 bool romfs_pak_layout(const std::string& romfs_dir, RomfsPakLayout& out, std::string& error,
-                      const std::vector<std::string>& exclude_root) {
+                      const std::vector<std::string>& exclude_root, bool skip_packages) {
     out = {};
     std::error_code ec;
     const fs::path root = u8(romfs_dir);
@@ -53,6 +54,10 @@ bool romfs_pak_layout(const std::string& romfs_dir, RomfsPakLayout& out, std::st
         if (ec) return error = romfs_dir + ": " + ec.message(), false;
         const fs::directory_entry& e = *it;
         const bool link = e.is_symlink(ec);
+        if (skip_packages && is_game_package(str(e.path().filename()))) {
+            if (e.is_directory(ec)) it.disable_recursion_pending();
+            continue;
+        }
         if (e.is_directory(ec)) {
             if (link) it.disable_recursion_pending();
             if (it.depth() == 0 && std::find(exclude_root.begin(), exclude_root.end(), str(e.path().filename())) !=
@@ -88,7 +93,7 @@ bool romfs_pak_layout(const std::string& romfs_dir, RomfsPakLayout& out, std::st
 PakResult write_romfs_pak(const std::string& romfs_dir, const std::string& out_path, const RomfsPakOptions& opt) {
     PakResult r;
     RomfsPakLayout l;
-    if (!romfs_pak_layout(romfs_dir, l, r.error, opt.exclude_root)) return r;
+    if (!romfs_pak_layout(romfs_dir, l, r.error, opt.exclude_root, opt.skip_packages)) return r;
     detail::PakOut out(out_path);
     if (!out.open(r.error)) return r;
     const std::string index = index_bytes(l);

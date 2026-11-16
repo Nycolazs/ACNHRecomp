@@ -53,6 +53,10 @@ const Text kTexts[] = {
      "{} is a game package (NSP, XCI, NSZ, XCZ or NCA). ACNHRecomp does not read those: extract the ExeFS and RomFS "
      "with your emulator (Ryujinx: right-click the game, Extract Data; yuzu or Eden: Dump RomFS, and Dump ExeFS in "
      "the debug settings), then pick the folders it wrote"},
+    {"prepare.input.container_ignored", Severity::Warning,
+     "{} is a game package (NSP, XCI, NSZ, XCZ or NCA): ACNHRecomp never reads those and leaves it where it is. The "
+     "game is prepared from the extracted ExeFS and RomFS only (to extract them: Ryujinx, right-click the game, "
+     "Extract Data; yuzu or Eden, Dump RomFS, and Dump ExeFS in the debug settings)"},
     {"prepare.input.layout", Severity::Error,
      "{} holds neither an ExeFS (main, sdk, subsdk0, main.npdm) nor a RomFS (Shader, Bcsv, ...), nor exefs and romfs "
      "folders"},
@@ -109,7 +113,9 @@ const Text kTexts[] = {
     {"prepare.dlc.other_title", Severity::Error,
      "{} is the content of another title ({}), not an add-on of Animal Crossing: New Horizons"},
     {"prepare.dlc.unknown_index", Severity::Warning,
-     "Which add-on {} holds cannot be told from its folder's name: choose its number"},
+     "Which add-on {} holds cannot be told from its folder's name: it is taken as add-on 1 (Happy Home Paradise, the "
+     "game's one paid add-on). If it is another, name its folder after its title (01006F8002327xxx) or choose its "
+     "number"},
     {"prepare.dlc.duplicate", Severity::Error, "{} and {} are both add-on {}"},
     {"prepare.dlc.summary", Severity::Info, "Add-on {}: {} files, {}"},
 };
@@ -151,9 +157,7 @@ bool has_ext(const std::string& name, const char* const* exts, size_t n) {
     }
     return false;
 }
-bool is_container(const std::string& name) {
-    return has_ext(name, kContainerExts, sizeof kContainerExts / sizeof *kContainerExts);
-}
+bool is_container(const std::string& name) { return is_game_package(name); }
 
 // The entry of `dir` named `name` in any case ("exefs", "ExeFS"), of that kind; empty when none.
 fs::path child(const fs::path& dir, const std::string& name, bool want_dir) {
@@ -212,7 +216,8 @@ struct Walk {
     std::string error;
 };
 
-// Every file under `dir` (as romfs_pak.h packs them: links to folders not entered), but `exclude_root` at its top.
+// Every file under `dir` (as romfs_pak.h packs them with skip_packages: links to folders not entered, game packages
+// left out), but `exclude_root` at its top.
 Walk walk(const fs::path& dir, const std::vector<std::string>& exclude_root) {
     Walk w;
     std::error_code ec;
@@ -222,8 +227,12 @@ Walk walk(const fs::path& dir, const std::vector<std::string>& exclude_root) {
         const std::string name = str(e.path().filename());
         const bool excluded =
             it.depth() == 0 && std::find(exclude_root.begin(), exclude_root.end(), name) != exclude_root.end();
-        if (is_container(name) && !excluded && w.containers.size() < 8) w.containers.push_back(str(e.path()));
         std::error_code e2;
+        if (is_container(name) && !excluded) {  // never read, nor packed (romfs_pak.h: skip_packages)
+            if (w.containers.size() < 8) w.containers.push_back(str(e.path()));
+            if (e.is_directory(e2)) it.disable_recursion_pending();
+            continue;
+        }
         if (e.is_directory(e2)) {
             if (excluded || e.is_symlink(e2)) it.disable_recursion_pending();
             if (!excluded) w.dirs++;
@@ -274,7 +283,8 @@ public:
         r_.messages.push_back(std::move(m));
     }
 
-    // A picked path: a file is refused (a package with the advice to extract it), a folder's packages too.
+    // A picked path: a file is refused (a package with the advice to extract it); the packages in a folder are only
+    // said (check_containers).
     bool check_pick(const fs::path& p) {
         std::error_code ec;
         if (!fs::exists(p, ec)) return add("prepare.input.missing", {str(p)}, str(p)), false;
@@ -282,29 +292,31 @@ public:
             if (is_container(str(p.filename()))) return add("prepare.input.container", {str(p.filename())}, str(p)), false;
             return add("prepare.input.not_folder", {str(p)}, str(p)), false;
         }
-        return check_containers(p);
+        check_containers(p);
+        return true;
     }
 
-    // The game packages at the top of `dir`: each refused.
-    bool check_containers(const fs::path& dir) {
-        if (dir.empty() || !checked_.insert(str(dir)).second) return true;
-        bool ok = true;
+    // The game packages at the top of `dir`: each said (a warning) and left alone, never opened. One lying beside the
+    // extracted ExeFS and RomFS (where the player keeps the game) does not stop the preparation.
+    void check_containers(const fs::path& dir) {
+        if (dir.empty() || !checked_.insert(str(dir)).second) return;
         std::error_code ec;
         for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
             const std::string n = str(it->path().filename());
-            if (is_container(n)) add("prepare.input.container", {n}, str(it->path())), ok = false;
+            if (is_container(n)) add("prepare.input.container_ignored", {n}, str(it->path()));
         }
-        return ok;
     }
 
     void run(const std::vector<std::string>& paths) {
         std::vector<fs::path> game;
-        std::vector<std::string> dlc = opt_.dlc;
+        std::vector<std::pair<std::string, int>> dlc;
+        for (size_t i = 0; i < opt_.dlc.size(); i++)
+            dlc.push_back({opt_.dlc[i], i < opt_.dlc_index.size() ? opt_.dlc_index[i] : -1});
         for (const std::string& s : paths) {
             uint64_t id = 0;
             dlc_index_from_path(s, &id);
             if ((id & ~0xFFFull) == kAocBase)
-                dlc.push_back(s);  // names an add-on's title: its content, whatever the order of the picks
+                dlc.push_back({s, -1});  // names an add-on's title: its content, whatever the order of the picks
             else
                 game.push_back(u8(s));
         }
@@ -322,7 +334,7 @@ public:
         if (!romfs_.empty() || !pak_.empty()) check_romfs();
         if (!exefs_.empty() && (!romfs_.empty() || !pak_.empty()))
             add("prepare.input.found", {str(exefs_), str(romfs_.empty() ? pak_ : romfs_)});
-        for (const std::string& d : dlc) dlc_paths_.push_back(u8(d));
+        for (const auto& [d, index] : dlc) dlc_paths_.push_back({u8(d), index});
         check_dlc();
         r_.ok = r_.count(Severity::Error) == 0;
     }
@@ -345,7 +357,7 @@ private:
             for (fs::directory_iterator it(aoc, ec), end; !ec && it != end; it.increment(ec)) {
                 const std::string n = str(it->path().filename());
                 if (it->is_directory(ec) && !n.empty() && n.find_first_not_of("0123456789") == std::string::npos)
-                    dlc_paths_.push_back(it->path());
+                    dlc_paths_.push_back({it->path(), -1});
             }
         const std::vector<uint64_t> ids = title_ids(str(d.filename()));
         if (!ids.empty() && ids[0] == kAcnhProgramId) dump_addons(d.parent_path());
@@ -358,7 +370,7 @@ private:
         for (fs::directory_iterator it(dump, ec), end; !ec && it != end; it.increment(ec)) {
             const std::vector<uint64_t> ids = title_ids(str(it->path().filename()));
             if (ids.size() == 1 && (ids[0] & ~0xFFFull) == kAocBase && it->is_directory(ec))
-                dlc_paths_.push_back(it->path());
+                dlc_paths_.push_back({it->path(), -1});
         }
     }
 
@@ -556,7 +568,7 @@ private:
         if (opt_.walk_romfs) {
             Walk w = walk(romfs_, info.exclude_root);
             if (!w.error.empty()) return add("prepare.romfs.unreadable", {w.error}, info.path);
-            for (const std::string& c : w.containers) add("prepare.input.container", {str(u8(c).filename())}, c);
+            for (const std::string& c : w.containers) add("prepare.input.container_ignored", {str(u8(c).filename())}, c);
             info.files = w.files, info.dirs = w.dirs, info.bytes = w.bytes, info.empty_files = w.empty;
             info.walked = true;
         } else {
@@ -600,7 +612,7 @@ private:
     void check_dlc() {
         std::set<std::string> seen;
         std::map<int, std::string> by_index;
-        for (const fs::path& picked : dlc_paths_) {
+        for (const auto& [picked, chosen] : dlc_paths_) {
             std::error_code ec;
             const std::string ps = str(picked);
             const std::string canon = str(fs::weakly_canonical(picked, ec));
@@ -634,12 +646,13 @@ private:
                 continue;
             }
             if (d.index == 0) d.index = -1;  // 01006F8002327000 is no add-on
+            if (chosen > 0) d.index = chosen;  // the player's choice wins over the path
             Walk w = walk(dir, {});
             if (!w.error.empty()) {
                 add("prepare.dlc.unreadable", {w.error}, d.path);
                 continue;
             }
-            for (const std::string& c : w.containers) add("prepare.input.container", {str(u8(c).filename())}, c);
+            for (const std::string& c : w.containers) add("prepare.input.container_ignored", {str(u8(c).filename())}, c);
             d.files = w.files, d.bytes = w.bytes;
             if (w.files == 0 && w.dirs == 0) {
                 add("prepare.dlc.empty", {d.path}, d.path);
@@ -649,9 +662,11 @@ private:
                 add("prepare.dlc.skeleton", {d.path}, d.path);
                 continue;
             }
-            if (d.index < 0) {
+            if (d.index < 0) {  // ACNH has one paid add-on (Happy Home Paradise, 01006F8002327001)
                 add("prepare.dlc.unknown_index", {d.path}, d.path);
-            } else if (auto it = by_index.find(d.index); it != by_index.end()) {
+                d.index = 1;
+            }
+            if (auto it = by_index.find(d.index); it != by_index.end()) {
                 add("prepare.dlc.duplicate", {it->second, d.path, std::to_string(d.index)}, d.path);
                 continue;
             } else {
@@ -667,7 +682,7 @@ private:
     ProbeResult& r_;
     fs::path exefs_, romfs_, pak_;
     uint64_t key_present_ = 0, key_empty_ = 0;  // kKeyFiles there, and empty (walk_romfs off)
-    std::vector<fs::path> dlc_paths_;
+    std::vector<std::pair<fs::path, int>> dlc_paths_;  // and the index the player chose (-1: from the path)
     std::set<std::string> checked_;  // folders whose top was checked for packages
 };
 
@@ -734,6 +749,10 @@ int dlc_index_from_path(const std::string& path, uint64_t* title_id) {
         n.find_first_not_of("0123456789") == std::string::npos)
         return std::stoi(n);
     return -1;
+}
+
+bool is_game_package(const std::string& name) {
+    return has_ext(name, kContainerExts, sizeof kContainerExts / sizeof *kContainerExts);
 }
 
 ProbeResult probe(const std::vector<std::string>& paths, const ProbeOptions& opt) {

@@ -203,6 +203,12 @@ static bool args_are(const ProbeResult& r, const char* key, std::vector<std::str
     const Message* m = r.find(key);
     return m && m->args == args;
 }
+// Any of the messages of that key with these arguments.
+static bool any_args(const ProbeResult& r, const char* key, std::vector<std::string> args) {
+    for (const Message& m : r.messages)
+        if (m.key == key && m.args == args) return true;
+    return false;
+}
 
 // ---- the cases --------------------------------------------------------------------------------------------------
 
@@ -401,28 +407,47 @@ static void test_containers() {
     const fs::path d = g_tmp / "containers";
     make_exefs(d / "exefs", g_ids["3.0.3"]);
     make_romfs(d / "romfs");
+    const uint64_t files = probe({s(d)}, quiet()).romfs.files;
+    // A package beside the extracted ExeFS and RomFS: said, left alone, the preparation goes on.
     write_text(d / "Animal Crossing [01006F8002326000].NSP", "PFS0");
     ProbeResult r = probe({s(d)}, quiet());
-    CHECK(!r.ok && args_are(r, "prepare.input.container", {"Animal Crossing [01006F8002326000].NSP"}));
-    CHECK(r.find("prepare.input.container")->text.find("extract the ExeFS and RomFS with your emulator") != std::string::npos);
+    if (!r.ok) dump(r);
+    CHECK(r.ok && args_are(r, "prepare.input.container_ignored", {"Animal Crossing [01006F8002326000].NSP"}));
+    CHECK(r.find("prepare.input.container_ignored")->severity == Severity::Warning);
+    CHECK(r.find("prepare.input.container_ignored")->text.find("never reads") != std::string::npos);
+    CHECK(!r.has("prepare.input.container"));
     fs::remove(d / "Animal Crossing [01006F8002326000].NSP");
-    CHECK(probe({s(d)}, quiet()).ok);
-    // A package picked itself, one in the RomFS, a split XCI's first part, an NCA folder (yuzu's registered/).
+    CHECK(probe({s(d)}, quiet()).ok && !probe({s(d)}, quiet()).has("prepare.input.container_ignored"));
+    // A package picked itself: refused, with the advice to extract it.
     write_text(g_tmp / "game.xci", "HEAD");
     r = probe({s(g_tmp / "game.xci")}, quiet());
     CHECK(!r.ok && args_are(r, "prepare.input.container", {"game.xci"}));
+    CHECK(r.find("prepare.input.container")->text.find("extract the ExeFS and RomFS with your emulator") != std::string::npos);
+    // One in the RomFS, a split XCI's first part in the ExeFS, an NCA folder (yuzu's registered/): said, never counted
+    // nor packed.
     write_text(d / "romfs" / "Model" / "deep" / "x.nca", "NCA3");
-    r = probe({s(d)}, quiet());
-    CHECK(!r.ok && args_are(r, "prepare.input.container", {"x.nca"}));
-    fs::remove(d / "romfs" / "Model" / "deep" / "x.nca");
+    write_text(d / "romfs" / "Model" / "deep" / "kept.bin", "kept");
     write_text(d / "exefs" / "game.xc0", "");
-    r = probe({s(d)}, quiet());
-    CHECK(!r.ok && args_are(r, "prepare.input.container", {"game.xc0"}));
-    fs::remove(d / "exefs" / "game.xc0");
     fs::create_directories(d / "0123abcd.nca");
+    write_text(d / "romfs" / "Pack" / "y.nca" / "00", "inside a package folder");
     r = probe({s(d)}, quiet());
-    CHECK(!r.ok && args_are(r, "prepare.input.container", {"0123abcd.nca"}));
+    if (!r.ok) dump(r);
+    CHECK(r.ok && any_args(r, "prepare.input.container_ignored", {"x.nca"}));
+    CHECK(r.ok && any_args(r, "prepare.input.container_ignored", {"game.xc0"}));
+    CHECK(r.ok && any_args(r, "prepare.input.container_ignored", {"0123abcd.nca"}));
+    CHECK(r.ok && any_args(r, "prepare.input.container_ignored", {"y.nca"}));
+    CHECK(r.romfs.files == files + 1);  // kept.bin only
+    RomfsPakLayout pl;
+    std::string perr;
+    CHECK(romfs_pak_layout(s(d / "romfs"), pl, perr, {}, true) && pl.files.size() == files + 1);
+    for (const RomfsPakEntry& e : pl.files) CHECK(e.path.find(".nca") == std::string::npos);
+    CHECK(romfs_pak_layout(s(d / "romfs"), pl, perr) && pl.files.size() == files + 3);  // pack_romfs.py's: everything
+    CHECK(is_game_package("A.NSP") && is_game_package("b.xcz") && !is_game_package("nsp") && !is_game_package("x.bin"));
+    fs::remove(d / "romfs" / "Model" / "deep" / "x.nca");
+    fs::remove(d / "romfs" / "Model" / "deep" / "kept.bin");
+    fs::remove(d / "exefs" / "game.xc0");
     fs::remove(d / "0123abcd.nca");
+    fs::remove_all(d / "romfs" / "Pack" / "y.nca");
     // Not a folder, not there.
     write_text(g_tmp / "notes.txt", "x");
     CHECK(probe({s(g_tmp / "notes.txt")}, quiet()).has("prepare.input.not_folder"));
@@ -523,9 +548,25 @@ static void test_dlc() {
     if (!r.ok) dump(r);
     CHECK(r.ok && r.layout == Layout::Parent && r.dlc.size() == 2);
     CHECK(r.has("prepare.dlc.unknown_index") && r.find("prepare.dlc.unknown_index")->severity == Severity::Warning);
+    CHECK(r.find("prepare.dlc.unknown_index")->text.find("add-on 1") != std::string::npos);
     bool idx2 = false, unknown = false;
-    for (const DlcInfo& d : r.dlc) idx2 |= d.index == 2 && d.path == s(tid), unknown |= d.index == -1 && d.path == s(hhp);
-    CHECK(idx2 && unknown);
+    for (const DlcInfo& d : r.dlc) idx2 |= d.index == 2 && d.path == s(tid), unknown |= d.index == 1 && d.path == s(hhp);
+    CHECK(idx2 && unknown);  // no index in its name: add-on 1, the game's one paid add-on
+    // The index the player chose, over the path's; two with no index are both add-on 1.
+    o.dlc = {s(hhp), s(tid)};
+    o.dlc_index = {3, 4};
+    r = probe({s(g)}, o);
+    if (!r.ok) dump(r);
+    CHECK(r.ok && r.dlc.size() == 2 && !r.has("prepare.dlc.unknown_index"));
+    CHECK(r.dlc.size() == 2 && r.dlc[0].index == 3 && r.dlc[1].index == 4);
+    const fs::path other = g_tmp / "Other DLC";
+    write_file(other / "Layout" / "c.bin", pattern(30, 3));
+    o.dlc = {s(hhp), s(other)};
+    o.dlc_index = {};
+    r = probe({s(g)}, o);
+    CHECK(!r.ok && r.has("prepare.dlc.duplicate") && args_are(r, "prepare.dlc.duplicate", {s(hhp), s(other), "1"}));
+    o.dlc_index = {-1, 2};
+    CHECK(probe({s(g)}, o).ok);
     // A game folder's aoc/<index>/.
     write_file(g / "aoc" / "1" / "Model" / "x.bin", pattern(30, 2));
     r = probe({s(g)}, quiet());
