@@ -751,8 +751,13 @@ float default_render_scale() {
             props(pd, &p);
             std::string name = p.deviceName;
             int adreno = 0, mali = 0;
-            std::sscanf(name.c_str() + (name.find("Adreno") != std::string::npos ? name.find("Adreno") : name.size()),
-                        "Adreno (TM) %d", &adreno);
+            // "Adreno (TM) 740" (the phone's driver), "Turnip Adreno (TM) 740" or "Adreno 7c+ Gen 3" (Turnip's names)
+            if (size_t a = name.find("Adreno"); a != std::string::npos) {
+                const char* p = name.c_str() + a + 6;
+                while (*p == ' ') p++;
+                if (std::strncmp(p, "(TM)", 4) == 0) p += 4;
+                std::sscanf(p, "%d", &adreno);
+            }
             if (auto m = name.find("Mali-G"); m != std::string::npos) std::sscanf(name.c_str() + m, "Mali-G%d", &mali);
             // Names that aren't a three-digit model: Adreno "7c+ Gen 3" / "8cx" (the compute parts, about a 6xx),
             // read as 7 or 8; Arm's 2025 Mali-G1 (-Ultra: high end, -Premium / -Pro: mid), read as 1.
