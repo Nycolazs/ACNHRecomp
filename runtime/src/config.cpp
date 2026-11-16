@@ -377,7 +377,9 @@ bool config_save() {
         std::error_code ec;
         std::filesystem::rename(std::filesystem::u8path(tmp), std::filesystem::u8path(path()), ec);
         ok = !ec;
-        if (ec) log("config: cannot replace %s (%s): settings are not saved", path().c_str(), ec.message().c_str());
+        static int logged_rename = 0;  // once per reason: the faster clock saves every 10 s
+        if (ec && logged_rename != ec.value())
+            logged_rename = ec.value(), log("config: cannot replace %s (%s): settings are not saved", path().c_str(), ec.message().c_str());
     }
     return ok;
 }

@@ -884,18 +884,6 @@ void* load_vulkan() {
     char vk[PROP_VALUE_MAX] = {};
     __system_property_get("ro.hardware.vulkan", vk);
     const std::string turnip = g_native_lib_dir + "/libvulkan_freedreno.so";
-    if (pick == "auto" && std::strcmp(vk, "adreno") == 0) {
-        // Adreno 8xx (Snapdragon 8 Elite and newer): the Turnip in the APK draws only coloured noise there (Adreno 830
-        // and 840 players), while the phone's own driver is Vulkan 1.4 and draws the game, with framebuffer
-        // compression and zero copy off (what those players found working; config.txt can still turn them on).
-        int model = system_adreno_model(dlopen("libvulkan.so", RTLD_NOW | RTLD_LOCAL));
-        if (model >= 800) {
-            nx::log("vulkan: Adreno %d: the phone's driver (Turnip is for Adreno 6xx/7xx)", model);
-            pick = "system";
-            setenv("NX_UBWC_FLAGS", "0", 0);
-            setenv("NX_ZERO_COPY", "0", 0);
-        }
-    }
     if (pick == "custom") {
         // A driver the player chose (issue #47): the first .so in <game folder>/drivers/, e.g. a newer Turnip build's
         // libvulkan_freedreno.so. Shared storage cannot hold code that runs, so it is copied into the app's own
@@ -910,6 +898,19 @@ void* load_vulkan() {
             nx::log("vulkan: the custom driver %s finds no GPU: the default driver", so.c_str());
         }
         pick = "auto";
+    }
+    // After the custom driver: one that can't be used falls back here, and an Adreno 8xx must not get the bundled Turnip
+    if (pick == "auto" && std::strcmp(vk, "adreno") == 0) {
+        // Adreno 8xx (Snapdragon 8 Elite and newer): the Turnip in the APK draws only coloured noise there (Adreno 830
+        // and 840 players), while the phone's own driver is Vulkan 1.4 and draws the game, with framebuffer
+        // compression and zero copy off (what those players found working; config.txt can still turn them on).
+        int model = system_adreno_model(dlopen("libvulkan.so", RTLD_NOW | RTLD_LOCAL));
+        if (model >= 800) {
+            nx::log("vulkan: Adreno %d: the phone's driver (Turnip is for Adreno 6xx/7xx)", model);
+            pick = "system";
+            setenv("NX_UBWC_FLAGS", "0", 0);
+            setenv("NX_ZERO_COPY", "0", 0);
+        }
     }
     if (pick != "system" && std::strcmp(vk, "adreno") == 0 && !g_native_lib_dir.empty() && access(turnip.c_str(), R_OK) == 0) {
         // Binning on (Turnip's default): the main pass and the whole frame took much less GPU time with it on the S20
@@ -1079,6 +1080,23 @@ namespace {
 
 struct sigaction g_previous[32];  // the handlers before ours (debuggerd's)
 
+void crash(int sig, siginfo_t* info, void* uc);
+
+// Something else in the process that sets its own fault handler (the WebView of Nextendo's sign-in may, as Chromium
+// does) takes the faults the game needs (write_watch_fault). Ours is put back on top when the game is in front again.
+// The newcomer is not chained: it likely saved ours as its previous one, and chaining back would loop on a real crash.
+void keep_signal_handlers() {
+    for (int s : {SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGABRT}) {
+        struct sigaction cur{};
+        if (sigaction(s, nullptr, &cur) != 0 || ((cur.sa_flags & SA_SIGINFO) && cur.sa_sigaction == crash)) continue;
+        struct sigaction sa{};
+        sa.sa_sigaction = crash;
+        sa.sa_flags = SA_SIGINFO | SA_ONSTACK;
+        sigaction(s, &sa, nullptr);
+        nx::log("app: signal %d had another handler: the game's own is back on top", s);
+    }
+}
+
 void crash(int sig, siginfo_t* info, void* uc) {
     if ((sig == SIGSEGV || sig == SIGBUS) && nx::plat::write_watch_fault(info->si_addr)) return;  // write_watch.cpp
     nx::log("CRASH: signal %d, fault address %p", sig, info->si_addr);
@@ -1170,6 +1188,7 @@ void on_cmd(android_app* app, int32_t cmd) {
             nx::game_clock_save();  // a faster clock's gained time: Android may end the app from the background
             break;
         case APP_CMD_RESUME:
+            keep_signal_handlers();  // back from Nextendo's sign-in screen, whose WebView may have set its own
             audio_pause(false);
             thermal_pause(false);
             break;

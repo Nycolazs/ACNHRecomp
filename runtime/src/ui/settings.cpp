@@ -135,6 +135,12 @@ void toast(const std::string& text) {
     g_toast_until = ImGui::GetTime() + 4.0;
 }
 
+// config.ini written; a failure said once a session (a setting that won't stay is otherwise a mystery; nx.log has why)
+void save_settings() {
+    static bool told = false;
+    if (!config_save() && !told) told = true, toast(tr("settings.save_failed"));
+}
+
 // ---- settings helpers -----------------------------------------------------------------------------------------
 
 // Whether a setting waits for the game to start again. On phones the picture's upscaling, sharpness, anti-aliasing and
@@ -205,10 +211,7 @@ void store(const std::string& key, const std::string& value) {
         for (auto& [k, v] : config_preset(config_get("video.preset", "custom")))
             if (k == key && v != value) config_set("video.preset", "custom");
     }
-    if (!config_save()) {  // once a session: a setting that won't stay is otherwise a mystery (nx.log has the reason)
-        static bool told = false;
-        if (!told) told = true, toast(tr("settings.save_failed"));
-    }
+    save_settings();
     apply_live(key, value);
 }
 
@@ -419,7 +422,7 @@ void slider(const std::string& key, int lo, int hi, int fallback, const char* fm
         ImVec2 rmax = ImGui::GetItemRectMax();
         dl->AddRect(rmin, rmax, rgb(246, 170, 40), ImGui::GetStyle().FrameRounding, 0, 2.5f * g_scale);
     }
-    if (ImGui::IsItemDeactivatedAfterEdit()) config_save();
+    if (ImGui::IsItemDeactivatedAfterEdit()) save_settings();
 }
 
 bool button(const char* text, float width = 0) {
@@ -466,7 +469,7 @@ void touch_layout_editor() {
         b = plat::touch_buttons(n, aspect);
     }
     if (ImGui::IsItemDeactivated()) {
-        if (dragging >= 0) config_save();
+        if (dragging >= 0) save_settings();
         dragging = -1;
     }
     ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -489,7 +492,7 @@ void touch_layout_editor() {
     ImGui::Dummy(ImVec2(0, 4.0f * g_scale));
     if (button(tr("controls.touch_layout.reset"))) {
         config_set("input.touch_layout", "");
-        config_save();
+        save_settings();
     }
     ImGui::SameLine();
     if (button(tr("controls.touch_layout.done"))) g_touch_edit = false;
@@ -1362,7 +1365,7 @@ void page_controls() {
     if (button(tr("controls.reset_keys"))) {
         for (const Binding& b : kBindings) config_set(std::string("input.key.") + b.key, b.def);
         for (int k = 0; k < kAltKeys; k++) config_set(std::string("input.key2.") + kBindings[k].key, "");
-        config_save();
+        save_settings();
         toast(tr("common.saved"));
     }
 #endif
@@ -2029,7 +2032,7 @@ bool settings_draw(float scale, ImFont* title, float opening) {
             if (g_restart_note && msg == tr("common.restart_needed")) {
                 ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(124, 194, 103, 255));
                 if (ImGui::Button(tr("common.restart_now"))) {
-                    config_save();
+                    save_settings();
                     plat::restart_app();
                 }
                 ImGui::PopStyleColor();
@@ -2069,7 +2072,7 @@ bool settings_draw(float scale, ImFont* title, float opening) {
         const float gap = 12.0f * scale;
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (ImGui::GetContentRegionAvail().x - yes_w - no_w - gap) * 0.5f));
         if (ImGui::Button(tr("common.yes"), ImVec2(yes_w, 0))) {
-            config_save();
+            save_settings();
             plat::exit_process(0);
         }
         ImGui::SameLine(0, gap);
@@ -2175,7 +2178,7 @@ void hdr_panel_draw(float scale) {
             std::snprintf(b, sizeof b, "%.2f", double(v));
             config_set("video.hdr_exposure", b);
         }
-        if (ImGui::IsItemDeactivatedAfterEdit()) config_save();
+        if (ImGui::IsItemDeactivatedAfterEdit()) save_settings();
     });
     ImGui::Separator();
     line("hi", tr("video.hdr_highlights"), [&] { slider("video.hdr_highlights", 0, 100, 50, "%d", w); });
@@ -2195,7 +2198,7 @@ void hdr_panel_draw(float scale) {
             {"video.hdr_temperature", "0"},   {"video.hdr_tint", "0"},
         };
         for (const auto& [key, value] : kDefaults) config_set(key, value);
-        config_save();
+        save_settings();
     }
     ImGui::End();
 }
