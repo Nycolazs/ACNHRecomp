@@ -175,6 +175,7 @@ endif()
 option(NX_LAUNCHER "Build the first-run launcher (acnhrecomp_launcher)" ON)
 if(NX_LAUNCHER AND NOT ANDROID)
     include(launcher/launcher.cmake)
+    include(prepare/io/io.cmake)  # preparing the game folder: the player's ExeFS and RomFS, the packs
 endif()
 
 # The game folder's preparation (prepare/README.md): the recompiler (nx_recomp, acnh_recomp), on desktop. Not in a build
