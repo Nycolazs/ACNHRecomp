@@ -2,14 +2,17 @@
 # The Windows release package, made on Windows (Git Bash) in a Visual Studio x64 environment with clang-cl, as the
 # game's library is (the player and game/windows-x64/acnh_game.dll share C++ exceptions: one compiler family): the
 # launcher and the player (acnh.exe, built with NX_GAME_FROM_FOLDER: no game code), SDL3.dll (zlib) and the Visual C++
-# runtime (redistributable) beside them, and "Start ACNHRecomp.bat". The player plays the game folder
-# ACNHRecomp-Importer prepared: the launcher only asks for that folder (README, "Installation"). libvpx and libvorbis
-# are linked in (vcpkg's static libraries); the Vulkan loader comes with the GPU driver.
+# runtime (redistributable) beside them, and "Start ACNHRecomp.bat". The launcher prepares the game folder from the
+# player's extracted ExeFS and RomFS (prepare/README.md) with the tools beside it, tools/zig (tools/fetch_zig.py) and
+# tools/shaders (tools/build_shader_tool.py), and acnh_prepare.exe, its command line; the player plays that folder
+# (game/windows-x64/). libvpx and libvorbis are linked in (vcpkg's static libraries); the Vulkan loader comes with the
+# GPU driver.
 # usage: tools/package_release_win.sh <version> <SDL3 VC prefix> <movie libraries prefix> <Vulkan-Headers include>
 #   <SDL3 VC prefix>: SDL's SDL3-devel-<x.y.z>-VC.zip, extracted (https://github.com/libsdl-org/SDL/releases)
 #   <movie libraries prefix>: vcpkg's installed/x64-windows-static-md-release (libvpx, libvorbis)
 #                                                    -> private/release/ACNHRecomp-<version>-windows-x64.zip
-# needs: clang-cl, cmake, ninja, zip (or 7z), and the environment of vcvars64.bat
+# needs: clang-cl, cmake, ninja, zip (or 7z), and the environment of vcvars64.bat; Python 3 and the .NET 10 SDK (the
+#        shader tool, NativeAOT, links with the Visual Studio C++ tools), and the network (zig from ziglang.org)
 cd "$(dirname "$0")/.." || exit 1
 set -e
 USAGE="usage: tools/package_release_win.sh <version> <SDL3 VC prefix> <movie libraries prefix> <Vulkan-Headers include>"
@@ -56,12 +59,13 @@ echo "== launcher and player (clang-cl)"
 cmake -S . -B "$BUILD" -G Ninja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DNX_GAME=acnh \
         -DNX_GEN_DIR="$PWD/$BUILD/no-gen" -DCMAKE_BUILD_TYPE=Release -DNX_GAME_FROM_FOLDER=ON \
         "-DCMAKE_PREFIX_PATH=$SDL;$MOVIE" "-DNX_VULKAN_INCLUDE=$VKH" >/dev/null
-cmake --build "$BUILD" --target acnhrecomp_launcher acnh
+cmake --build "$BUILD" --target acnhrecomp_launcher acnh acnh_prepare
 
 R=$OUT/ACNHRecomp
 mkdir -p "$R"
 cp "$BUILD/acnhrecomp_launcher.exe" "$R/ACNHRecomp Launcher.exe"
 cp "$BUILD/acnh.exe" "$R/acnh.exe"
+cp "$BUILD/acnh_prepare.exe" "$R/acnh_prepare.exe"
 cp "$SDL/lib/x64/SDL3.dll" "$R/"
 # The FidelityFX and DLSS DLLs the player loads at run time (the build copies them beside acnh.exe only when it
 # compiled FSR / DLAA / FFX frame generation in), and their licences.
@@ -76,7 +80,7 @@ cp private/third_party/dlss/LICENSE.txt "$R/licenses/DLSS-LICENSE.txt"
 CRT=$(ls -d "$(cygpath -u "$VCToolsRedistDir")"/x64/Microsoft.VC*.CRT | head -1)
 cp "$CRT"/vcruntime140*.dll "$CRT"/msvcp140*.dll "$R/"  # msvcp140_1 too (the player's <memory_resource>)
 # Each DLL the executables import is a system one or beside them.
-for exe in "$R/acnh.exe" "$R/ACNHRecomp Launcher.exe"; do
+for exe in "$R/acnh.exe" "$R/ACNHRecomp Launcher.exe" "$R/acnh_prepare.exe"; do
     for dll in $(MSYS_NO_PATHCONV=1 dumpbin /nologo /dependents "$(cygpath -w "$exe")" | tr -d '\r' |
                  awk '/^ +[^ ]+\.(dll|DLL)$/ {print $1}'); do
         case "${dll,,}" in api-ms-win-*|kernel32.dll|user32.dll|shell32.dll|imm32.dll|winmm.dll|dxgi.dll|ole32.dll|\
@@ -84,7 +88,19 @@ for exe in "$R/acnh.exe" "$R/ACNHRecomp Launcher.exe"; do
         ls "$R" | grep -qix "$dll" || { echo "$exe imports $dll, which is not in the package"; exit 1; }
     done
 done
-printf '@echo off\r\nrem Double-click: opens the launcher, which asks for the game folder ACNHRecomp-Importer prepared.\r\ncd /d "%%~dp0"\r\nstart "" "ACNHRecomp Launcher.exe"\r\n' > "$R/Start ACNHRecomp.bat"
+echo "== the preparation's tools"
+# Where the launcher and acnh_prepare look for them (launcher/prepare_job.cpp, prepare/prepare_cli.cpp):
+# tools/zig/zig.exe (zig, trimmed to the four targets, with the sizes.txt the preparation checks it against) and
+# tools/shaders/spirv_harness.exe (the shader tool, NativeAOT: no .NET needed where it runs). zig is kept between runs
+# in private/release/zig-x86_64-windows. vcvars' Platform=x64 is no MSBuild property here.
+PY=${PYTHON:-$(command -v python || command -v python3)}
+ZIG=private/release/zig-x86_64-windows
+[ -f "$ZIG/sizes.txt" ] || "$PY" tools/fetch_zig.py x86_64-windows "$ZIG"
+mkdir -p "$R/tools"
+cp -a "$ZIG" "$R/tools/zig"
+env -u Platform -u PLATFORM "$PY" tools/build_shader_tool.py win-x64 "$R/tools/shaders"
+[ -f "$R/tools/zig/zig.exe" ] && [ -f "$R/tools/shaders/spirv_harness.exe" ] || { echo "the preparation's tools are missing"; exit 1; }
+printf '@echo off\r\nrem Double-click: opens the launcher, which prepares the game folder (or takes one prepared before).\r\ncd /d "%%~dp0"\r\nstart "" "ACNHRecomp Launcher.exe"\r\n' > "$R/Start ACNHRecomp.bat"
 # The pt-BR translation and the SpeedFix files, which the player copies into the game folder (mod_fetch.cpp).
 tools/bundle_mods.sh "$R"
 tools/release_readme.sh "$R" windows "$VER" "$BUILD"
