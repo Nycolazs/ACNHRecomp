@@ -27,7 +27,7 @@ constexpr uint64_t REF_BASE = 0x4000000000ull;  // where --base addresses are me
 // open_if_changed: writes the file unless it already holds exactly this text
 void write_if_changed(const std::string& path, const std::string& text) {
     {
-        std::ifstream f(path, std::ios::binary);
+        std::ifstream f(upath(path), std::ios::binary);
         if (f) {
             std::ostringstream ss;
             ss << f.rdbuf();
@@ -36,13 +36,13 @@ void write_if_changed(const std::string& path, const std::string& text) {
     }
     std::string tmp = path + ".part";
     {
-        std::ofstream o(tmp, std::ios::binary | std::ios::trunc);
+        std::ofstream o(upath(tmp), std::ios::binary | std::ios::trunc);
         if (!o) throw std::runtime_error("cannot write " + path);
         o << text;
         if (!o.flush()) throw std::runtime_error("cannot write " + path);
     }
     std::error_code ec;
-    std::filesystem::rename(tmp, path, ec);
+    std::filesystem::rename(upath(tmp), upath(path), ec);
     if (ec) throw std::runtime_error("cannot write " + path + " (" + ec.message() + ")");
 }
 
@@ -50,7 +50,7 @@ std::string cstr_lit(const std::string& s) { return "\"" + replace_all(replace_a
 
 // read_pchtxt: (module offset, 32-bit word) pairs of the enabled sections of a .pchtxt (IPS text) patch
 std::vector<std::pair<uint64_t, uint32_t>> read_pchtxt(const std::string& path) {
-    std::ifstream f(path);
+    std::ifstream f(upath(path));
     if (!f) throw std::runtime_error("cannot open " + path);
     bool enabled = false;
     std::vector<std::pair<uint64_t, uint32_t>> words;
@@ -162,13 +162,13 @@ RecompResult recompile(const RecompOptions& opt) {
                       an.jump_tables.size(), since());
         log(b);
     }
-    std::filesystem::create_directories(opt.out_dir);
+    std::filesystem::create_directories(upath(opt.out_dir));
     std::set<uint64_t> hooks;
     if (!opt.hooks.empty() || !opt.hooks_text.empty()) {
         std::istringstream text(opt.hooks_text);
         std::ifstream hf;
         if (!opt.hooks.empty()) {
-            hf.open(opt.hooks);
+            hf.open(upath(opt.hooks));
             if (!hf) throw std::runtime_error("cannot open " + opt.hooks);
         }
         std::istream& in = opt.hooks.empty() ? static_cast<std::istream&>(text) : hf;
@@ -281,7 +281,7 @@ RecompResult recompile(const RecompOptions& opt) {
             std::to_string(variant->fresh.size()) + " only in the patched code, " + std::to_string(variant->words.size()) + " words");
     } else {
         std::error_code ec;
-        std::filesystem::remove(variant_path, ec);
+        std::filesystem::remove(upath(variant_path), ec);
     }
 
     // table.cpp
@@ -345,7 +345,7 @@ RecompResult recompile(const RecompOptions& opt) {
             std::snprintf(b, sizeof b, "%8llu ", (unsigned long long)n);
             r += b + mn + "\n";
         }
-        std::ofstream(opt.out_dir + "/report.txt", std::ios::binary | std::ios::trunc) << r;
+        std::ofstream(upath(opt.out_dir + "/report.txt"), std::ios::binary | std::ios::trunc) << r;
     }
     log("done: " + std::to_string(chunks.size()) + " files, handled " + std::to_string(handled) + ", unhandled " +
         std::to_string(total_unhandled) + " (" + fmt_s(since()) + "s)");

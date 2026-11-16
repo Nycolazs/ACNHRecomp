@@ -15,6 +15,7 @@
 
 namespace rc {
 
+// The paths are UTF-8 on every platform (prepare.cpp's; acnh_recomp reads its command line so on Windows).
 struct RecompOptions {
     std::string nso;        // the module (exefs/main, sdk, subsdk0)
     std::string out_dir;

@@ -7,9 +7,13 @@
 #include <stdexcept>
 #include <string>
 
+#include "args_utf8.h"  // prepare/io/
 #include "recomp.h"
 
-int main(int argc, char** argv) {
+int main(int argc_, char** argv_) {
+    // UTF-8, as RecompOptions takes its paths (Windows' argv is in the ANSI code page)
+    const std::vector<std::string> argv = nx::prepare::detail::utf8_args(argc_, argv_);
+    const int argc = int(argv.size());
     rc::RecompOptions o;
     int pos = 0;
     for (int i = 1; i < argc; i++) {
@@ -24,7 +28,7 @@ int main(int argc, char** argv) {
         else if (a == "--hooks") o.hooks = val();
         else if (a == "--variant") o.variant = val();
         else if (a == "--only") {
-            while (i + 1 < argc && argv[i + 1][0] != '-') o.only.push_back(std::strtoull(argv[++i], nullptr, 16));
+            while (i + 1 < argc && argv[i + 1][0] != '-') o.only.push_back(std::strtoull(argv[++i].c_str(), nullptr, 16));
         } else if (pos == 0) o.nso = a, pos++;
         else if (pos == 1) o.out_dir = a, pos++;
         else {

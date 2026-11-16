@@ -32,6 +32,7 @@
 #endif
 #endif
 
+#include "args_utf8.h"
 #include "gamelib.h"
 #include "io_util.h"
 #include "prepare.h"
@@ -116,7 +117,10 @@ std::string percent(double f) {
 
 }  // namespace
 
-int main(int argc, char** argv) {
+int main(int argc_, char** argv_) {
+    // UTF-8, the preparation's paths (Windows' argv is in the ANSI code page)
+    const std::vector<std::string> argv = nx::prepare::detail::utf8_args(argc_, argv_);
+    const int argc = int(argv.size());
     prep::Options o;
     std::string platforms = "this";
     std::vector<std::string> exefs, romfs;

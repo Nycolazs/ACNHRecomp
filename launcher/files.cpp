@@ -32,9 +32,17 @@ std::string str(const fs::path& p) {
     return std::string(s.begin(), s.end());
 }
 
+// UTF-8, as every path here: on Windows getenv gives the ANSI code page (a user "João"'s USERPROFILE would not be
+// UTF-8, and u8() of it throws), so the variable is read as UTF-16.
 std::string env(const char* name) {
+#if defined(_WIN32)
+    const std::wstring w(name, name + std::strlen(name));
+    const wchar_t* v = _wgetenv(w.c_str());
+    return v ? str(fs::path(v)) : "";
+#else
     const char* v = std::getenv(name);
     return v ? v : "";
+#endif
 }
 
 std::string home() {

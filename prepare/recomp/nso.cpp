@@ -198,7 +198,7 @@ Module load_nso_bytes(std::vector<uint8_t> raw, const std::string& name) {
 }
 
 Module load_nso(const std::string& path, const std::string& name) {
-    std::ifstream f(path, std::ios::binary);
+    std::ifstream f(upath(path), std::ios::binary);
     if (!f) throw std::runtime_error("cannot open " + path);
     std::vector<uint8_t> raw((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
     return load_nso_bytes(std::move(raw), name.empty() ? path : name);

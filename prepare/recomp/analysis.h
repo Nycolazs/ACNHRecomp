@@ -3,6 +3,7 @@
 #pragma once
 
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <map>
 #include <set>
@@ -44,6 +45,10 @@ struct Module {
     bool in_image(int64_t a) const { return a >= 0 && uint64_t(a) < image.size(); }
     std::string cstr(uint64_t a) const;
 };
+
+// A path given as UTF-8 (every path of RecompOptions, on every platform): a std::string opened as it is would be read
+// in the ANSI code page on Windows, where a folder named "ção" is then not found (or another one is).
+inline std::filesystem::path upath(const std::string& s) { return std::filesystem::path(std::u8string(s.begin(), s.end())); }
 
 // nso.load: throws std::runtime_error
 Module load_nso(const std::string& path, const std::string& name);

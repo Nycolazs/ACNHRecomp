@@ -50,7 +50,13 @@ static int g_failed = 0, g_checks = 0;
 static const char* kId303 = "FF1D1C05670DB6021C85B624A710B963";  // games/acnh/versions.txt
 static const char* kId207 = "0948E48778171EE6D5D7A65813ED5FCC";
 
-static std::string s(const fs::path& p) { return p.string(); }
+// A path as the preparation takes it (UTF-8 on every platform; path::string() is the ANSI code page on Windows).
+static std::string s(const fs::path& p) {
+    const std::u8string u = p.u8string();
+    return std::string(u.begin(), u.end());
+}
+// "ção": a folder named with accents (escaped: the source file's encoding does not matter)
+static const fs::path kAccents = fs::path(u8"\u00e7\u00e3o");
 
 static void set_env(const char* name, const char* value) {
 #ifdef _WIN32
@@ -61,17 +67,20 @@ static void set_env(const char* name, const char* value) {
 #endif
 }
 
+// A command line (UTF-8) run by the shell: on Windows as UTF-16 (_wsystem), so a path named with accents arrives whole.
 static int sh(std::string cmd) {
 #ifdef _WIN32
     cmd = "\"" + cmd + "\"";
-#endif
+    int rc = _wsystem(fs::path(std::u8string(cmd.begin(), cmd.end())).wstring().c_str());
+#else
     int rc = std::system(cmd.c_str());
+#endif
 #ifndef _WIN32
     if (rc != -1 && WIFEXITED(rc)) rc = WEXITSTATUS(rc);
 #endif
     return rc;
 }
-static std::string q(const fs::path& p) { return "\"" + p.string() + "\""; }
+static std::string q(const fs::path& p) { return "\"" + s(p) + "\""; }
 
 struct Run {
     prep::Status last;
@@ -361,6 +370,21 @@ static int base(const fs::path& src, const fs::path& work, const fs::path& cli, 
     check_folder(in2, in2, true, 1, in2 / "aoc" / "1");
     CHECK(fs::exists(in2 / "Animal Crossing [01006F8002326000][v3.0.3].nsp"));  // left where it was
 
+    std::puts("folders named with accents (UTF-8 paths, Windows too): the API, then acnh_prepare GAME --in-place");
+    const fs::path acc = work / kAccents, in3 = acc / "ACNH", hhp3 = acc / fs::path(u8"Cora\u00e7\u00e3o");
+    make_inputs(in3);
+    write_file(hhp3 / "Layout" / "a.bin", pattern(3000, 9));
+    write_file(hhp3 / "Model" / "b.bin", pattern(500, 10));
+    prep::Options oa = base_options(in3, acc / "jogo", tool);
+    oa.dlc = {s(hhp3)};
+    oa.dlc_index = {1};
+    r = run_prep(oa);
+    CHECK(r.last.rc == 0 && r.last.out == s(fs::weakly_canonical(acc / "jogo")));
+    check_folder(in3, acc / "jogo", false, 1, hhp3);
+    rc = sh(q(cli) + " " + q(in3) + " --in-place --platforms this --shader-tool " + q(tool));
+    CHECK(rc == 0);
+    check_folder(in3, in3, true, 0, {});
+
     std::puts("acnh_prepare: refused and wrong command lines");
     write_text(work / "game.nsp", "PFS0");
     CHECK(sh(q(cli) + " --exefs " + q(work / "game.nsp") + " --romfs " + q(in / "romfs") + " --out " + q(work / "out3") +
@@ -455,14 +479,17 @@ static int zig(const fs::path& src, const fs::path& work, const fs::path& tool, 
     CHECK(fs::last_write_time(lib) == lib_time);
 
     std::puts("recompiling synthetic modules fails (no MOD0), tried again without the 60 FPS variant first");
+    // in a folder named with accents: the recompiler opens exefs/main from its UTF-8 path (not "cannot open")
+    const fs::path out_recomp = work / kAccents / "out_recomp";
     prep::Options rec = o;
-    rec.out = s(work / "out_recomp");
+    rec.out = s(out_recomp);
     rec.skip_recompile = false;
     r = run_prep(rec);
     CHECK(r.last.rc == 1 && r.last.error.find("recompile: ") != std::string::npos);
+    CHECK(r.last.error.find("cannot open") == std::string::npos);
     CHECK(r.log.find("the 60 FPS variant could not be recompiled") != std::string::npos);
     CHECK(r.stages.count(prep::Stage::Recompile) && !r.stages.count(prep::Stage::Compile));
-    CHECK(!fs::exists(work / "out_recomp" / ".import" / "complete") && !fs::exists(work / "out_recomp" / "game.ini"));
+    CHECK(!fs::exists(out_recomp / ".import" / "complete") && !fs::exists(out_recomp / "game.ini"));
 
     std::puts("a library of another runtime is built again");
     { std::ofstream(dir / "abi.txt") << "000000000000\n"; }
@@ -483,7 +510,7 @@ int main(int argc, char** argv) {
     } else if (mode == "zig" && argc == 8) {
         const fs::path work = argv[3];
         std::error_code ec;
-        for (const char* d : {"in", "out_zig", "out_recomp"}) fs::remove_all(work / d, ec);
+        for (const fs::path d : {fs::path("in"), fs::path("out_zig"), kAccents}) fs::remove_all(work / d, ec);
         fs::create_directories(work);
         rc = zig(argv[2], fs::absolute(work), fs::absolute(argv[4]), fs::absolute(argv[5]), argv[6], argv[7]);
     } else {

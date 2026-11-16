@@ -41,8 +41,14 @@ namespace fs = std::filesystem;
 namespace gl {
 
 namespace {
-// A UTF-8 string as a path (fs::u8path is deprecated in C++20).
+// A UTF-8 string as a path (fs::u8path is deprecated in C++20), and a path as UTF-8 with '/' separators: every path
+// given to a child process, opened or said goes through these, never path::string() (on Windows, the ANSI code page:
+// a folder named "ção" would come out as other bytes, which run_once reads back as UTF-8).
 fs::path u8p(const std::string& s) { return fs::path(std::u8string(s.begin(), s.end())); }
+std::string u8s(const fs::path& p) {
+    auto u = p.generic_u8string();  // std::u8string in C++20
+    return std::string(u.begin(), u.end());
+}
 }  // namespace
 
 namespace {
@@ -94,7 +100,7 @@ std::string rsp_quote(std::string a) {
 }
 
 std::string slurp_tail(const std::string& path, size_t max) {
-    std::ifstream f(path, std::ios::binary);
+    std::ifstream f(u8p(path), std::ios::binary);
     std::ostringstream ss;
     ss << f.rdbuf();
     std::string s = ss.str();
@@ -131,7 +137,7 @@ int split(const fs::path& gen, const std::string& m, const HotSet& hot, const st
     }
     fs::remove_all(dir, ec);
     fs::create_directories(dir, ec);
-    if (ec) return error = "cannot write " + dir.string() + ": " + ec.message(), 1;
+    if (ec) return error = "cannot write " + u8s(dir) + ": " + ec.message(), 1;
     std::vector<fs::path> files;
     for (const auto& e : fs::directory_iterator(gen / m, ec))
         if (e.path().extension() == ".cpp" && e.path().filename() != "table.cpp") files.push_back(e.path());
@@ -152,7 +158,7 @@ int split(const fs::path& gen, const std::string& m, const HotSet& hot, const st
     for (const fs::path& f : files) {
         std::ifstream in(f, std::ios::binary);
         std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-        if (!in.good() && !in.eof()) return error = "cannot read " + f.string(), 1;
+        if (!in.good() && !in.eof()) return error = "cannot read " + u8s(f), 1;
         int cur = -1;  // before the first function: the #include
         size_t pos = 0;
         while (pos < text.size()) {
@@ -161,13 +167,13 @@ int split(const fs::path& gen, const std::string& m, const HotSet& hot, const st
             if (text.compare(pos, head.size(), head) == 0) {
                 uint64_t off = std::strtoull(text.c_str() + pos + head.size(), nullptr, 16);
                 cur = hot.count(mi | off) ? 1 : 0;
-                if (out[cur].size() >= kPiece && !flush(cur)) return error = "cannot write " + dir.string(), 1;
+                if (out[cur].size() >= kPiece && !flush(cur)) return error = "cannot write " + u8s(dir), 1;
             }
             if (cur >= 0) out[cur].append(text, pos, next - pos);
             pos = next;
         }
     }
-    if (!flush(0) || !flush(1)) return error = "cannot write " + dir.string(), 1;
+    if (!flush(0) || !flush(1)) return error = "cannot write " + u8s(dir), 1;
     std::ofstream(dir / "ok") << id << "\n";
     return 0;
 }
@@ -397,13 +403,6 @@ bool toolchain_broken(const std::string& log, const std::string& lib_dir) {
     return false;
 }
 
-namespace {
-std::string u8s(const fs::path& p) {
-    auto u = p.generic_u8string();  // std::u8string in C++20
-    return std::string(u.begin(), u.end());
-}
-}  // namespace
-
 // sizes.txt: "<size>\t<path>" lines under a "#" comment, paths relative to the zig folder ("lib/std/std.zig", "zig").
 std::string check_toolchain(const std::string& zig, const std::string& zig_lib) {
     std::error_code ec;
@@ -629,7 +628,7 @@ int build(const Options& o, std::string& error) {
     };
 
     std::vector<std::string> base = {o.zig, "c++", "-target", t->triple, "-std=c++20", "-g0", "-w",
-                                     "-I" + (work / "runtime").string()};
+                                     "-I" + u8s(work / "runtime")};
     base.insert(base.end(), t->cflags.begin(), t->cflags.end());
     if (opt_flags(o.opt).empty()) return error = "no such optimisation level: " + o.opt, 1;
 
@@ -652,7 +651,7 @@ int build(const Options& o, std::string& error) {
             if (int rc = split(gen, m, hot, hot_id, error)) return rc;
             for (const auto& e : fs::directory_iterator(gen / "split" / m, ec))
                 if (e.path().extension() == ".cpp")
-                    srcs.push_back({e.path(), m, e.path().filename().string().rfind("hot_", 0) == 0 ? o.opt : "fast",
+                    srcs.push_back({e.path(), m, u8s(e.path().filename()).rfind("hot_", 0) == 0 ? o.opt : "fast",
                                     e.file_size(ec)});
             srcs.push_back({gen / m / "table.cpp", m, o.opt, fs::file_size(gen / m / "table.cpp", ec)});
         } else {
@@ -668,7 +667,7 @@ int build(const Options& o, std::string& error) {
     // funcs.h precompiled per module and level (a PCH holds its optimisation level)
     std::set<std::pair<std::string, std::string>> pchs;
     for (const Src& s : srcs) pchs.insert({s.module, s.opt});
-    auto pch_of = [&](const std::string& m, const std::string& opt) { return (work / m / ("funcs" + opt + ".pch")).string(); };
+    auto pch_of = [&](const std::string& m, const std::string& opt) { return u8s(work / m / ("funcs" + opt + ".pch")); };
     for (const auto& [m, opt] : pchs) {
         if (cancelled()) return error = "cancelled", 4;
         fs::create_directories(work / m, ec);
@@ -677,9 +676,9 @@ int build(const Options& o, std::string& error) {
         // -fno-pch-timestamp: zig's cache hands back a PCH made by an earlier run when the headers' contents match,
         // but clang then refused it for the headers' times, rewritten since ("has been modified since the precompiled
         // header was built"), as soon as one file had to be compiled again
-        a.insert(a.end(), {"-Xclang", "-fno-pch-timestamp", "-I" + (gen / m).string(), "-x", "c++-header",
-                           (gen / m / "funcs.h").string(), "-o", pch_of(m, opt)});
-        std::string lg = (work / m / "pch.log").string();
+        a.insert(a.end(), {"-Xclang", "-fno-pch-timestamp", "-I" + u8s(gen / m), "-x", "c++-header",
+                           u8s(gen / m / "funcs.h"), "-o", pch_of(m, opt)});
+        std::string lg = u8s(work / m / "pch.log");
         if (step(a, lg) != 0) return error = failed("precompiling " + m + "/funcs.h failed:\n" + slurp_tail(lg, 2000)), 1;
     }
 
@@ -701,23 +700,23 @@ int build(const Options& o, std::string& error) {
                 if (!first_error.empty()) return;
             }
             const Src& s = srcs[k];
-            fs::path obj = work / s.module / (s.file.stem().string() + ".o");
-            objects[k] = obj.string();
+            fs::path obj = work / s.module / (u8s(s.file.stem()) + ".o");
+            objects[k] = u8s(obj);
             std::vector<std::string> a = base, lv = opt_flags(s.opt);
             a.insert(a.end(), lv.begin(), lv.end());
-            a.push_back("-I" + (gen / s.module).string());
+            a.push_back("-I" + u8s(gen / s.module));
             if (s.file.filename() == "table.cpp") a.push_back("-fvisibility=default");  // nx_module_<name>, looked up by the player
             else a.insert(a.end(), {"-include-pch", pch_of(s.module, s.opt)});
-            a.insert(a.end(), {"-c", s.file.string(), "-o", obj.string()});
-            std::string lg = obj.string() + ".log";
+            a.insert(a.end(), {"-c", u8s(s.file), "-o", u8s(obj)});
+            std::string lg = u8s(obj) + ".log";
             if (step(a, lg) != 0) {
                 std::lock_guard<std::mutex> l(mx);
-                if (first_error.empty()) first_error = s.module + "/" + s.file.filename().string() + ":\n" + slurp_tail(lg, 2000);
+                if (first_error.empty()) first_error = s.module + "/" + u8s(s.file.filename()) + ":\n" + slurp_tail(lg, 2000);
                 return;
             }
-            fs::remove(lg, ec);
+            fs::remove(u8p(lg), ec);
             size_t d = ++done;
-            if (o.progress) o.progress(d, srcs.size() + 1, s.module + "/" + s.file.filename().string());
+            if (o.progress) o.progress(d, srcs.size() + 1, s.module + "/" + u8s(s.file.filename()));
         }
     };
     std::vector<std::thread> pool;
@@ -728,17 +727,17 @@ int build(const Options& o, std::string& error) {
 
     // game_abi.cpp: the ABI string and the longjmp the player throws through
     std::vector<std::string> a = base;
-    a.insert(a.end(), {"-O2", std::string("-DNX_GAME_ABI=\"") + GL_GAME_ABI + "\"", "-c", (work / "runtime" / "game_abi.cpp").string(), "-o",
-                       (work / "game_abi.o").string()});
-    if (step(a, (work / "abi.log").string()) != 0) return error = failed("game_abi.cpp: " + slurp_tail((work / "abi.log").string(), 2000)), 1;
+    a.insert(a.end(), {"-O2", std::string("-DNX_GAME_ABI=\"") + GL_GAME_ABI + "\"", "-c", u8s(work / "runtime" / "game_abi.cpp"), "-o",
+                       u8s(work / "game_abi.o")});
+    if (step(a, u8s(work / "abi.log")) != 0) return error = failed("game_abi.cpp: " + slurp_tail(u8s(work / "abi.log"), 2000)), 1;
 
     // __cpu_model for __builtin_cpu_supports (x86: no libgcc / compiler-rt is linked in)
     bool x86 = std::string(t->triple).rfind("x86_64", 0) == 0;
     if (x86) {
-        std::vector<std::string> c = {o.zig, "cc", "-target", t->triple, "-O2", "-c", (work / "runtime" / "cpu_model.c").string(),
-                                      "-o", (work / "cpu_model.o").string()};
+        std::vector<std::string> c = {o.zig, "cc", "-target", t->triple, "-O2", "-c", u8s(work / "runtime" / "cpu_model.c"),
+                                      "-o", u8s(work / "cpu_model.o")};
         if (std::string(t->name) != "windows-x64") c.insert(c.begin() + 4, "-fPIC");
-        if (step(c, (work / "cpu.log").string()) != 0) return error = failed("cpu_model.c: " + slurp_tail((work / "cpu.log").string(), 2000)), 1;
+        if (step(c, u8s(work / "cpu.log")) != 0) return error = failed("cpu_model.c: " + slurp_tail(u8s(work / "cpu.log"), 2000)), 1;
     }
 
     // stubs of the libraries the player's process provides, for their DT_NEEDED entries (Android's linker resolves a
@@ -750,22 +749,22 @@ int build(const Options& o, std::string& error) {
         fs::create_directories(stub.parent_path(), ec);
         std::ofstream(work / "stubs" / "empty.c") << "\n";
         std::vector<std::string> sa = {o.zig, "cc", "-target", t->triple, "-shared", "-nostdlib", "-Wl,-soname," + n,
-                                       (work / "stubs" / "empty.c").string(), "-o", stub.string()};
-        if (step(sa, (work / "stubs" / "stub.log").string()) != 0)
-            return error = failed("stub " + n + ": " + slurp_tail((work / "stubs" / "stub.log").string(), 2000)), 1;
-        link.push_back(stub.string());
+                                       u8s(work / "stubs" / "empty.c"), "-o", u8s(stub)};
+        if (step(sa, u8s(work / "stubs" / "stub.log")) != 0)
+            return error = failed("stub " + n + ": " + slurp_tail(u8s(work / "stubs" / "stub.log"), 2000)), 1;
+        link.push_back(u8s(stub));
     }
     if (std::string(t->name) == "windows-x64") {  // what the player looks up (GetProcAddress)
         std::ofstream def(work / "exports.def");
         def << "EXPORTS\n    nx_game_abi\n    nx_game_longjmp\n    nx_game_bind\n";
         for (const auto& m : modules) def << "    nx_module_" << m << "\n";
-        link.push_back((work / "exports.def").string());
+        link.push_back(u8s(work / "exports.def"));
     }
     fs::path dir = u8p(o.out) / "game" / t->name;
     fs::create_directories(dir, ec);
     fs::path tmp = dir / (std::string(t->lib_name) + ".part");
-    link.insert(link.end(), {"-o", tmp.string(), (work / "game_abi.o").string()});
-    if (x86) link.push_back((work / "cpu_model.o").string());
+    link.insert(link.end(), {"-o", u8s(tmp), u8s(work / "game_abi.o")});
+    if (x86) link.push_back(u8s(work / "cpu_model.o"));
     for (const auto& obj : objects) link.push_back(obj);
     // Everything after "zig c++" in a response file: 1600 objects are far more than Windows' 32767-character command
     // line (it then refuses to start the linker).
@@ -773,13 +772,13 @@ int build(const Options& o, std::string& error) {
     {
         std::ofstream r(rsp, std::ios::binary);
         for (size_t k = 2; k < link.size(); k++) r << rsp_quote(link[k]) << "\n";
-        if (!r.flush()) return error = "cannot write " + rsp.string(), 1;
+        if (!r.flush()) return error = "cannot write " + u8s(rsp), 1;
     }
-    log("linking " + (dir / t->lib_name).string());
-    if (step({link[0], link[1], "@" + rsp.string()}, (work / "link.log").string()) != 0)
-        return error = failed("link: " + slurp_tail((work / "link.log").string(), 3000)), 1;
+    log("linking " + u8s(dir / t->lib_name));
+    if (step({link[0], link[1], "@" + u8s(rsp)}, u8s(work / "link.log")) != 0)
+        return error = failed("link: " + slurp_tail(u8s(work / "link.log"), 3000)), 1;
     fs::rename(tmp, dir / t->lib_name, ec);
-    if (ec) return error = "cannot write " + (dir / t->lib_name).string() + ": " + ec.message(), 1;
+    if (ec) return error = "cannot write " + u8s(dir / t->lib_name) + ": " + ec.message(), 1;
     std::ofstream(dir / "abi.txt") << GL_GAME_ABI << "\n";
     std::ofstream(dir / "rev.txt") << kRevision << "\n";
     std::ofstream(dir / "build.txt") << o.build_id << "\n";  // main's build id: a re-import of another update rebuilds it

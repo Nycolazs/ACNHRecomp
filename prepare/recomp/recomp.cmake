@@ -58,6 +58,11 @@ endif()
 
 add_executable(acnh_recomp "${NX_RECOMP_DIR}/recomp_cli.cpp")
 target_link_libraries(acnh_recomp PRIVATE nx_recomp)
+# its command line as UTF-8 (prepare/io/args_utf8.h: CommandLineToArgvW on Windows)
+target_include_directories(acnh_recomp PRIVATE "${NX_RECOMP_DIR}/../io")
+if(WIN32)
+    target_link_libraries(acnh_recomp PRIVATE shell32)
+endif()
 
 # No /arch:AVX2 (the top CMakeLists.txt adds it on Windows): the recompiler only reads and writes text, and runs on any
 # x86-64, as ACNHRecomp-Importer's build of it did.
