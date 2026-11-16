@@ -91,7 +91,7 @@ fs::path child_dir(const fs::path& dir, const char* name) {
 
 struct GameFolder {
     fs::path exefs, romfs, aoc;
-    bool pak = false;  // romfs is romfs.pak: the RomFS in one file (ACNHRecomp-Importer's option, hle_fs.cpp)
+    bool pak = false;  // romfs is romfs.pak: the RomFS in one file (prepare/prepare.cpp writes it, hle_fs.cpp)
 };
 
 // Whether the file starts like a packed RomFS ("NXRP", version 1).
@@ -115,15 +115,16 @@ bool game_parts(const std::string& path, GameFolder& g) {
     return !g.exefs.empty() && !g.romfs.empty();
 }
 
-// Whether ACNHRecomp-Importer prepared the folder (and finished): its game.ini says so and .import/complete is
-// there. ACNHRecomp only takes such folders; the importer is on the project's Discord (launcher.files.importer).
-bool from_importer(const std::string& path) {
+// Whether the folder was prepared for ACNHRecomp and that finished: its game.ini says so (ACNHRecomp's own preparation
+// from the game's extracted ExeFS and RomFS, prepare/prepare.cpp, or ACNHRecomp-Importer's: its first line names
+// ACNHRecomp) and .import/complete is there.
+bool prepared_folder(const std::string& path) {
     std::error_code ec;
     fs::path d = u8(path);
     std::ifstream f(d / "game.ini");
     std::string first;
     std::getline(f, first);
-    return first.find("ACNHRecomp-Importer") != std::string::npos && fs::exists(d / ".import" / "complete", ec);
+    return first.find("ACNHRecomp") != std::string::npos && fs::exists(d / ".import" / "complete", ec);
 }
 
 // main's build id (hex), "" when the file is not an NSO.
@@ -305,7 +306,7 @@ FileCheck check_file(Kind kind, const std::string& path) {
     GameFolder g;
     if (!is_dir(path)) return ok(Status::Error, tr("launcher.err.not_folder"));
     if (!game_parts(path, g)) return ok(Status::Error, tr("launcher.err.game_layout"));
-    if (!from_importer(path)) return ok(Status::Error, tr("launcher.err.game_importer"));
+    if (!prepared_folder(path)) return ok(Status::Error, tr("launcher.err.game_importer"));
     std::error_code ec;
     std::string id;
     for (const char* m : {"main", "sdk", "subsdk0"}) {
@@ -421,7 +422,8 @@ BuildContents build_contents(const std::string& data) {
         size_t eq = l.find('=');
         if (eq != std::string::npos && trim(l.substr(0, eq)) == "version") c.version = trim(l.substr(eq + 1));
     }
-    // A game folder ACNHRecomp-Importer prepared: its game.ini has main's build id, the version from kBuilds
+    // A prepared game folder (ACNHRecomp's or ACNHRecomp-Importer's): its game.ini has main's build id, the version
+    // from kBuilds
     if (c.version.empty()) {
         std::ifstream gi(u8(data + "/game.ini"));
         for (std::string l; std::getline(gi, l);) {
@@ -472,7 +474,7 @@ std::string player_beside() {
     return str(u8(base) / exe);
 }
 
-// The game's library for this computer in a game folder ACNHRecomp-Importer prepared (game/<platform>/...).
+// The game's library for this computer in a prepared game folder (game/<platform>/...).
 fs::path game_library(const fs::path& f) {
 #if defined(_WIN32)
     return f / "game" / "windows-x64" / "acnh_game.dll";
@@ -490,10 +492,10 @@ const char* find_build(const std::string& folder, Build& out) {
     const char* exe = "acnh";
 #endif
     const fs::path f = u8(folder);
-    // A game folder ACNHRecomp-Importer prepared, played by the player beside the launcher: nothing to build.
+    // A prepared game folder, played by the player beside the launcher: nothing to build.
     if (std::string player = player_beside(); !player.empty() && is_dir(folder)) {
         std::error_code ec;
-        if (!from_importer(folder)) return "launcher.err.game_importer";
+        if (!prepared_folder(folder)) return "launcher.err.game_importer";
         if (!fs::is_regular_file(game_library(f), ec)) return "launcher.reason.no_game_lib";
         out = {player, str(fs::absolute(f, ec))};
         return "";
