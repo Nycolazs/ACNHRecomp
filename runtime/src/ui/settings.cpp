@@ -205,7 +205,10 @@ void store(const std::string& key, const std::string& value) {
         for (auto& [k, v] : config_preset(config_get("video.preset", "custom")))
             if (k == key && v != value) config_set("video.preset", "custom");
     }
-    config_save();
+    if (!config_save()) {  // once a session: a setting that won't stay is otherwise a mystery (nx.log has the reason)
+        static bool told = false;
+        if (!told) told = true, toast(tr("settings.save_failed"));
+    }
     apply_live(key, value);
 }
 

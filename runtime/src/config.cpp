@@ -1,6 +1,8 @@
 // <data root>/config.ini: see config.h.
 #include "config.h"
 
+#include <cerrno>
+
 #include <algorithm>
 #include <atomic>
 #include <cstdio>
@@ -358,7 +360,11 @@ bool config_save() {
     }
     std::string tmp = path() + ".tmp";
     FILE* f = plat::fopen_utf8(tmp, "wb");
-    if (!f) return false;
+    if (!f) {  // logged once per reason: settings that "don't stay" (a folder that can't be written) show up in nx.log
+        static int logged = 0;
+        if (logged != errno) logged = errno, log("config: cannot write %s (%s): settings are not saved", tmp.c_str(), std::strerror(errno));
+        return false;
+    }
     std::fprintf(f, "# ACNHRecomp settings (edited by the settings screen; F1 or Minus+Plus in game)\n");
     for (const auto& s : sections) {
         std::fprintf(f, "\n[%s]\n", s.c_str());
@@ -371,6 +377,7 @@ bool config_save() {
         std::error_code ec;
         std::filesystem::rename(std::filesystem::u8path(tmp), std::filesystem::u8path(path()), ec);
         ok = !ec;
+        if (ec) log("config: cannot replace %s (%s): settings are not saved", path().c_str(), ec.message().c_str());
     }
     return ok;
 }
