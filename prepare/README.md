@@ -23,7 +23,8 @@ the add-ons, the shaders (another platform builds that platform only).
 
 `prep::start(Options)` runs them on a worker thread, `prep::status()` gives the stage, its fraction and the whole's,
 the current item, the platform k of N, the log lines (each with its stage; an empty one marks where a stage began)
-and, at the end, the exit code and the error; `prep::cancel()` stops it (a child process too). Taken from
+and, at the end, the exit code and the error; `prep::cancel()` stops it (a child process too, with every process it
+started: its process group, a Job Object on Windows). Taken from
 ACNHRecomp-Importer v1.0.7 (`src/nxcore_api.cpp`): its stages after the extraction.
 
 | Stage | |
@@ -117,7 +118,8 @@ the test prints, goes into `SOURCE`.
   player reads it, kept again on a second run, a cancel during the shader tool, the refusals, `--in-place`.
 - `prepare_e2e_zig`: the Compile stage with a real zig (`NX_PREPARE_ZIG_DIR`, default `<build>/zig`, fetched by
   `tools/fetch_zig.py` when missing; skipped when it cannot be downloaded) on `tools/make_fake_gen.py`'s stand-in; the
-  library loaded and its `nx_game_abi()` compared with the player's; a recompile of the synthetic modules failing and
+  library loaded and its `nx_game_abi()` compared with the player's; a cancel while compiling (no compiler left
+  running, on Linux) and the same folder then prepared to its end; a recompile of the synthetic modules failing and
   tried without the variant first.
 - `prepare_launcher`: those folders through `launcher/files.cpp` (`check_file`, `build_contents`, and `find_build`
   with the player beside it in the build folder); an Importer folder still accepted, others refused and told as one

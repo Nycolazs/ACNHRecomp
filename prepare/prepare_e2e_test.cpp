@@ -165,6 +165,24 @@ static std::string text(const fs::path& p) {
     return std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
 }
 
+#ifdef __linux__
+// The processes whose command line holds `needle` (/proc/<pid>/cmdline); in *clang, how many of them run clang.
+static size_t procs_with(const std::string& needle, size_t* clang = nullptr) {
+    size_t n = 0, c = 0;
+    std::error_code ec;
+    for (const auto& e : fs::directory_iterator("/proc", ec)) {
+        const std::string pid = e.path().filename().string();
+        if (pid.empty() || pid.find_first_not_of("0123456789") != std::string::npos) continue;
+        const std::string cmd = text(e.path() / "cmdline");  // empty once it has ended (a zombie)
+        if (cmd.find(needle) == std::string::npos) continue;
+        n++;
+        if (cmd.find(std::string("\0clang\0", 7)) != std::string::npos) c++;
+    }
+    if (clang) *clang = c;
+    return n;
+}
+#endif
+
 // romfs.pak as hle_fs.cpp reads it: path -> (offset, size).
 static bool read_pak(const fs::path& p, std::map<std::string, std::pair<uint64_t, uint64_t>>& out) {
     std::ifstream f(p, std::ios::binary);
@@ -477,6 +495,64 @@ static int zig(const fs::path& src, const fs::path& work, const fs::path& tool, 
     CHECK(r.last.rc == 0 && !r.stages.count(prep::Stage::Compile));
     CHECK(r.log.find("its library built from this main for this ACNHRecomp: kept") != std::string::npos);
     CHECK(fs::last_write_time(lib) == lib_time);
+
+    std::puts("cancel while compiling: zig stops with every compiler it started; prepared again, it ends (in a folder "
+              "named with accents)");
+    const fs::path outc = work / kAccents / "out_cancel";
+    if (sh("\"" + python + "\" -I " + q(src / "tools" / "make_fake_gen.py") + " " + q(outc) + " 24") != 0) {
+        std::puts("FAIL: tools/make_fake_gen.py");
+        return 1;
+    }
+    // and files that take seconds each (compiled first, the biggest): a compiler left running would outlive the cancel
+    for (int k = 0; k < 8; k++) {
+        std::string code = "#include \"funcs.h\"\n\n";
+        for (int n = 0; n < 1000; n++) {
+            const std::string i = std::to_string(n % 8), j = std::to_string((n + 1) % 8), id = std::to_string(k * 1000 + n);
+            code += "void heavy_" + id + "(nx::CPU& NX_RESTRICT c) {\n    uint64_t x = c.x[" + i + "], y = c.x[" + j +
+                    "];\n    for (int i = 0; i < 48; i++) {\n        x = x * 0x9E3779B97F4A7C15ull + (y >> (i & 7));\n" +
+                    "        y ^= x + uint64_t(i) * " + id + "u;\n    }\n    c.x[0] = x, c.x[1] = y;\n}\n";
+        }
+        write_text(outc / "gen" / "main" / ("code_9" + std::to_string(k) + "0.cpp"), code);
+    }
+    prep::Options oc = base_options(in, outc, tool);
+    oc.platforms = {target};
+    oc.zig = s(zig_exe);  // the folder's own zig cache: nothing of it compiled before
+    CHECK(prep::start(oc));
+    bool cancelled = false;
+    size_t compilers = 0;
+    const auto t0 = std::chrono::steady_clock::now();
+    prep::Status st;
+    for (;;) {
+        st = prep::status();
+        if (st.finished) break;
+        if (!cancelled && st.stage == prep::Stage::Compile) {
+#ifdef __linux__
+            procs_with(s(outc), &compilers);
+            if (compilers >= 2) prep::cancel(), cancelled = true;  // objects being compiled, side by side
+#else
+            if (st.fraction > 0.05) prep::cancel(), cancelled = true;
+#endif
+        }
+        if (!cancelled && std::chrono::steady_clock::now() - t0 > std::chrono::seconds(300)) prep::cancel();
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    prep::wait();
+    CHECK(cancelled && st.rc == 4);
+    CHECK(!fs::exists(outc / ".import" / "complete"));
+#ifdef __linux__
+    std::printf("  cancelled with %zu compilers running\n", compilers);
+    size_t left = procs_with(s(outc));
+    for (int k = 0; k < 30 && left; k++) {  // the processes killed: gone within a few ms, the compiles take seconds
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        left = procs_with(s(outc));
+    }
+    if (left) std::printf("  %zu processes of the cancelled compile still running\n", left);
+    CHECK(left == 0);
+#endif
+    r = run_prep(oc);
+    CHECK(r.last.rc == 0 && r.stages.count(prep::Stage::Compile));
+    CHECK(gl::library_current(s(outc), target, kId303));
+    check_folder(in, outc, false, 0, {});
 
     std::puts("recompiling synthetic modules fails (no MOD0), tried again without the 60 FPS variant first");
     // in a folder named with accents: the recompiler opens exefs/main from its UTF-8 path (not "cannot open")

@@ -211,7 +211,9 @@ void note_failure(const std::string& log, const std::string& what) {
 
 namespace {
 
-// cancel: polled while the child runs; once set, the child is stopped (TerminateProcess; SIGTERM, then SIGKILL).
+// cancel: polled while the child runs; once set, the child is stopped with every process it started (zig runs a
+// `zig clang` per object, which outlived a signal to zig alone): a Job Object on Windows (TerminateJobObject), the
+// child's own process group elsewhere (SIGTERM, then SIGKILL, to the group).
 int run_once(const std::vector<std::string>& argv, const std::string& log, const std::vector<std::string>& env_extra,
              const std::atomic<bool>* cancel) {
 #ifdef _WIN32
@@ -272,20 +274,36 @@ int run_once(const std::vector<std::string>& argv, const std::string& log, const
     si.dwFlags = STARTF_USESTDHANDLES;
     si.hStdOutput = si.hStdError = out;
     si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+    // The child and everything it starts in a job of their own, assigned before the child runs (CREATE_SUSPENDED):
+    // TerminateJobObject ends them all, and closing the job's handle (not inherited) ends what is left of it.
+    HANDLE job = CreateJobObjectW(nullptr, nullptr);
+    if (job) {
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION li{};
+        li.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if (!SetInformationJobObject(job, JobObjectExtendedLimitInformation, &li, sizeof li)) CloseHandle(job), job = nullptr;
+    }
     PROCESS_INFORMATION pi{};
-    BOOL ok = CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT,
-                             envb.data(), nullptr, &si, &pi);
+    BOOL ok = CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, TRUE,
+                             CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT | (job ? CREATE_SUSPENDED : 0), envb.data(),
+                             nullptr, &si, &pi);
     DWORD err = ok ? 0 : GetLastError();
     if (out != INVALID_HANDLE_VALUE) CloseHandle(out);
     if (!ok) {
+        if (job) CloseHandle(job);
         note_failure(log, "cannot start " + argv[0] + " (Windows error " + std::to_string(err) + ")");
         return -1;
+    }
+    if (job) {
+        // not assigned (a job of the caller's that takes no nested one, before Windows 8): the child alone is stopped
+        if (!AssignProcessToJobObject(job, pi.hProcess)) CloseHandle(job), job = nullptr;
+        ResumeThread(pi.hThread);
     }
     if (!cancel) {
         WaitForSingleObject(pi.hProcess, INFINITE);
     } else {
         while (WaitForSingleObject(pi.hProcess, 50) == WAIT_TIMEOUT)
             if (cancel->load()) {
+                if (job) TerminateJobObject(job, 1);
                 TerminateProcess(pi.hProcess, 1);
                 WaitForSingleObject(pi.hProcess, INFINITE);
                 break;
@@ -293,6 +311,7 @@ int run_once(const std::vector<std::string>& argv, const std::string& log, const
     }
     DWORD code = 1;
     GetExitCodeProcess(pi.hProcess, &code);
+    if (job) CloseHandle(job);  // JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: a process the child left running ends with it
     CloseHandle(pi.hProcess);
     CloseHandle(pi.hThread);
     return int(code);
@@ -314,29 +333,50 @@ int run_once(const std::vector<std::string>& argv, const std::string& log, const
     envp.push_back(nullptr);
     posix_spawn_file_actions_t fa;
     posix_spawn_file_actions_init(&fa);
+    // stdin from /dev/null: in a process group of its own the child is not the terminal's foreground (a read from the
+    // terminal would stop it)
+    posix_spawn_file_actions_addopen(&fa, 0, "/dev/null", O_RDONLY, 0);
     posix_spawn_file_actions_addopen(&fa, 1, log.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
     posix_spawn_file_actions_adddup2(&fa, 1, 2);
+    // With `cancel`: the child leads a process group of its own (Android 9 and up too), which every process it starts
+    // joins, so a cancel stops them all.
+    posix_spawnattr_t at;
+    posix_spawnattr_init(&at);
+    if (cancel) {
+        posix_spawnattr_setflags(&at, POSIX_SPAWN_SETPGROUP);
+        posix_spawnattr_setpgroup(&at, 0);
+    }
     pid_t pid;
-    int rc = posix_spawn(&pid, argv[0].c_str(), &fa, nullptr, args.data(), envp.data());
+    int rc = posix_spawn(&pid, argv[0].c_str(), &fa, &at, args.data(), envp.data());
     posix_spawn_file_actions_destroy(&fa);
+    posix_spawnattr_destroy(&at);
     if (rc != 0) {
         note_failure(log, "cannot start " + argv[0] + ": " + std::strerror(rc));
         return -1;
     }
     int st = 0;
     if (cancel) {
+        // Also from here: where posix_spawn returns before the child ran (a fork, bionic), the group exists at once.
+        // Once the child has run exec, this fails (EACCES) and changes nothing.
+        setpgid(pid, pid);
+        // The group, else the child alone (no group: setpgid not run yet). A process group's id is not given to a new
+        // process while the group has a member, so -pid names only these, also once the child itself is reaped.
+        auto stop = [pid](int sig) {
+            if (kill(-pid, sig) != 0) kill(pid, sig);
+        };
         int signalled = 0;  // 0 not yet; then SIGTERM, then SIGKILL two seconds later
         auto since = std::chrono::steady_clock::now();
         for (;;) {
             pid_t w = waitpid(pid, &st, WNOHANG);
             if (w == pid || (w < 0 && errno != EINTR)) break;
             if (cancel->load()) {
-                if (!signalled) kill(pid, SIGTERM), signalled = SIGTERM, since = std::chrono::steady_clock::now();
+                if (!signalled) stop(SIGTERM), signalled = SIGTERM, since = std::chrono::steady_clock::now();
                 else if (signalled == SIGTERM && std::chrono::steady_clock::now() - since > std::chrono::seconds(2))
-                    kill(pid, SIGKILL), signalled = SIGKILL;
+                    stop(SIGKILL), signalled = SIGKILL;
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(10));  // a compile step ends within 10 ms of its child
         }
+        if (signalled) kill(-pid, SIGKILL);  // a process of the group that outlived the child (ESRCH: none left)
     } else {
         while (waitpid(pid, &st, 0) < 0 && errno == EINTR) {
         }

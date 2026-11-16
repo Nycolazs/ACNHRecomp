@@ -62,7 +62,8 @@ extern const char* const kToolchainFault;
 
 // Runs argv (argv[0] the program) with its output into log and env_extra ("NAME=value") added: the exit code, -1
 // when it could not start. posix_spawn (Android 9 and up, desktop Unix) or CreateProcessW. With `cancel`, the child is
-// stopped once it is set (the exit code is then not 0).
+// stopped once it is set, with every process it started (its process group; on Windows its Job Object): the exit code
+// is then not 0.
 int run(const std::vector<std::string>& argv, const std::string& log, const std::vector<std::string>& env_extra = {},
         const std::atomic<bool>* cancel = nullptr);
 
