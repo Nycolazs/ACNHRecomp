@@ -165,6 +165,9 @@ public class TextInput extends View {
 
         @Override
         public boolean deleteSurroundingText(int beforeLength, int afterLength) {
+            // A deletion while a word is being composed: what's left of it can't be told apart any more, so the next
+            // composing text is typed after it rather than replacing it (no committed letter deleted by mistake)
+            composing = 0;
             for (int i = 0; i < beforeLength; i++) nativeKey(KeyEvent.KEYCODE_DEL);
             for (int i = 0; i < afterLength; i++) nativeKey(KeyEvent.KEYCODE_FORWARD_DEL);
             return true;
@@ -183,6 +186,8 @@ public class TextInput extends View {
                 if (event.getCharacters() != null) type(event.getCharacters());
                 return true;
             }
+            if (event.getKeyCode() == KeyEvent.KEYCODE_DEL || event.getKeyCode() == KeyEvent.KEYCODE_FORWARD_DEL)
+                composing = 0;  // as in deleteSurroundingText
             return key(event) || super.sendKeyEvent(event);
         }
     }
