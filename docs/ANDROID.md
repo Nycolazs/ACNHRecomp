@@ -5,22 +5,39 @@ for Adreno, carried inside the app). It was brought up and tuned on a Galaxy S20
 on the island the game holds a steady 30 frames a second at 900 rendered rows, upscaled with AMD FSR 1 to the
 2400x1080 screen (the full 20:9 screen, under the camera cutout), with the battery under ~41 °C after 20 minutes.
 
-The app holds **nothing of the game**: it is the runtime only (a few MB), the same for everyone, and the releases
-of this repository carry it ready to install. The game itself comes from **your own copy**: your computer
-recompiles it (as for the desktop versions) and prepares a *game folder* for the phone: the recompiled code as
-`libacnh_game.so`, the RomFS as `romfs.pak`, the shaders as `spirv.pak`, fonts and the translation. When the app
-opens it asks for that folder, checks it and starts the game; next time it starts right away. That folder (and the
-`libacnh_game.so` in it) must not be shared.
+The app holds **nothing of the game**: it is the runtime and the tools that prepare the game (about 95 MB), the same
+for everyone, and the releases of this repository carry it ready to install. The game itself comes from **your own
+copy**: the ExeFS and RomFS you extract from it with your emulator, from which the phone (or a computer) recompiles
+the game and prepares a *game folder*: the recompiled code as `game/android-arm64/libacnh_game.so`, the RomFS as
+`romfs.pak`, the shaders as `spirv.pak`. When the app opens it asks for that folder, checks it and starts the game;
+next time it starts right away. That folder (and the `libacnh_game.so` in it) must not be shared. No keys, NSP or
+XCI are ever used.
 
-## With ACNHRecomp-Importer (the release)
+## On the phone (the release)
 
-1. Prepare your game folder with **ACNHRecomp-Importer** (on our Discord:
-   [discord.gg/VJW9Dtdu7a](https://discord.gg/VJW9Dtdu7a)), for Android: its folder then has the game's code for the
-   phone in `game/android-arm64/`.
-2. Copy that folder to the phone (e.g. to `ACNH` on the memory card).
+1. With your emulator, extract the ExeFS and the RomFS of your own copy of the game, with update 3.0.3 (Ryujinx:
+   right-click the game, *Extract Data* > *ExeFS*, then *RomFS*; yuzu or Eden: *Dump RomFS*, and *Dump ExeFS* in the
+   debug settings), into one folder as `exefs/` and `romfs/`; the add-on (Happy Home Paradise), extracted the same
+   way, as `aoc/1/` beside them or picked on the phone.
+2. Copy that folder to the phone (about 11 GB; e.g. to `ACNH` on the memory card).
 3. Install `ACNHRecomp-<version>-android.apk` from the
    [releases](https://github.com/Nycolazs/ACNHRecomp/releases), open **ACNH Recomp**, choose *Choose the game folder*
-   and pick it (the app asks once for access to all files). The game starts; next time it starts right away.
+   and pick that folder (the app asks once for access to all files).
+4. The app sees the extracted files and opens *Prepare the game*: their check (version 3.0.3, the RomFS whole, what
+   is wrong said there), the game folder it writes (`ACNH Recomp Game` beside the extracted one, another one chosen,
+   or the extracted folder itself, which saves the RomFS's 10 GB copy), the add-on's folder and the native 60 FPS.
+   *Start*.
+5. The preparation runs in the background with a notification (it has its own *Cancel*): it recompiles the game's
+   code, converts the shaders, packs the RomFS and compiles the game's library for the phone with the zig the app
+   carries. On a phone it **takes long**: often an hour or more, most of it compiling, with the phone warm; keep it
+   charging. It needs about 15 GB free (about 5 GB with the extracted folder itself as the game folder). Stopped half
+   way (cancelled, the phone restarted), *Start* again goes on from what is done. Then *Play*; next time the app opens
+   into the game. The extracted ExeFS and RomFS are not needed any more (except the `romfs` the game folder itself
+   holds, when it is the extracted folder).
+
+**A computer does it much faster**: ACNHRecomp's launcher, or `acnh_prepare GAME --out DIR --platforms
+android-arm64` (prepare/README.md), prepares a folder for Android; copy it to the phone and choose it in step 3.
+Folders ACNHRecomp-Importer prepared for Android (`game/android-arm64/`) are taken as they are.
 
 The rest of this page builds the app and the game folder from this repository instead.
 
@@ -61,7 +78,12 @@ tools/push_android.sh                # the game folder to the phone (~10 GB)
 ```
 
 `tools/build_android.sh --no-game` builds only the app, without any game set up on the computer (what a release
-carries).
+carries). The tools the app prepares the game with are made once into `private/android-tools/`: zig for
+aarch64-linux (`tools/fetch_zig.py aarch64-linux <dir> --android`, trimmed to what the phone's own platform uses:
+`lib/arm64-v8a/libzig.so` and `assets/zig-lib.zip`, which the app unpacks once per version) and the shader tool
+(`tools/build_shader_tool.py linux-bionic-arm64`: `libspirv_harness.so`), which needs the .NET 10 SDK on Linux; the
+script stops and says so when it is missing (or put a `spirv_harness` built elsewhere into
+`private/android-tools/shaders/`).
 
 ### Opening the app
 
@@ -69,12 +91,14 @@ The first time, **ACNH Recomp** shows its home screen:
 
 - *Use the game found*: the folder `android_install.sh` copied into the app's own folder.
 - *Choose the game folder*: any other folder with the prepared game (e.g. one copied by USB to `ACNH` on the memory
-  card). The app then asks for access to all files once: Android needs it to read a folder outside the app's own.
+  card), or one with the extracted `exefs/` and `romfs/`, which the app prepares (above). The app then asks for
+  access to all files once: Android needs it to read a folder outside the app's own.
 
 The game starts as soon as the folder checks out (the first time a few seconds more: `libacnh_game.so` is copied
 into the app). To pick another folder later: long press on the app icon > *Change game folder*.
 
-If the app was updated and the folder was prepared by an older version, the home screen says so: run
+If the app was updated and the folder was prepared by an older version, the home screen says so and offers
+*Prepare it again on this phone* (where it is, from its own files: only the game's library is built again), or run
 `tools/android_install.sh` again (it rebuilds `libacnh_game.so` for the new app).
 
 The pt-BR translation: install it on the computer as for the desktop version (the setup installs a
@@ -188,7 +212,9 @@ Vulkan driver; it applies after a restart:
 
 - **Black screen or the app closes at start**: `adb shell cat <data folder>/nx.log | tail -50` and open an issue
   with it. `adb logcat -s acnh` shows the same log live.
-- **The home screen says the folder has no prepared game**: it lacks `libacnh_game.so` or `analysis/main.bin`: run
-  `tools/push_android.sh` again, or pick the folder that has them.
+- **The home screen says the folder has no prepared game**: it lacks `libacnh_game.so` or `analysis/main.bin`, and
+  the extracted `exefs/` and `romfs/` too: pick the folder that has them, or run `tools/push_android.sh` again.
+- **The preparation on the phone stopped**: its screen says why; the whole log is `.import/prepare.log` in the game
+  folder (or `Android/data/io.github.acnhrecomp/files/prepare.log`), and `adb logcat -s acnh_prepare` shows it live.
 - **Settings for testing** go in `config.txt` in the data folder, one `NX_...=value` per line (they win over the
   settings screen). E.g. `NX_RENDER_HEIGHT=1080` for native 1080 rows.

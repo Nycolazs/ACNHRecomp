@@ -60,10 +60,22 @@ From the Importer's `src/gamelib/` (its runtime copies were identical to `runtim
 
 - zig 0.17.0: `tools/fetch_zig.py <host> <dest>` (x86_64-linux, aarch64-linux, x86_64-windows, aarch64-macos), checked
   against ziglang.org's SHA-256 and trimmed to the four targets (about 335 MB, 12,000 files). The release carries it
-  as `tools/zig/` beside `acnh_prepare` (Android: `libzig.so` in the APK's native libraries, its lib folder unpacked
-  from the APK, `--zig-lib`).
+  as `tools/zig/` beside `acnh_prepare` (Android: `libzig.so` in the APK's native libraries, `--android` trimming its
+  lib folder to the phone's own platform, about 75 MB, unpacked from the APK's `assets/zig-lib.zip` with its
+  `sizes.txt`: `--zig-lib`).
 - The shader tool: `tools/build_shader_tool.py <rid> <dest>` builds `tools/maxwell/spirv_harness` NativeAOT (one
-  executable of about 5 MB, no .NET needed where it runs; .NET 10 SDK to build it), carried as `tools/shaders/`.
+  executable of about 5 MB, no .NET needed where it runs; .NET 10 SDK to build it), carried as `tools/shaders/`
+  (Android: `linux-bionic-arm64`, `libspirv_harness.so` in the APK).
+
+## On Android (`prepare_jni.cpp`)
+
+The app prepares the game folder on the phone itself: `libacnh_prepare.so` (`nx_prepare_jni`, apart from the
+player's `libacnh.so`) gives `android/java/io/github/acnhrecomp/PrepareNative.java` the probe, `prep::start`,
+`status` (with the log lines numbered, so the screen and the notification both read them) and `cancel`, as UTF-8
+requests and JSON answers. `Prepare.java` is the screen (the check translated, the game folder, the add-on, the
+stages), `PrepareService.java` the foreground service that runs it (wake lock, notification, the tools made ready);
+`tools/build_android.sh` builds the library and carries the tools. The log goes to `.import/prepare.log` in the game
+folder once it ends.
 
 ## recomp/
 
@@ -80,7 +92,7 @@ author) unchanged, except for the include paths and the command line's name.
 - `acnh/speedfix-*.pchtxt`: tmouh's SpeedFix for main, CC BY-NC 4.0 (`acnh/SPEEDFIX.md`).
 
 `recomp/recomp.cmake` and `prepare.cmake` build them; the top `CMakeLists.txt` includes them on desktop, except in a
-build of the generated code (`NX_GEN_PROBE`). `io/`, `gamelib/` and `prepare.cpp` are plain C++20 too.
+build of the generated code (`NX_GEN_PROBE`), and always on Android (`libacnh_prepare.so`). `io/`, `gamelib/` and `prepare.cpp` are plain C++20 too.
 
 ## The source guard
 
