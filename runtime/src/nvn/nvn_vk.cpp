@@ -553,7 +553,9 @@ bool make_surface() {
         for (VkFormat f : {VK_FORMAT_A2B10G10R10_UNORM_PACK32, VK_FORMAT_A2R10G10B10_UNORM_PACK32})
             if (want == HdrOutput::Hdr10 && g_hdr == HdrOutput::Off && pair(f, VK_COLOR_SPACE_HDR10_ST2084_EXT))
                 g_sc_format = f, g_sc_color_space = VK_COLOR_SPACE_HDR10_ST2084_EXT, g_hdr = want;
-        static bool first = true;  // decided on the first surface, before the game's textures and shaders are made
+        // Decided on the first surface: before the game's textures are made (they need the device); shaders read
+        // earlier keep the SPIR-V they were read with (shader_spirv)
+        static bool first = true;
         if (g_hdr == HdrOutput::Off) {
             log("nvn/vk: HDR asked, but the surface offers no %s format: SDR%s", want == HdrOutput::ScRgb ? "scRGB" : "HDR10",
                 first ? ", and HDR off until the game restarts" : "");

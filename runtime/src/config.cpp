@@ -279,9 +279,6 @@ void log_environment() {
             if (v.size() > 120) v = v.substr(0, 117) + "...";
             list += (list.empty() ? "" : " ") + v;
         }
-#ifndef NX_VERSION_STRING
-#define NX_VERSION_STRING "dev"
-#endif
     log("ACNHRecomp %s", NX_VERSION_STRING);  // the first line: which release a log a player sends came from
     log("config: environment: %s", list.empty() ? "no NX_* variables" : list.c_str());
 }

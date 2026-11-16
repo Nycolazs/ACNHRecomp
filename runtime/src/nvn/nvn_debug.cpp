@@ -339,19 +339,23 @@ bool frame_dump_record(VkCommandBuffer cb, GpuImage& img) {
 }
 
 namespace {
+// NaN as 0, as the HDR present pass draws it (nvn_screenshot.cpp's rule): a frame of NaNs isn't a picture
 float half_to_float(uint16_t h) {
     const uint32_t e = (h >> 10) & 31, m = h & 1023;
-    const float v = e == 0 ? std::ldexp(float(m), -24) : e == 31 ? 65504.0f : std::ldexp(float(m | 1024), int(e) - 25);
+    const float v = e == 0 ? std::ldexp(float(m), -24) : e == 31 ? (m ? 0.0f : 65504.0f) : std::ldexp(float(m | 1024), int(e) - 25);
     return (h & 0x8000) ? -v : v;
 }
-// A pixel of the readback as 8-bit RGB: 8-bit formats as they are, RGBA16F (linear) clamped to [0, 1].
+// A pixel of the readback as 8-bit RGB: 8-bit formats as they are; RGBA16F (the HDR window texture, linear light
+// relative to the UI's white) encoded with sRGB's curve, so the probe's threshold means what it does in SDR.
 void pixel_rgb(const GpuImage& img, const uint8_t* px, size_t index, uint8_t out[3]) {
     if (img.format == VK_FORMAT_R16G16B16A16_SFLOAT) {
         const uint8_t* s = px + index * 8;
         for (int c = 0; c < 3; c++) {
             uint16_t h;
             std::memcpy(&h, s + 2 * c, 2);
-            out[c] = uint8_t(std::clamp(half_to_float(h), 0.0f, 1.0f) * 255.0f + 0.5f);
+            const float l = std::clamp(half_to_float(h), 0.0f, 1.0f);
+            const float e = l <= 0.0031308f ? 12.92f * l : 1.055f * std::pow(l, 1.0f / 2.4f) - 0.055f;
+            out[c] = uint8_t(e * 255.0f + 0.5f);
         }
         return;
     }
