@@ -203,6 +203,35 @@ bool open_url_in_app(const std::string& url, const char* package) {
     return false;
 }
 
+bool open_sign_in(const std::string& url) {
+    {
+        JniScope jni;  // Nextendo's sign-in thread, which then waits for the redirect
+        JNIEnv* env = jni.env;
+        if (!env) return false;
+        jobject act = g_app->activity->clazz;
+        jclass actc = env->GetObjectClass(act);
+        jclass ic = env->FindClass("android/content/Intent");
+        if (!env->ExceptionCheck() && ic) {
+            jobject intent = env->NewObject(ic, env->GetMethodID(ic, "<init>", "()V"));
+            jobject pkg = env->CallObjectMethod(act, env->GetMethodID(actc, "getPackageName", "()Ljava/lang/String;"));
+            env->CallObjectMethod(intent, env->GetMethodID(ic, "setClassName", "(Ljava/lang/String;Ljava/lang/String;)Landroid/content/Intent;"),
+                                  pkg, env->NewStringUTF("io.github.acnhrecomp.SignIn"));
+            env->CallObjectMethod(intent, env->GetMethodID(ic, "putExtra", "(Ljava/lang/String;Ljava/lang/String;)Landroid/content/Intent;"),
+                                  env->NewStringUTF("url"), env->NewStringUTF(url.c_str()));
+            // No FLAG_ACTIVITY_NEW_TASK: the screen goes on top of the game, in its task, and closing it returns there.
+            if (!env->ExceptionCheck())
+                env->CallVoidMethod(act, env->GetMethodID(actc, "startActivity", "(Landroid/content/Intent;)V"), intent);
+            if (!env->ExceptionCheck()) {
+                nx::log("app: Nextendo's sign-in page opened in the app");
+                return true;
+            }
+        }
+        env->ExceptionClear();
+    }
+    nx::log("app: the sign-in screen did not start: the browser instead");
+    return open_url_in_app(url, nullptr);
+}
+
 // nextendo_http.cpp on Android, where there is no curl: java.net.HttpURLConnection, so Android's own TLS and its
 // certificate store check nextendo.network. Redirects are followed (same protocol); errors read the error stream.
 bool https_request(const std::string& method, const std::string& url,

@@ -100,6 +100,9 @@ float default_render_scale();
 [[noreturn]] void restart_app();
 // Android: `url` in the app `package` when it is installed (Instagram, GitHub), else in the browser (platform_android).
 bool open_url_in_app(const std::string& url, const char* package);  // false: nothing opened it
+// Nextendo's sign-in page (`url`, whose redirect_uri is the loopback listener) in the app's own screen, a WebView
+// (android/java SignIn), so the app stays in front while the player signs in; the browser when that screen can't start.
+bool open_sign_in(const std::string& url);
 // An HTTPS request on java.net.HttpURLConnection (Android's TLS and certificate store): nextendo_http.cpp, as Android
 // has no curl. status 0 and `error` when nothing came back.
 bool https_request(const std::string& method, const std::string& url,
