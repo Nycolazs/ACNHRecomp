@@ -27,6 +27,7 @@
 #include <vector>
 
 #include "imgui.h"
+#include "imgui_internal.h"  // the edited field's text (typing_preview)
 #include "backends/imgui_impl_vulkan.h"
 
 #include <nx/runtime.h>
@@ -409,6 +410,34 @@ void feed_input(ImGuiIO& io) {
         }
 }
 
+#if defined(__ANDROID__)
+// The phone's keyboard covers the lower half of the screen, often the field being typed in (TextInput.java): the
+// field's text and cursor show at the top as well, over everything, while it is edited.
+void typing_preview(float scale) {
+    const ImGuiInputTextState* st = ImGui::GetInputTextState(ImGui::GetActiveID());
+    if (!st || (st->Flags & ImGuiInputTextFlags_Password) || st->TextA.Size < 1) return;
+    const ImGuiIO& io = ImGui::GetIO();
+    const char* text = st->TextA.Data;
+    const int len = std::clamp(st->TextLen, 0, st->TextA.Size - 1);
+    const int cursor = std::clamp(st->GetCursorPos(), 0, len);
+    const float lh = ImGui::GetTextLineHeight(), pad = 14.0f * scale, margin = 24.0f * scale;
+    const float before = ImGui::CalcTextSize(text, text + cursor).x, all = ImGui::CalcTextSize(text, text + len).x;
+    const float w = std::max(1.0f, std::min(std::max(all + pad * 2 + 2.0f * scale, 240.0f * scale), io.DisplaySize.x - margin * 2));
+    const float h = lh + 16.0f * scale;
+    const ImVec2 p(std::floor((io.DisplaySize.x - w) * 0.5f), margin);
+    const float shift = std::max(0.0f, before - (w - pad * 2) + 2.0f * scale);  // longer than the pill: the cursor stays in
+    const ImU32 ink = IM_COL32(107, 79, 54, 255);
+    ImDrawList* dl = ImGui::GetForegroundDrawList();
+    dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), IM_COL32(255, 249, 232, 245), h * 0.5f);
+    dl->PushClipRect(ImVec2(p.x + pad, p.y), ImVec2(p.x + w - pad + 2.0f * scale, p.y + h), true);
+    const ImVec2 t(p.x + pad - shift, p.y + (h - lh) * 0.5f);
+    dl->AddText(t, ink, text, text + len);
+    if (st->CursorAnim <= 0.0f || std::fmod(st->CursorAnim, 1.20f) <= 0.80f)  // blinking as the field's own
+        dl->AddLine(ImVec2(t.x + before, t.y), ImVec2(t.x + before, t.y + lh), ink, std::max(1.0f, 1.5f * scale));
+    dl->PopClipRect();
+}
+#endif
+
 void draw_fps_overlay(float scale) {
     // The game's own frames a second (plat::game_frames: not the 30 fps repeats on a 60 Hz screen nor the generated
     // frames, which made it read 60 while the game ran at 30), and the pictures shown when frame generation adds some.
@@ -546,6 +575,9 @@ void ui_record(VkCommandBuffer cb, VkImage image, VkFormat format, VkExtent2D ex
     if (g_visible) {
         float opening = std::clamp(std::chrono::duration<float>(now - opened_at).count() / 0.22f, 0.0f, 1.0f);
         if (!settings_draw(scale, g_font_title, opening)) g_visible = false;  // closed from the screen
+#if defined(__ANDROID__)
+        if (g_visible) typing_preview(scale);
+#endif
     } else {
         if (hint) settings_hint(scale, hint_t);
         if (g_hdr_panel) hdr_panel_draw(scale);
@@ -726,6 +758,29 @@ bool ui_touch(float x, float y, bool down) {
     if (down != held) push({Input::MouseButton, 0, down});
     held = down;
     return true;
+}
+
+void ui_text_input(const char* utf8) {
+    if (!g_visible || !utf8) return;
+    // In pieces that fit an Input's text, cut between characters (never inside one's UTF-8 bytes).
+    const size_t len = std::strlen(utf8);
+    for (size_t at = 0; at < len;) {
+        size_t n = std::min(len - at, sizeof(Input::text) - 1);
+        while (n > 0 && at + n < len && (static_cast<unsigned char>(utf8[at + n]) & 0xC0) == 0x80) n--;
+        if (!n) break;  // not UTF-8
+        Input in{Input::Char};
+        std::memcpy(in.text, utf8 + at, n);
+        push(in);
+        at += n;
+    }
+}
+
+void ui_text_key(TextKey key) {
+    if (!g_visible) return;
+    const ImGuiKey k = key == TextKey::Backspace ? ImGuiKey_Backspace : key == TextKey::Delete ? ImGuiKey_Delete
+                                                                                                : ImGuiKey_Enter;
+    push({Input::Key, k, true});
+    push({Input::Key, k, false});
 }
 
 bool ui_pad(uint64_t buttons, int32_t lx, int32_t ly) {

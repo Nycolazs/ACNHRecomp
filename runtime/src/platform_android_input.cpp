@@ -70,6 +70,8 @@ std::vector<Touch> g_touches;
 float g_w = 1, g_h = 1;
 bool g_gamepad = false;  // the last input came from a controller: the drawn touch controls hide
 bool g_pad_connected = false;  // a controller is connected (platform_android.cpp polls the system's input devices)
+std::atomic<uint64_t> g_ui_taps{0};     // ui_taps
+std::atomic<bool> g_ui_finger{false};  // ui_finger_down
 
 // The button the on-screen stick holds to run (read_pad): Wonder's Y (dash), ACNH's B.
 uint64_t run_button() {
@@ -173,6 +175,8 @@ int32_t on_input(android_app*, AInputEvent* e) {
         bool up = kind0 == AMOTION_EVENT_ACTION_UP || kind0 == AMOTION_EVENT_ACTION_CANCEL;
         if (nx::ui::ui_touch(AMotionEvent_getX(e, 0), AMotionEvent_getY(e, 0), !up)) {
             g_touches.clear();
+            if (up) g_ui_taps.fetch_add(1, std::memory_order_relaxed);
+            g_ui_finger.store(!up, std::memory_order_relaxed);
             return 1;
         }
     }
@@ -218,6 +222,9 @@ int32_t on_input(android_app*, AInputEvent* e) {
     }
     return 1;
 }
+
+uint64_t ui_taps() { return g_ui_taps.load(std::memory_order_relaxed); }
+bool ui_finger_down() { return g_ui_finger.load(std::memory_order_relaxed); }
 
 bool headless() {  // NX_HEADLESS (platform.h)
     static const bool on = std::getenv("NX_HEADLESS") != nullptr;

@@ -53,6 +53,7 @@
 #include "platform.h"
 #include "config.h"
 #include "platform_android.h"
+#include "ui/ui.h"
 
 #ifndef MAP_FIXED_NOREPLACE
 #define MAP_FIXED_NOREPLACE 0x100000
@@ -1214,18 +1215,114 @@ void hide_system_bars(JNIEnv* env, jobject activity) {
     if (env->ExceptionCheck()) env->ExceptionClear();
 }
 
+// ---- the phone's keyboard for the settings screen's text fields (android/java/.../TextInput.java) ----------------
+// NativeActivity's own view is no text editor and never has the focus, so the system keyboard did not come up for it
+// (One UI: Discord, 0.9.0), and nothing typed reached the field. A TextInput view, added to the activity on the UI thread
+// the first time a field is edited, takes the focus and the keyboard while one is; what is typed comes back through its
+// native methods (registered here: the library is NativeActivity's, not loaded by its class loader), on the UI thread,
+// into the settings screen's input queue (ui.cpp).
+jobject g_text_view = nullptr;  // UI thread only: a global reference, dropped with its activity
+jmethodID g_text_show = nullptr, g_text_hide = nullptr;
+enum : char { kUiBars = 1, kUiKeyboardShow = 2, kUiKeyboardHide = 3 };  // the bytes of the UI thread's pipe
+
+void JNICALL text_typed(JNIEnv* env, jclass, jbyteArray utf8) {
+    const jsize n = utf8 ? env->GetArrayLength(utf8) : 0;
+    if (n <= 0) return;
+    std::string s(size_t(n), '\0');
+    env->GetByteArrayRegion(utf8, 0, n, reinterpret_cast<jbyte*>(s.data()));
+    nx::ui::ui_text_input(s.c_str());
+}
+
+void JNICALL text_key(JNIEnv*, jclass, jint code) {
+    switch (code) {
+        case AKEYCODE_DEL: nx::ui::ui_text_key(nx::ui::TextKey::Backspace); break;
+        case AKEYCODE_FORWARD_DEL: nx::ui::ui_text_key(nx::ui::TextKey::Delete); break;
+        case AKEYCODE_ENTER: nx::ui::ui_text_key(nx::ui::TextKey::Enter); break;
+        default: break;
+    }
+}
+
+// The activity's TextInput, made on first use; null when it cannot be (logged once).
+jobject text_view(JNIEnv* env, jobject activity) {
+    static bool failed = false;
+    if (g_text_view || failed) return g_text_view;
+    if (env->PushLocalFrame(16) != JNI_OK) return env->ExceptionClear(), nullptr;
+    // Each step stops at a Java exception (a JNI call with one pending is not allowed).
+    auto ok = [&](const void* p) {
+        if (env->ExceptionCheck()) return env->ExceptionClear(), false;
+        return p != nullptr;
+    };
+    jobject view = nullptr;
+    jclass actc = env->GetObjectClass(activity);
+    // The app's own classes come from the activity's class loader: FindClass on this thread sees the system's only.
+    jmethodID get_loader = env->GetMethodID(actc, "getClassLoader", "()Ljava/lang/ClassLoader;");
+    jobject loader = ok(get_loader) ? env->CallObjectMethod(activity, get_loader) : nullptr;
+    jclass loaderc = ok(loader) ? env->FindClass("java/lang/ClassLoader") : nullptr;
+    jmethodID load = ok(loaderc) ? env->GetMethodID(loaderc, "loadClass", "(Ljava/lang/String;)Ljava/lang/Class;") : nullptr;
+    jstring name = ok(load) ? env->NewStringUTF("io.github.acnhrecomp.TextInput") : nullptr;
+    auto cls = static_cast<jclass>(ok(name) ? env->CallObjectMethod(loader, load, name) : nullptr);
+    if (ok(cls)) {
+        static const JNINativeMethod methods[] = {
+            {"nativeText", "([B)V", reinterpret_cast<void*>(text_typed)},
+            {"nativeKey", "(I)V", reinterpret_cast<void*>(text_key)},
+        };
+        const bool registered = env->RegisterNatives(cls, methods, 2) == JNI_OK;
+        jmethodID ctor = ok(registered ? cls : nullptr) ? env->GetMethodID(cls, "<init>", "(Landroid/content/Context;)V") : nullptr;
+        g_text_show = ok(ctor) ? env->GetMethodID(cls, "show", "()V") : nullptr;
+        g_text_hide = ok(g_text_show) ? env->GetMethodID(cls, "hide", "()V") : nullptr;
+        jobject v = ok(g_text_hide) ? env->NewObject(cls, ctor, activity) : nullptr;
+        // 1 x 1 pixel in the corner, over NativeActivity's view (it draws nothing).
+        jclass lpc = ok(v) ? env->FindClass("android/view/ViewGroup$LayoutParams") : nullptr;
+        jmethodID lpi = ok(lpc) ? env->GetMethodID(lpc, "<init>", "(II)V") : nullptr;
+        jobject lp = ok(lpi) ? env->NewObject(lpc, lpi, jint(1), jint(1)) : nullptr;
+        jmethodID add = ok(lp) ? env->GetMethodID(actc, "addContentView",
+                                                    "(Landroid/view/View;Landroid/view/ViewGroup$LayoutParams;)V")
+                               : nullptr;
+        if (ok(add)) {
+            env->CallVoidMethod(activity, add, v, lp);
+            if (ok(v)) view = env->NewGlobalRef(v);
+        }
+    }
+    env->PopLocalFrame(nullptr);
+    if (!view) {
+        failed = true;
+        nx::log("android: no TextInput view; the settings screen's text fields get no system keyboard");
+        return nullptr;
+    }
+    g_text_view = view;
+    return view;
+}
+
+void soft_keyboard(JNIEnv* env, jobject activity, bool show) {
+    jobject v = show ? text_view(env, activity) : g_text_view;
+    if (!v) return;
+    env->CallVoidMethod(v, show ? g_text_show : g_text_hide);
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    nx::log("android: system keyboard %s", show ? "asked for" : "put away");
+}
+
 int on_ui_request(int fd, int, void*) {
     char buf[16];
-    while (read(fd, buf, sizeof buf) > 0) {
-    }
-    if (g_activity) hide_system_bars(g_activity->env, g_activity->clazz);
+    ssize_t n;
+    bool bars = false;
+    char keyboard = 0;  // the last keyboard request read: show or hide
+    while ((n = read(fd, buf, sizeof buf)) > 0)
+        for (ssize_t i = 0; i < n; i++) {
+            if (buf[i] == kUiKeyboardShow || buf[i] == kUiKeyboardHide) keyboard = buf[i];
+            else bars = true;
+        }
+    if (!g_activity) return 1;
+    if (keyboard) soft_keyboard(g_activity->env, g_activity->clazz, keyboard == kUiKeyboardShow);
+    // The keyboard can bring the navigation bar up with it: hidden again once it has gone.
+    if (bars || keyboard == kUiKeyboardHide) hide_system_bars(g_activity->env, g_activity->clazz);
     return 1;
 }
 
-void request_immersive() {
-    char c = 1;
-    if (g_ui_pipe[1] >= 0) (void)write(g_ui_pipe[1], &c, 1);
+void ui_thread_request(char what) {
+    if (g_ui_pipe[1] >= 0) (void)write(g_ui_pipe[1], &what, 1);
 }
+
+void request_immersive() { ui_thread_request(kUiBars); }
 
 }  // namespace
 
@@ -1266,6 +1363,10 @@ static void open_home(android_app* app, const std::string& why) {
 
 extern "C" JNIEXPORT void ANativeActivity_onCreate(ANativeActivity* activity, void* saved, size_t size) {
     g_activity = activity;
+    if (g_text_view) {  // the last activity's: a new one gets its own when a field is edited
+        activity->env->DeleteGlobalRef(g_text_view);
+        g_text_view = nullptr;
+    }
     if (g_ui_pipe[0] < 0 && pipe2(g_ui_pipe, O_NONBLOCK | O_CLOEXEC) == 0)
         ALooper_addFd(ALooper_forThread(), g_ui_pipe[0], ALOOPER_POLL_CALLBACK, ALOOPER_EVENT_INPUT, on_ui_request, nullptr);
     glue_ANativeActivity_onCreate(activity, saved, size);
@@ -1479,6 +1580,29 @@ extern "C" void android_main(android_app* app) {
             start_thread(game_thread, nullptr, 256ull << 20);  // the guest main thread; deep host recursion
         }
         if (started) sleep_ns(2'000'000);
+        // The phone's keyboard while one of the settings screen's text fields is being edited (TextInput.java). It is
+        // asked for once the edit has lasted a moment with no finger on the screen (a drag that starts on the field
+        // scrolls the page and ends the edit: the keyboard would flash), and again after each later tap that leaves the
+        // field edited (the player may have put it away with Back; a tap elsewhere ends the edit instead).
+        {
+            constexpr uint64_t kSettleNs = 150'000'000;
+            static bool keyboard = false;
+            static uint64_t since = 0, tap_ns = 0, taps_seen = 0, taps_shown = 0;
+            const uint64_t now = monotonic_ns(), taps = ui_taps();
+            if (taps != taps_seen) taps_seen = taps, tap_ns = now;
+            if (!nx::ui::ui_text_field()) {
+                since = 0;
+                if (keyboard) keyboard = false, ui_thread_request(kUiKeyboardHide);
+            } else {
+                if (!since) since = now;
+                const bool settled = !ui_finger_down() && now - since > kSettleNs && now - tap_ns > kSettleNs;
+                if (settled && (!keyboard || taps != taps_shown)) {
+                    keyboard = true;
+                    taps_shown = taps;
+                    ui_thread_request(kUiKeyboardShow);
+                }
+            }
+        }
         // Every 2 s: whether a game controller is connected (the touch controls hide while one is).
         static uint64_t next_pad_poll = 0;
         if (uint64_t now = monotonic_ns(); now >= next_pad_poll) {
