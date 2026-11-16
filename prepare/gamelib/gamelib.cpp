@@ -335,6 +335,10 @@ int run_once(const std::vector<std::string>& argv, const std::string& log, const
         while (waitpid(pid, &st, 0) < 0 && errno == EINTR) {
         }
     }
+    // A step ended by a signal leaves no word of its own (a phone's low-memory killer: SIGKILL): said in its log
+    if (WIFSIGNALED(st) && !(cancel && cancel->load()))
+        note_failure(log, argv[0] + " stopped by signal " + std::to_string(WTERMSIG(st)) +
+                              (WTERMSIG(st) == SIGKILL ? " (killed: out of memory?)" : ""));
     return WIFEXITED(st) ? WEXITSTATUS(st) : 128 + (WIFSIGNALED(st) ? WTERMSIG(st) : 0);
 #endif
 }
