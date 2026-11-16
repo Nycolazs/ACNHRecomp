@@ -97,9 +97,14 @@ Saves are written to `user/device_save` on the phone; copy it back the same way 
 Open **ACNH Recomp** on the phone. The first start takes a minute or two: shaders are prepared once, then kept.
 
 - **Touch controls**: the left half of the screen is the stick; A, B, X, Y at the bottom right; L/ZL, R/ZR in the
-  top corners; - and + at the top centre with the settings gear between them; a small d-pad bottom left.
+  top corners; - and + at the top centre with the settings gear between them; a small d-pad bottom left. Slid past
+  its ring for a moment, the stick also holds B (run; the ring lights up): *Run with the stick* in Settings >
+  Controls turns that off.
 - **A controller** (Bluetooth or USB) hides the touch controls by itself while it is connected. The settings can
-  also hide them for good.
+  also hide them for good. *Confirm / cancel buttons* (Settings > Controls) puts the game's A on its bottom button
+  (Xbox layout), and on the touch controls too.
+- **Text fields** of the settings (the Online page's address and friend code) bring up the phone's keyboard; what
+  is typed also shows at the top of the screen, above it.
 - **Settings**: the gear at the top centre (or Minus + Plus on a controller); drag a finger over a page to scroll
   it. Language (pt-BR included), aspect, resolution, upscaling, frame generation, frame rate. Resolution, aspect,
   upscaling (FSR or bilinear), its sharpness, anti-aliasing, frame generation, the FPS counter and the thermal mode
