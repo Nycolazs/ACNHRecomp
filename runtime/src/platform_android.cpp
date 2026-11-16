@@ -854,6 +854,26 @@ void* load_custom_driver(const std::string& so) {
     return nullptr;
 }
 
+// Whether a Vulkan driver finds a GPU: a throwaway instance and its physical devices. Turnip loads on an Adreno it
+// doesn't support yet (the 710, 720, 722 and 732 with Mesa 26.2.5) and then lists none: the game ran with nothing
+// drawn, sound only ("no GPU" in the log).
+bool driver_finds_gpu(void* gipa_ptr) {
+    auto gipa = reinterpret_cast<PFN_vkGetInstanceProcAddr>(gipa_ptr);
+    auto create = reinterpret_cast<PFN_vkCreateInstance>(gipa(nullptr, "vkCreateInstance"));
+    if (!create) return false;
+    VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO};
+    app.apiVersion = VK_API_VERSION_1_1;
+    VkInstanceCreateInfo ci{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
+    ci.pApplicationInfo = &app;
+    VkInstance inst = VK_NULL_HANDLE;
+    if (create(&ci, nullptr, &inst) != VK_SUCCESS || !inst) return false;
+    uint32_t n = 0;
+    if (auto enumerate = reinterpret_cast<PFN_vkEnumeratePhysicalDevices>(gipa(inst, "vkEnumeratePhysicalDevices")))
+        enumerate(inst, &n, nullptr);
+    if (auto destroy = reinterpret_cast<PFN_vkDestroyInstance>(gipa(inst, "vkDestroyInstance"))) destroy(inst, nullptr);
+    return n > 0;
+}
+
 void* load_vulkan() {
     std::string pick = std::getenv("NX_GPU_DRIVER") ? std::getenv("NX_GPU_DRIVER") : nx::config_get("video.gpu_driver", "auto");
     char vk[PROP_VALUE_MAX] = {};
@@ -880,8 +900,10 @@ void* load_vulkan() {
             nx::log("vulkan: video.gpu_driver = custom, but %s/drivers/ has no .so: the default driver", g_root.c_str());
         else if (std::strcmp(vk, "adreno") != 0)
             nx::log("vulkan: a custom driver needs an Adreno GPU (this one is \"%s\"): the phone's driver", vk);
-        else if (void* gipa = load_custom_driver(so))
-            return gipa;
+        else if (void* gipa = load_custom_driver(so)) {
+            if (driver_finds_gpu(gipa)) return gipa;
+            nx::log("vulkan: the custom driver %s finds no GPU: the default driver", so.c_str());
+        }
         pick = "auto";
     }
     if (pick != "system" && std::strcmp(vk, "adreno") == 0 && !g_native_lib_dir.empty() && access(turnip.c_str(), R_OK) == 0) {
@@ -896,11 +918,16 @@ void* load_vulkan() {
         if (void* h = adrenotools_open_libvulkan(RTLD_NOW, ADRENOTOOLS_DRIVER_CUSTOM, tmp.c_str(), libs.c_str(), libs.c_str(),
                                                  "libvulkan_freedreno.so", nullptr, nullptr)) {
             if (void* gipa = dlsym(h, "vkGetInstanceProcAddr")) {
-                nx::log("vulkan: Turnip (Mesa) through libadrenotools, instead of the phone's Adreno driver");
-                return gipa;
+                if (driver_finds_gpu(gipa)) {
+                    nx::log("vulkan: Turnip (Mesa) through libadrenotools, instead of the phone's Adreno driver");
+                    return gipa;
+                }
+                nx::log("vulkan: Turnip finds no GPU (Adreno %d, not supported by it yet): the phone's driver",
+                        system_adreno_model(dlopen("libvulkan.so", RTLD_NOW | RTLD_LOCAL)));
             }
+        } else {
+            nx::log("vulkan: Turnip could not be loaded (%s): the phone's driver", dlerror());
         }
-        nx::log("vulkan: Turnip could not be loaded (%s): the phone's driver", dlerror());
     }
     void* lib = dlopen("libvulkan.so", RTLD_NOW | RTLD_LOCAL);
     return lib ? dlsym(lib, "vkGetInstanceProcAddr") : nullptr;
