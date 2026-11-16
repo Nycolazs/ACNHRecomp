@@ -151,6 +151,11 @@ rm -rf "${OUT:?}/assets"
 tools/bundle_mods.sh "$OUT/assets"
 # Mbed TLS is linked into the game library (Nextendo Online): Apache 2.0 asks for its licence text in the package.
 mkdir -p "$OUT/assets/licenses" && cp "$BUILD/_deps/mbedtls-src/LICENSE" "$OUT/assets/licenses/LICENSE-mbedtls.txt"
+# Capstone (BSD 3-clause, LLVM's licence for its tables) and tmouh's SpeedFix (CC BY-NC 4.0: its attribution) are built
+# into libacnh_prepare.so (the recompiler): their notices
+cp third_party/capstone/LICENSE.TXT "$OUT/assets/licenses/LICENSE-capstone.txt"
+cp third_party/capstone/LICENSE_LLVM.TXT "$OUT/assets/licenses/LICENSE-capstone-llvm.txt"
+cp prepare/recomp/acnh/SPEEDFIX.md "$OUT/assets/licenses/SPEEDFIX.txt"
 # zig's licence (MIT; LLVM's and the libraries' own are in its lib folder) and that folder, unpacked on the phone
 cp "$TOOLS/zig/LICENSE" "$OUT/assets/licenses/LICENSE-zig.txt"
 cp "$TOOLS/zig-lib.zip" "$OUT/assets/zig-lib.zip"

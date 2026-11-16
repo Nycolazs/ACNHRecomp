@@ -1,7 +1,10 @@
 #!/bin/bash
 # The text files of a release package (tools/package_release_*.sh), in <folder>: README.txt (how to play, for that
-# system), LICENSE (this project's), THIRD-PARTY.txt (the libraries beside the executables) and, with <build>,
-# LICENSE-mbedtls.txt (Mbed TLS is linked into acnh; Apache 2.0 asks for its licence text in the package).
+# system), LICENSE (this project's), THIRD-PARTY.txt (the libraries beside the executables and built in),
+# LICENSE-capstone*.txt (Capstone is built into the launcher and acnh_prepare; BSD 3-clause and LLVM's licence ask for
+# their notice in a binary distribution), SPEEDFIX.txt (tmouh's SpeedFix, built in with them: CC BY-NC 4.0 asks for its
+# attribution) and, with <build>, LICENSE-mbedtls.txt (Mbed TLS is linked into acnh; Apache 2.0 asks for its licence
+# text in the package).
 # usage: tools/release_readme.sh <folder> windows|macos|linux [<version>] [<build>]
 cd "$(dirname "$0")/.." || exit 1
 set -e
@@ -87,6 +90,9 @@ EOF
 }
 text | sed "s/\$/${EOL%$'\n'}/" > "$DIR/README.txt"
 cp LICENSE "$DIR/LICENSE.txt"
+cp third_party/capstone/LICENSE.TXT "$DIR/LICENSE-capstone.txt"
+cp third_party/capstone/LICENSE_LLVM.TXT "$DIR/LICENSE-capstone-llvm.txt"
+cp prepare/recomp/acnh/SPEEDFIX.md "$DIR/SPEEDFIX.txt"
 if [ -n "$4" ]; then
   cp "$4/_deps/mbedtls-src/LICENSE" "$DIR/LICENSE-mbedtls.txt"
 fi
@@ -100,6 +106,13 @@ fi
   echo "(BSD 3-clause). libvorbis and libogg: https://xiph.org (BSD 3-clause). Dear ImGui (in the launcher and the"
   echo "settings screen): https://github.com/ocornut/imgui (MIT). Mbed TLS (linked into acnh, for Nextendo Online):"
   echo "https://github.com/Mbed-TLS/mbedtls (Apache 2.0, text in LICENSE-mbedtls.txt)."
+  echo
+  echo "Built into the launcher and acnh_prepare (the preparation of the game folder): Capstone 5.0.7, which the"
+  echo "recompiler disassembles the game's code with (https://www.capstone-engine.org, BSD 3-clause, with LLVM's licence"
+  echo "for its tables: LICENSE-capstone.txt, LICENSE-capstone-llvm.txt); and tmouh's \"ACNH 60 FPS + SpeedFix\" patches of"
+  echo "main for 3.0.2 and 3.0.3 (https://github.com/tmouh/acnh-60fps), unchanged, by tmouh, licensed CC BY-NC 4.0"
+  echo "(https://creativecommons.org/licenses/by-nc/4.0/; SPEEDFIX.txt), with which the preparation recompiles main for"
+  echo "the native 60 FPS."
   echo
   echo "The preparation's tools (tools/): zig 0.17.0 (https://ziglang.org, MIT; trimmed, its own licence and those of"
   echo "the C libraries' headers it carries are in tools/zig), which compiles the game's code; and the shader converter"

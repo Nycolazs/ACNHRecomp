@@ -654,7 +654,8 @@ opens, run `NX_REPORT=1 private/acnh/build/acnh` once after the crash.
 **The picture tears in full screen.** Settings > Video > VSync (on by default).
 
 **Native 60 FPS at the normal game speed.** Run `tools/setup_60fps.sh` once: it downloads tmouh's
-[ACNH 60 FPS + SpeedFix](https://github.com/tmouh/acnh-60fps) (CC BY-NC 4.0; not part of this repository), builds
+[ACNH 60 FPS + SpeedFix](https://github.com/tmouh/acnh-60fps) (CC BY-NC 4.0; its patches of main are in
+`prepare/recomp/acnh/`), builds
 its parameter file from your dump and recompiles `main` with it as a second version of every function it changes.
 Then Settings > Video > Frame rate > 60. The game's speed follows the frame rate, so it plays slower wherever the
 computer cannot hold 60.

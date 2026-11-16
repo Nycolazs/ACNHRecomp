@@ -164,7 +164,7 @@ const Entry kLauncherEn[] = {
     {"launcher.credits.ref.imgui", "MIT. The settings screen and the launcher UI."},
     {"launcher.credits.ref.mhgu", "By morerokk (MIT). The design of local play between PCs (nn::ldn, virtual sockets)."},
     {"launcher.credits.ref.renodx", "By Carlos Lopez Jr. (MIT). HDR output and tonemapping (SwapChainPass, ToneMapPass, RenoDRT), compiled into the HDR shaders."},
-    {"launcher.credits.ref.speedfix", "By tmouh (CC BY-NC 4.0). The 60 FPS game-speed rescaling, applied on your machine (not part of this repository)."},
+    {"launcher.credits.ref.speedfix", "By tmouh (CC BY-NC 4.0). The 60 FPS game-speed rescaling: its patches of main for 3.0.2 and 3.0.3, unchanged, are built into the preparation, which recompiles main with them (SPEEDFIX.txt)."},
     {"launcher.credits.ref.libs", "Supporting libraries used across input, disassembly, differential tests, video, audio and upscaling."},
     {"launcher.credits.ref.las", "Studied before starting: clock, saves, shared fonts, and keyboard ideas."},
     {"launcher.credits.ref.switchrecomp", "Studied before starting: HIPC/CMIF/TIPC specifications and validation."},
