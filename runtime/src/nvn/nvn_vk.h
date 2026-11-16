@@ -93,7 +93,8 @@ bool vk_1d_images();
 void transition(VkCommandBuffer cb, GpuImage& img, VkImageLayout to);
 // HDR output (video.hdr / NX_HDR = scrgb or hdr10): values as RenoDX's SWAP_CHAIN_OUTPUT_PRESET_* (HDR10 1, scRGB 2).
 enum class HdrOutput : uint8_t { Off = 0, Hdr10 = 1, ScRgb = 2 };
-HdrOutput hdr_requested();  // nvn_present.cpp: the setting, read once (a restart applies it)
+HdrOutput hdr_requested();  // nvn_present.cpp: the setting, read once (a restart applies it); Off once unavailable
+void hdr_unavailable();      // nvn_present.cpp: the surface offers no HDR format: HDR off for the session
 // nvn_screenshot.cpp: F12 asks for the next presented frame (HDR PNG with an HDR swapchain); the present records it
 void screenshot_request(const std::string& stem = std::string());  // stem: the PNG's name, empty for acnh_<time>
 void album_capture(uint64_t texture, const std::string& stem);      // the camera's photo texture (hle_album.cpp)

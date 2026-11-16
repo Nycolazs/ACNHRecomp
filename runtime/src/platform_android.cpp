@@ -751,8 +751,13 @@ float default_render_scale() {
             props(pd, &p);
             std::string name = p.deviceName;
             int adreno = 0, mali = 0;
-            std::sscanf(name.c_str() + (name.find("Adreno") != std::string::npos ? name.find("Adreno") : name.size()),
-                        "Adreno (TM) %d", &adreno);
+            // "Adreno (TM) 740" (the phone's driver), "Turnip Adreno (TM) 740" or "Adreno 7c+ Gen 3" (Turnip's names)
+            if (size_t a = name.find("Adreno"); a != std::string::npos) {
+                const char* c = name.c_str() + a + 6;
+                while (*c == ' ') c++;
+                if (std::strncmp(c, "(TM)", 4) == 0) c += 4;
+                std::sscanf(c, "%d", &adreno);
+            }
             if (auto m = name.find("Mali-G"); m != std::string::npos) std::sscanf(name.c_str() + m, "Mali-G%d", &mali);
             // Names that aren't a three-digit model: Adreno "7c+ Gen 3" / "8cx" (the compute parts, about a 6xx),
             // read as 7 or 8; Arm's 2025 Mali-G1 (-Ultra: high end, -Premium / -Pro: mid), read as 1.
@@ -954,7 +959,12 @@ int vulkan_create_surface(void* instance, void* native_window, uint64_t* surface
 
 // ---- settings screen hooks (platform.h): the screen is not built for this platform yet (ui_stub.cpp) ----
 void set_fullscreen(bool) {}
-int display_refresh_hz() { return 60; }
+// The panel's current refresh rate (Display.getRefreshRate), read every second by android_main's loop (a thread
+// attached to Java for good, read_refresh_rate below): phones switch between 60, 90 and 120 Hz. It was a fixed 60, so on
+// a 120 Hz screen a 30 fps frame was shown for 2 refreshes instead of 4 (nvn_vk.cpp's repeats): 60 fps where the game
+// was light enough, interiors running twice as fast (Discord, 0.10.0). The frame's threads only load it.
+std::atomic<int> g_refresh_hz{60};
+int display_refresh_hz() { return g_refresh_hz.load(std::memory_order_relaxed); }
 void set_master_volume(float) {}
 std::string controller_name() { return ""; }
 std::string controller_kind() { return ""; }
@@ -1130,6 +1140,35 @@ void game_thread(void*) {
 }
 
 void request_immersive();  // below: runs on the UI thread
+
+// android_main's thread, attached to Java for good (as gamepad_connected): the panel's refresh rate now, 0 if unknown.
+int read_refresh_rate(android_app* app) {
+    static JNIEnv* env = nullptr;
+    if (!env && app->activity->vm->AttachCurrentThread(&env, nullptr) != JNI_OK) return 0;
+    int value = 0;
+    jobject activity = app->activity->clazz;
+    jclass ac = env->GetObjectClass(activity);
+    jmethodID wm_m = env->GetMethodID(ac, "getWindowManager", "()Landroid/view/WindowManager;");
+    jobject wm = wm_m ? env->CallObjectMethod(activity, wm_m) : nullptr;
+    if (wm && !env->ExceptionCheck()) {
+        jclass wc = env->GetObjectClass(wm);
+        jmethodID disp_m = env->GetMethodID(wc, "getDefaultDisplay", "()Landroid/view/Display;");  // minSdk 29
+        jobject disp = disp_m ? env->CallObjectMethod(wm, disp_m) : nullptr;
+        if (disp && !env->ExceptionCheck()) {
+            jclass dc = env->GetObjectClass(disp);
+            jmethodID rate_m = env->GetMethodID(dc, "getRefreshRate", "()F");
+            const float rate = rate_m ? env->CallFloatMethod(disp, rate_m) : 0.0f;
+            if (!env->ExceptionCheck() && rate >= 20.0f && rate <= 500.0f) value = int(std::lround(rate));
+            env->DeleteLocalRef(dc);
+        }
+        if (disp) env->DeleteLocalRef(disp);
+        env->DeleteLocalRef(wc);
+    }
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    if (wm) env->DeleteLocalRef(wm);
+    env->DeleteLocalRef(ac);
+    return value;
+}
 
 // Whether a physical game controller is connected (InputDevice: a gamepad or joystick source, not virtual), through
 // JNI on android_main's thread.
@@ -1620,6 +1659,15 @@ extern "C" void android_main(android_app* app) {
                     taps_shown = taps;
                     ui_thread_request(kUiKeyboardShow);
                 }
+            }
+        }
+        // Every second: the panel's refresh rate (display_refresh_hz: the frames' pacing).
+        static uint64_t next_refresh_poll = 0;
+        if (uint64_t now = monotonic_ns(); now >= next_refresh_poll) {
+            next_refresh_poll = now + 1'000'000'000;
+            if (const int hz = read_refresh_rate(app); hz && hz != nx::plat::g_refresh_hz.load(std::memory_order_relaxed)) {
+                nx::log("display: %d Hz", hz);
+                nx::plat::g_refresh_hz.store(hz, std::memory_order_relaxed);
             }
         }
         // Every 2 s: whether a game controller is connected (the touch controls hide while one is).
