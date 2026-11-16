@@ -699,6 +699,8 @@ Join our [Discord Community](https://discord.gg/VJW9Dtdu7a) with your hardware d
 | Path | Contents |
 |---|---|
 | `recomp/` | AArch64 to C++ static recompiler (Python, Capstone) |
+| `prepare/` | The game folder's preparation: `recomp/` ported to C++ (`prepare/recomp/`, [prepare/README.md](prepare/README.md)) |
+| `third_party/capstone/` | Capstone 5.0.7 (AArch64 only), the C++ recompiler's disassembler |
 | `runtime/` | Shared runtime: Horizon kernel, IPC and services, `nn::*` HLE, NVN to Vulkan, settings UI, platform layers |
 | `games/acnh/` | ACNH-specific code (name, program ID, engine hooks, diagnostics) |
 | `tools/maxwell/` | Shader container extraction and the Maxwell to SPIR-V harness |
@@ -789,7 +791,8 @@ More detail: [docs/ACNH.md](docs/ACNH.md) (the game's modules, RomFS and shader 
   generated `.inc` files are in the repository, regenerating them needs a RenoDX checkout: `tools/gen_spirv_inc.py`).
 - [ACNH 60 FPS + SpeedFix](https://github.com/tmouh/acnh-60fps) by tmouh (CC BY-NC 4.0): the 60 FPS game-speed
   rescaling, downloaded by `tools/setup_60fps.sh` (or, with a release, at the first start) and applied on your
-  machine (not part of this repository).
+  machine. Its patches of main for 3.0.2 and 3.0.3 are in `prepare/recomp/acnh/`, unchanged, under that license
+  (`prepare/recomp/acnh/SPEEDFIX.md`).
 - [SDL3](https://github.com/libsdl-org/SDL), [Capstone](https://www.capstone-engine.org/),
   [Unicorn](https://www.unicorn-engine.org/), libvpx, libvorbis, AMD FidelityFX FSR 1.
 - Projects studied before starting (summary in [docs/REFERENCES.md](docs/REFERENCES.md)):
@@ -802,7 +805,9 @@ More detail: [docs/ACNH.md](docs/ACNH.md) (the game's modules, RomFS and shader 
 ## License
 
 ACNHRecomp is released under the [MIT License](LICENSE). Code inherited from SuperMarioWonderRecomp keeps its
-original copyright notice.
+original copyright notice. Third-party code and data in the repository keep their own licenses: Capstone
+(`third_party/capstone/`) is BSD-3-Clause (`LICENSE.TXT`; its LLVM-derived tables: `LICENSE_LLVM.TXT`), and tmouh's
+SpeedFix (`prepare/recomp/acnh/speedfix-*.pchtxt`) is CC BY-NC 4.0 (`prepare/recomp/acnh/SPEEDFIX.md`).
 
 This license covers the project's own source code only. It grants no rights to *Animal Crossing: New Horizons*,
 which is the property of Nintendo.

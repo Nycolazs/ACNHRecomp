@@ -345,9 +345,12 @@ def main():
     py = os.path.join(P, "venv", "Scripts" if WIN else "bin", "python.exe" if WIN else "python")
     if not os.path.exists(py):
         run([sys.executable, "-m", "venv", os.path.join(P, "venv")])
-    if subprocess.call([py, "-c", "import capstone, lz4, zstandard, fontTools, cmake, ninja"],
-                       stderr=subprocess.DEVNULL):
-        run([py, "-m", "pip", "install", "-q", "capstone", "lz4", "zstandard", "fonttools", "cmake", "ninja", "unicorn"])
+    # capstone 5.0.7 exactly: the version prepare/recomp/ (the C++ port, third_party/capstone) gives the same code with
+    # (5.0.9's __version__ says 5.0.7 too: the package's own metadata is checked)
+    if subprocess.call([py, "-c", "import capstone, lz4, zstandard, fontTools, cmake, ninja, importlib.metadata as m; "
+                        "assert m.version('capstone') == '5.0.7'"], stderr=subprocess.DEVNULL):
+        run([py, "-m", "pip", "install", "-q", "capstone==5.0.7", "lz4", "zstandard", "fonttools", "cmake", "ninja",
+             "unicorn"])
     bindir = os.path.dirname(py)
     cmake = os.path.join(bindir, "cmake.exe" if WIN else "cmake")
     ninja = os.path.join(bindir, "ninja.exe" if WIN else "ninja")

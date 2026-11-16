@@ -177,15 +177,21 @@ if(NX_LAUNCHER AND NOT ANDROID)
     include(launcher/launcher.cmake)
 endif()
 
+# The game folder's preparation (prepare/README.md): the recompiler (nx_recomp, acnh_recomp), on desktop. Not in a build
+# with the generated code (NX_GEN_PROBE, used below too: tools/setup_acnh.py's, made by the Python recompiler).
+file(GLOB NX_GEN_PROBE "${NX_GEN_DIR}/main/*.cpp")
+if(NOT ANDROID AND NOT NX_GEN_PROBE)
+    include(prepare/recomp/recomp.cmake)
+endif()
+
 # Desktop: the game's code from the game folder (game/<platform>/lib<game>_game, which ACNHRecomp-Importer builds)
 # instead of linked into the executable: the player then only needs the folder.
 option(NX_GAME_FROM_FOLDER "Desktop: load the game's code from the game folder" OFF)
 
-# Without the generated code (a checkout with no game data) only the tests and the launcher above are built.
+# Without the generated code (a checkout with no game data) only the tests, launcher and recompiler above are built.
 # Android builds the runtime without it too: the app (lib<game>.so) holds no game code and loads lib<game>_game.so,
 # made from the player's own copy on their computer, from the game folder picked on the phone (docs/ANDROID.md). So
 # does the desktop player (NX_GAME_FROM_FOLDER): the release's, which loads the game folder's library.
-file(GLOB NX_GEN_PROBE "${NX_GEN_DIR}/main/*.cpp")
 if(NOT NX_GEN_PROBE AND NOT ANDROID AND NOT NX_GAME_FROM_FOLDER)
     message(WARNING "No generated code in ${NX_GEN_DIR}/main: building the unit tests only")
     return()
