@@ -161,7 +161,7 @@ struct Shared {
     long long next = 0;
     std::FILE* file = nullptr;  // every line, for support: <app files>/prepare.log, then into <game>/.import/
     std::string log_path;
-    bool copied = false;
+    bool ended = false;  // the end written to the log (once)
 };
 constexpr size_t kKeep = 400;
 
@@ -172,8 +172,7 @@ Shared& shared() {
 
 // The game folder's .import/prepare.log, once the preparation ended: the log with the folder it is about.
 void copy_log(Shared& s, const std::string& out) {
-    if (s.copied || s.log_path.empty() || out.empty()) return;
-    s.copied = true;
+    if (s.log_path.empty() || out.empty()) return;
     if (s.file) std::fflush(s.file);
     std::error_code ec;
     const fs::path dir = u8(out) / ".import";
@@ -230,7 +229,7 @@ extern "C" JNIEXPORT jboolean JNICALL Java_io_github_acnhrecomp_PrepareNative_na
     if (s.file) std::fclose(s.file);
     s.file = r.log.empty() ? nullptr : std::fopen(r.log.c_str(), "w");
     s.log_path = s.file ? r.log : "";
-    s.copied = false;
+    s.ended = false;
     __android_log_print(ANDROID_LOG_INFO, "acnh_prepare", "started: %zu input(s), out %s", r.inputs.size(), r.out.c_str());
     return JNI_TRUE;
 }
@@ -246,13 +245,12 @@ extern "C" JNIEXPORT jbyteArray JNICALL Java_io_github_acnhrecomp_PrepareNative_
         s.lines.emplace_back(s.next++, ln);
         if (s.lines.size() > kKeep) s.lines.pop_front();
     }
-    if (st.finished) {
-        if (s.file && !s.copied) {
-            std::fprintf(s.file, "rc %d%s%s\n", st.rc, st.error.empty() ? "" : ": ", st.error.c_str());
-            __android_log_print(ANDROID_LOG_INFO, "acnh_prepare", "rc %d %s", st.rc, st.error.c_str());
-        }
+    if (st.finished && !s.ended) {
+        s.ended = true;
+        if (s.file) std::fprintf(s.file, "rc %d%s%s\n", st.rc, st.error.empty() ? "" : ": ", st.error.c_str());
+        __android_log_print(ANDROID_LOG_INFO, "acnh_prepare", "rc %d %s", st.rc, st.error.c_str());
         copy_log(s, st.out);
-    } else if (s.file) {
+    } else if (s.file && !st.finished) {
         std::fflush(s.file);
     }
     Json j;
