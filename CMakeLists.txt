@@ -192,10 +192,11 @@ if(NX_LAUNCHER AND NOT ANDROID)
 endif()
 
 # The game folder's preparation (prepare/README.md): the recompiler (nx_recomp, acnh_recomp), the game library's build
-# and the stages (nx_gamelib, nx_prepare) and the command line acnh_prepare, on desktop. Not in a build with the
-# generated code (NX_GEN_PROBE, used below too: tools/setup_acnh.py's, made by the Python recompiler).
+# and the stages (nx_gamelib, nx_prepare) and the command line acnh_prepare, on desktop; on Android the app's own
+# libacnh_prepare.so (prepare_jni.cpp), which the APK carries with or without the game set up here. Not in a desktop
+# build with the generated code (NX_GEN_PROBE, used below too: tools/setup_acnh.py's, made by the Python recompiler).
 file(GLOB NX_GEN_PROBE "${NX_GEN_DIR}/main/*.cpp")
-if(NOT ANDROID AND NOT NX_GEN_PROBE)
+if(ANDROID OR NOT NX_GEN_PROBE)
     include(prepare/recomp/recomp.cmake)
     include(prepare/prepare.cmake)  # the game library's build (gamelib), the stages, acnh_prepare
 endif()

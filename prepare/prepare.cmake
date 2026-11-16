@@ -2,7 +2,8 @@
 # recomp/recomp.cmake (nx_recomp) and with NX_GAME_ABI computed:
 #   nx_gamelib    the game's library for each platform, compiled with zig from the recompiled code (gamelib/)
 #   nx_prepare    the stages on a worker thread (prepare.h: prep::start / status / cancel)
-#   acnh_prepare  the command line (prepare_cli.cpp)
+#   acnh_prepare  the command line (prepare_cli.cpp), on desktop
+#   nx_prepare_jni  Android: libacnh_prepare.so, the app's preparation (prepare_jni.cpp; android/java Prepare)
 # nx_gamelib and nx_prepare are plain C++20 and the OS's process calls: they build for Android too.
 if(NOT TARGET nx_prepare_io)
     include(${CMAKE_CURRENT_LIST_DIR}/io/io.cmake)
@@ -77,15 +78,27 @@ target_compile_definitions(nx_prepare PRIVATE NX_RECOMP_SOURCE="${NX_RECOMP_SOUR
 target_link_libraries(nx_prepare PUBLIC nx_prepare_io nx_recomp nx_gamelib Threads::Threads)
 set_target_properties(nx_prepare PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-add_executable(acnh_prepare "${NX_PREPARE_DIR}/prepare_cli.cpp")
-target_link_libraries(acnh_prepare PRIVATE nx_prepare)
-# The launcher prepares the game folder itself (launcher/prepare_job.cpp): the stages on their worker thread.
-if(TARGET acnhrecomp_launcher)
-    target_link_libraries(acnhrecomp_launcher PRIVATE nx_prepare)
-    target_compile_definitions(acnhrecomp_launcher PRIVATE NX_LAUNCHER_PREPARE)
+if(ANDROID)
+    # The phone's own preparation, apart from the player's libacnh.so (preparing loads no runtime and no game): JNI
+    # calls for PrepareNative.java, the static libraries' symbols kept inside. 16 KB page alignment, as the app's other
+    # libraries.
+    add_library(nx_prepare_jni SHARED "${NX_PREPARE_DIR}/prepare_jni.cpp")
+    set_target_properties(nx_prepare_jni PROPERTIES OUTPUT_NAME acnh_prepare CXX_VISIBILITY_PRESET hidden)
+    target_link_libraries(nx_prepare_jni PRIVATE nx_prepare log)
+    target_link_options(nx_prepare_jni PRIVATE -Wl,-z,max-page-size=16384 -Wl,--gc-sections -Wl,--exclude-libs,ALL)
+    set(NX_PREPARE_TARGETS nx_gamelib nx_prepare nx_prepare_jni)
+else()
+    add_executable(acnh_prepare "${NX_PREPARE_DIR}/prepare_cli.cpp")
+    target_link_libraries(acnh_prepare PRIVATE nx_prepare)
+    set(NX_PREPARE_TARGETS nx_gamelib nx_prepare acnh_prepare)
+    # The launcher prepares the game folder itself (launcher/prepare_job.cpp): the stages on their worker thread.
+    if(TARGET acnhrecomp_launcher)
+        target_link_libraries(acnhrecomp_launcher PRIVATE nx_prepare)
+        target_compile_definitions(acnhrecomp_launcher PRIVATE NX_LAUNCHER_PREPARE)
+    endif()
 endif()
 
-foreach(t nx_gamelib nx_prepare acnh_prepare)
+foreach(t ${NX_PREPARE_TARGETS})
     if(MSVC)
         target_compile_options(${t} PRIVATE /O2 /W3 /utf-8)
         target_compile_definitions(${t} PRIVATE _CRT_SECURE_NO_WARNINGS _SILENCE_CXX20_U8PATH_DEPRECATION_WARNING)
@@ -106,7 +119,7 @@ endforeach()
 #   prepare_e2e_zig       the Compile stage with a real zig (NX_PREPARE_ZIG_DIR, fetched there by tools/fetch_zig.py
 #                         when missing; skipped when it cannot be downloaded) on tools/make_fake_gen.py's stand-in
 #   prepare_launcher      the folders written, checked by launcher/files.cpp (with the player beside it, find_build)
-if(NX_TESTS)
+if(NX_TESTS AND NOT ANDROID)
     find_package(Python3 COMPONENTS Interpreter QUIET)
     set(NX_PREPARE_ZIG_DIR "${CMAKE_BINARY_DIR}/zig" CACHE PATH "zig for prepare_e2e_zig (tools/fetch_zig.py)")
     # zig's name for this computer (tools/fetch_zig.py's hosts)
