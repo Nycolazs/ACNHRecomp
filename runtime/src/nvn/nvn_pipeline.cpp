@@ -1342,7 +1342,8 @@ bool sampled_ready(uint64_t texture) {
     Texture* t = get<Texture>(texture);
     if (!t || !t->image) return (*g_not_ready)[0]++, false;  // no image yet (missing textures are the caller's)
     check_linear_content(*t);
-    if (t->dirty && !t->image->rendered) return (*g_not_ready)[1]++, false;
+    // Written behind the GPU (textures_written): even a rendered image is uploaded, outside the pass.
+    if (t->dirty && (!t->image->rendered || t->written_behind)) return (*g_not_ready)[1]++, false;
     if (t->has_writes.load(std::memory_order_acquire)) return (*g_not_ready)[2]++, false;  // no lock (nvn.h)
     const GpuImage& img = *t->image;
     bool ok = img.rendered ? img.layout == VK_IMAGE_LAYOUT_GENERAL
@@ -1380,8 +1381,24 @@ VkImageView attachment_view(GpuImage& img, uint32_t level, uint32_t layer, VkFor
     return v;
 }
 
+void keep_game_size(Texture& t) {
+    if (!t.uw) return;
+    t.uw = false;
+    t.width = t.base_w;
+    t.height = t.base_h;
+    if (t.image && t.image->uw) {
+        retire_image(std::move(t.image));
+        t.image.reset();
+    }
+}
+
 GpuImage* ensure_contents(VkCommandBuffer cb, uint64_t texture) {
     Texture* t = get<Texture>(texture);
+    // A screen target written behind the GPU (textures_written: Happy Home Paradise decodes each photo's JPEG into a
+    // 960x540 one) holds the game's size in guest memory: widened, it was cleared instead of uploaded (blank photos).
+    if (t && t->uw && !(*t_parallel_worker) && t->dirty.load(std::memory_order_acquire) &&
+        t->written_behind.load(std::memory_order_acquire))
+        keep_game_size(*t);
     GpuImage* img = t ? image_of(texture) : nullptr;
     if (!img) return nullptr;
     // A parallel replay worker (docs/PARALLEL_REPLAY.md) only samples what needs nothing done: an upload, texel
@@ -1392,7 +1409,7 @@ GpuImage* ensure_contents(VkCommandBuffer cb, uint64_t texture) {
         if (!clean) worker_bail("texture contents");
         return img;
     }
-    if (t->written_behind.exchange(false) && t->dirty.load(std::memory_order_acquire)) {
+    if (t->dirty.load(std::memory_order_acquire) && t->written_behind.exchange(false)) {
         img->rendered = false;  // the CPU's bytes replace what the GPU drew (textures_written)
         img->texels = false;
     }

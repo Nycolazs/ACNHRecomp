@@ -744,8 +744,8 @@ void textures_written(uint64_t addr, uint64_t size) {
             if (!t->image) continue;
             imaged++;
             uint64_t base = std::max(addr, t->memory), end = std::min(addr + size, t->memory + t->storage_size);
+            t->written_behind = true;  // before `dirty`: the replay takes the flag only with it (ensure_contents)
             t->mark_dirty(base - t->memory, end - t->memory);
-            t->written_behind = true;
         }
     static int logged = 0;
     if (logged++ < 4) {

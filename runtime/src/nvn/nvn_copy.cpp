@@ -113,13 +113,7 @@ void replay_buffer_copy(VkCommandBuffer cb, const Cmd& c, const CmdList& list) {
     if (!to_buffer && t && t->uw) {
         // A texture populated by CPU buffer upload (such as movie NV12 Luma/Chroma planes) holds native base_w x base_h
         // texels in the guest buffer; keep the texture at its native dimensions so sampling covers the full image.
-        t->uw = false;
-        t->width = t->base_w;
-        t->height = t->base_h;
-        if (t->image && t->image->uw) {
-            retire_image(std::move(t->image));
-            t->image.reset();
-        }
+        keep_game_size(*t);
     }
     GpuImage* dst = t && src ? ensure_contents(cb, texture) : nullptr;
     auto skip = [&](const char* why) {

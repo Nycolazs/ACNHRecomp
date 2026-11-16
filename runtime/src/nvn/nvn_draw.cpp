@@ -194,6 +194,12 @@ void begin_rendering(VkCommandBuffer cb, const Targets& t) {
     VkFormat formats[8]{};  // the views' (render pass objects)
     for (uint32_t k = 0; k < t.color_count; k++) {
         colors[k].sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+        Texture* tex = t.colors[k] ? get<Texture>(t.colors[k]) : nullptr;
+        // Bytes the CPU wrote behind the GPU (textures_written) land before this pass, not over what it draws.
+        if (tex && tex->dirty.load(std::memory_order_acquire) && tex->written_behind.load(std::memory_order_acquire)) {
+            if (worker_bail("target written behind")) { (*g_pass_images)[k] = nullptr; continue; }
+            ensure_contents(cb, t.colors[k]);  // before image_of: it may remake the image (keep_game_size)
+        }
         GpuImage* img = t.colors[k] ? image_of(t.colors[k]) : nullptr;
         (*g_pass_images)[k] = img;
         if (!img) continue;
@@ -203,8 +209,10 @@ void begin_rendering(VkCommandBuffer cb, const Targets& t) {
         // CPU texel writes queued before this pass land first. Applied later (at the next sample or copy) they wiped
         // what the pass drew: ACNH clears its Slumber Island map with WriteTexels, draws it, then copies it out for
         // the JPEG thumbnail, which came out black.
-        if (Texture* tex = get<Texture>(t.colors[k]); tex && tex->has_writes.load(std::memory_order_acquire)) {
+        if (tex && tex->has_writes.load(std::memory_order_acquire)) {
             if (worker_bail("target has texel writes")) continue;
+            // Never written: cleared first, as the loadOp CLEAR would have (a partial write left garbage around it).
+            if (img->layout == VK_IMAGE_LAYOUT_UNDEFINED && !load_undefined) clear_image(cb, *img, false);
             apply_texel_writes(cb, *tex, *img);
         }
         if (img->layout == VK_IMAGE_LAYOUT_UNDEFINED && !load_undefined) fresh |= 1u << k;

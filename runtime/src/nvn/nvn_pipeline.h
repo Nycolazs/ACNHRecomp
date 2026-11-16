@@ -163,6 +163,9 @@ VkImageView sampled_view(VkCommandBuffer cb, uint64_t texture, const ImageShape&
 // The image behind a texture with its contents in place (uploaded, CPU writes applied, never-written ones cleared);
 // null for an unknown texture. Records transfers: outside render passes.
 GpuImage* ensure_contents(VkCommandBuffer cb, uint64_t texture);
+// A resized screen target (nvn_ultrawide.cpp) back at the game's size, its image made again: the CPU fills its memory
+// (a buffer copy into it, a JPEG decoded into it). Replay thread only.
+void keep_game_size(Texture& t);
 // Pending nvnTextureWriteTexels regions into the image now (a transfer: outside render passes).
 void apply_texel_writes(VkCommandBuffer cb, Texture& t, GpuImage& img);
 // nvn_upload.cpp: the texture's pool memory untiled (or taken row by row, pitch-linear) into the image, every level
