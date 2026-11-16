@@ -834,6 +834,7 @@ bool card(const char* id, const Card& c, ImVec2 size) {
 
 void go_files() {
     g_banner.clear();
+    g_prep_flow = false;  // the setup's steps
     g_page = Page::Files;
 }
 
@@ -1294,6 +1295,7 @@ void page_install() {
 }
 
 void start_setup(bool rebuild) {
+    g_prep_flow = false;
     SetupArgs a;
     a.install_dir = rebuild ? g_build.data : g_install;
     // A rebuild keeps the game folder the install folder links to; a new setup links the chosen one.

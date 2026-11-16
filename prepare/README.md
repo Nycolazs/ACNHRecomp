@@ -11,7 +11,10 @@ acnh_prepare --exefs DIR --romfs DIR [--dlc DIR[:index]]... --out DIR [--platfor
 acnh_prepare GAME --out DIR ...      GAME: one folder holding exefs/ and romfs/ (or an emulator's dump folder)
 ```
 
-It prints each stage and its progress; the exit code is 0 when the folder is ready, 2 when it is refused (the files,
+The launcher runs the same stages (its Prepare page, `launcher/prepare_job.cpp`): the picks probed and their findings
+shown translated (the `prepare.*` keys in `runtime/src/ui/i18n_launcher.inc`), the free space against
+`prep::space_needed()`, then `prep::start()` and `prep::status()` on its Preparing page; the folder then becomes the
+game folder. `acnh_prepare` prints each stage and its progress; the exit code is 0 when the folder is ready, 2 when it is refused (the files,
 the folder, the space, the tools), 1 when a stage failed, 4 when cancelled (Ctrl+C), 64 for a wrong command line. Run
 again on the same folder, what is already right is kept: a library built from this main for this runtime, romfs.pak,
 the add-ons, the shaders (another platform builds that platform only).
@@ -60,10 +63,11 @@ From the Importer's `src/gamelib/` (its runtime copies were identical to `runtim
 
 - zig 0.17.0: `tools/fetch_zig.py <host> <dest>` (x86_64-linux, aarch64-linux, x86_64-windows, aarch64-macos), checked
   against ziglang.org's SHA-256 and trimmed to the four targets (about 335 MB, 12,000 files). The release carries it
-  as `tools/zig/` beside `acnh_prepare` (Android: `libzig.so` in the APK's native libraries, its lib folder unpacked
+  as `tools/zig/` beside the launcher and `acnh_prepare` (in ACNHRecomp.app: `Contents/Resources/tools/zig/`; Android: `libzig.so` in the APK's native libraries, its lib folder unpacked
   from the APK, `--zig-lib`).
 - The shader tool: `tools/build_shader_tool.py <rid> <dest>` builds `tools/maxwell/spirv_harness` NativeAOT (one
-  executable of about 5 MB, no .NET needed where it runs; .NET 10 SDK to build it), carried as `tools/shaders/`.
+  executable of about 5 MB, no .NET needed where it runs; .NET 10 SDK to build it), carried as `tools/shaders/`
+  (in ACNHRecomp.app: `Contents/Resources/tools/shaders/`). `tools/package_release_*.sh` put both there.
 
 ## recomp/
 
@@ -104,4 +108,9 @@ the test prints, goes into `SOURCE`.
   library loaded and its `nx_game_abi()` compared with the player's; a recompile of the synthetic modules failing and
   tried without the variant first.
 - `prepare_launcher`: those folders through `launcher/files.cpp` (`check_file`, `build_contents`, and `find_build`
-  with the player beside it in the build folder); an Importer folder still accepted, others refused.
+  with the player beside it in the build folder); an Importer folder still accepted, others refused and told as one
+  to prepare; the synthetic extraction checked and found as what to prepare from (`Kind::Extract`).
+- The launcher's pages, by hand: `NX_LAUNCHER_PAGE=prepare|preparing|choose` with `NX_LAUNCHER_PREPARE_IN`, `_DLC`,
+  `_OUT`, `NX_LAUNCHER_PICK`, `NX_LAUNCHER_SHADER_TOOL=<build>/fake_shader_tool`, `NX_PREPARE_SKIP_RECOMP=1` (a
+  `tools/make_fake_gen.py` stand-in in the folder for a library), and `NX_LAUNCHER_SHOT` for a picture
+  (`SDL_VIDEODRIVER=offscreen` without a display): `launcher/main.cpp`.

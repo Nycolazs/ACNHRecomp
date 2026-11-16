@@ -1211,6 +1211,7 @@ const Entry kLauncherFr[] = {
     {"launcher.err.game_romfs", "Ce romfs/ n'est pas celui d'Animal Crossing: New Horizons (pas de dossier Shader/)"},
     {"launcher.stage.game", "Liaison du dossier du jeu"},
     {"launcher.home.change_game", "Changer de dossier de jeu"},
+    {"launcher.welcome.play", "Choisir le dossier du jeu"},
 };
 
 const Entry kLauncherDe[] = {
@@ -1398,6 +1399,7 @@ const Entry kLauncherDe[] = {
     {"launcher.err.game_romfs", "Dieses romfs/ gehört nicht zu Animal Crossing: New Horizons (kein Shader/-Ordner)"},
     {"launcher.stage.game", "Spielordner wird verknüpft"},
     {"launcher.home.change_game", "Spielordner wechseln"},
+    {"launcher.welcome.play", "Spielordner wählen"},
 };
 
 const Entry kLauncherIt[] = {
@@ -1585,6 +1587,7 @@ const Entry kLauncherIt[] = {
     {"launcher.err.game_romfs", "Questo romfs/ non è di Animal Crossing: New Horizons (manca la cartella Shader/)"},
     {"launcher.stage.game", "Collegamento della cartella del gioco"},
     {"launcher.home.change_game", "Cambia cartella del gioco"},
+    {"launcher.welcome.play", "Scegli la cartella del gioco"},
 };
 
 const Entry kLauncherNl[] = {
@@ -1760,6 +1763,7 @@ const Entry kLauncherNl[] = {
     {"launcher.settings.save_failed", "Kan config.ini niet opslaan"},
     {"launcher.settings.open_data", "Spelmap openen"},
     {"launcher.home.change_game", "Andere spelmap"},
+    {"launcher.welcome.play", "Kies je spelmap"},
 };
 
 const Entry kLauncherRu[] = {
@@ -1935,6 +1939,7 @@ const Entry kLauncherRu[] = {
     {"launcher.settings.save_failed", "Не удалось сохранить config.ini"},
     {"launcher.settings.open_data", "Открыть папку игры"},
     {"launcher.home.change_game", "Сменить папку игры"},
+    {"launcher.welcome.play", "Выбрать папку игры"},
 };
 
 const Entry kLauncherJa[] = {
@@ -2110,6 +2115,7 @@ const Entry kLauncherJa[] = {
     {"launcher.settings.save_failed", "config.ini を保存できませんでした"},
     {"launcher.settings.open_data", "ゲームのフォルダーを開く"},
     {"launcher.home.change_game", "ゲームフォルダーを変更"},
+    {"launcher.welcome.play", "ゲームフォルダーを選ぶ"},
 };
 
 const Entry kLauncherKo[] = {
@@ -2285,6 +2291,7 @@ const Entry kLauncherKo[] = {
     {"launcher.settings.save_failed", "config.ini를 저장할 수 없습니다"},
     {"launcher.settings.open_data", "게임 폴더 열기"},
     {"launcher.home.change_game", "게임 폴더 변경"},
+    {"launcher.welcome.play", "게임 폴더 선택"},
 };
 
 const Entry kLauncherZhCn[] = {
@@ -2460,6 +2467,7 @@ const Entry kLauncherZhCn[] = {
     {"launcher.settings.save_failed", "无法保存 config.ini"},
     {"launcher.settings.open_data", "打开游戏文件夹"},
     {"launcher.home.change_game", "更换游戏文件夹"},
+    {"launcher.welcome.play", "选择游戏文件夹"},
 };
 
 const Entry kLauncherZhTw[] = {
@@ -2635,4 +2643,5 @@ const Entry kLauncherZhTw[] = {
     {"launcher.settings.save_failed", "無法儲存 config.ini"},
     {"launcher.settings.open_data", "開啟遊戲資料夾"},
     {"launcher.home.change_game", "更換遊戲資料夾"},
+    {"launcher.welcome.play", "選擇遊戲資料夾"},
 };
