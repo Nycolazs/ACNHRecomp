@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Home (android/java) asks for the game folder, then NativeActivity runs lib<game>.so (platform_android.cpp), which
-     loads the game's code from that folder: the APK holds nothing of the game. -->
+     loads the game's code from that folder: the APK holds nothing of the game. Prepare (lib<game>_prepare.so) makes
+     that folder on the phone from the ExeFS and RomFS the player extracted from their own copy. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
           package="io.github.acnhrecomp"
           android:versionCode="1" android:versionName="dev">
@@ -13,6 +14,12 @@
     <uses-permission android:name="android.permission.INTERNET"/>
     <!-- Local Play's searches are broadcasts: Wi-Fi's multicast lock (platform_android.cpp wifi_multicast) lets them in -->
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE"/>
+    <!-- Preparing the game folder on the phone (Prepare, PrepareService): an hour or more in a foreground service, with
+         its progress in a notification and the CPU kept awake -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE"/>
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <uses-permission android:name="android.permission.WAKE_LOCK"/>
     <!-- About: the Instagram and GitHub buttons open those apps when installed (platform_android open_url_in_app) -->
     <queries>
         <package android:name="com.instagram.android"/>
@@ -31,6 +38,18 @@
             </intent-filter>
             <meta-data android:name="android.app.shortcuts" android:resource="@xml/shortcuts"/>
         </activity>
+        <!-- The game folder prepared on the phone from the player's extracted ExeFS and RomFS: Home opens it for such a
+             folder, the preparation's notification too (singleTop: brought back, not opened twice) -->
+        <activity android:name="io.github.acnhrecomp.Prepare" android:exported="false" android:launchMode="singleTop"
+                  android:theme="@android:style/Theme.Material.Light.NoActionBar"
+                  android:configChanges="orientation|keyboardHidden|keyboard|screenSize|screenLayout|smallestScreenSize|uiMode|density|navigation"/>
+        <!-- The preparation itself (libacnh_prepare.so and the tools it runs: zig, the shader tool), which no other
+             service type covers: recompiling and compiling the player's own game on the phone -->
+        <service android:name="io.github.acnhrecomp.PrepareService" android:exported="false"
+                 android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                      android:value="Prepares the game folder from the player's own extracted game files: recompiling and compiling the game's code on the device, an hour or more"/>
+        </service>
         <!-- The settings screen's folder picker (Saves: import, export, open folder): platform_android.cpp starts it -->
         <activity android:name="io.github.acnhrecomp.Picker" android:exported="false"
                   android:theme="@android:style/Theme.Translucent.NoTitleBar"
