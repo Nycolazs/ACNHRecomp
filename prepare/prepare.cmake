@@ -1,7 +1,12 @@
 # The rest of the game folder's preparation (prepare/README.md), included by the top CMakeLists.txt after
 # recomp/recomp.cmake (nx_recomp) and with NX_GAME_ABI computed:
 #   nx_gamelib    the game's library for each platform, compiled with zig from the recompiled code (gamelib/)
-# nx_gamelib is plain C++20 and the OS's process calls: it builds for Android too.
+#   nx_prepare    the stages on a worker thread (prepare.h: prep::start / status / cancel)
+#   acnh_prepare  the command line (prepare_cli.cpp)
+# nx_gamelib and nx_prepare are plain C++20 and the OS's process calls: they build for Android too.
+if(NOT TARGET nx_prepare_io)
+    include(${CMAKE_CURRENT_LIST_DIR}/io/io.cmake)
+endif()
 set(NX_PREPARE_DIR "${CMAKE_CURRENT_LIST_DIR}")
 get_filename_component(NX_PREPARE_ROOT "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)  # the repository
 
@@ -63,7 +68,19 @@ target_compile_features(nx_gamelib PUBLIC cxx_std_20)
 target_link_libraries(nx_gamelib PUBLIC Threads::Threads)
 set_target_properties(nx_gamelib PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-foreach(t nx_gamelib)
+# The hash of recomp/*.py the C++ recompiler matches (recomp/SOURCE): gen/recomp_source.txt.
+file(STRINGS "${NX_PREPARE_DIR}/recomp/SOURCE" NX_RECOMP_SOURCE LIMIT_COUNT 1)
+set_property(DIRECTORY "${CMAKE_SOURCE_DIR}" APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${NX_PREPARE_DIR}/recomp/SOURCE")
+add_library(nx_prepare STATIC "${NX_PREPARE_DIR}/prepare.cpp")
+target_include_directories(nx_prepare PUBLIC "${NX_PREPARE_DIR}")
+target_compile_definitions(nx_prepare PRIVATE NX_RECOMP_SOURCE="${NX_RECOMP_SOURCE}")
+target_link_libraries(nx_prepare PUBLIC nx_prepare_io nx_recomp nx_gamelib Threads::Threads)
+set_target_properties(nx_prepare PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+add_executable(acnh_prepare "${NX_PREPARE_DIR}/prepare_cli.cpp")
+target_link_libraries(acnh_prepare PRIVATE nx_prepare)
+
+foreach(t nx_gamelib nx_prepare acnh_prepare)
     if(MSVC)
         target_compile_options(${t} PRIVATE /O2 /W3 /utf-8)
         target_compile_definitions(${t} PRIVATE _CRT_SECURE_NO_WARNINGS _SILENCE_CXX20_U8PATH_DEPRECATION_WARNING)
