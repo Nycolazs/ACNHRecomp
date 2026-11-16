@@ -710,7 +710,17 @@ bool make_pipeline(VkFormat format) {
 
 }  // namespace
 
+namespace {
+std::atomic<bool> g_hdr_unavailable{false};
+}
+
+// nvn_vk.cpp: the first surface offers no format for the HDR asked for. HDR is then off for the whole session (the
+// window's textures, the tonemap's replacement), not only the swapchain: else the SDR picture was drawn from the HDR
+// scene's values and the first-picture probe waited on it.
+void hdr_unavailable() { g_hdr_unavailable.store(true, std::memory_order_relaxed); }
+
 HdrOutput hdr_requested() {
+    if (g_hdr_unavailable.load(std::memory_order_relaxed)) return HdrOutput::Off;
     static const HdrOutput v = [] {
         const char* e = std::getenv("NX_HDR");  // set from video.hdr by config_apply
         return !e ? HdrOutput::Off : std::strcmp(e, "scrgb") == 0 ? HdrOutput::ScRgb
