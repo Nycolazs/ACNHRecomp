@@ -2,7 +2,68 @@
 
 The game folder's preparation, inside ACNHRecomp: from the player's extracted ExeFS and RomFS, ACNHRecomp recompiles
 the modules, converts the shaders, compiles the game's library with a bundled zig and writes the game folder, with no
-ACNHRecomp-Importer and never keys, NSP or XCI. So far it holds the recompiler.
+ACNHRecomp-Importer and never keys, NSP or XCI (nothing here decrypts; a package lying beside the extracted files is
+said and left alone).
+
+```
+acnh_prepare --exefs DIR --romfs DIR [--dlc DIR[:index]]... --out DIR [--platforms this|all|linux-x64,windows-x64,macos-arm64,android-arm64]
+             [--no-60fps] [--in-place] [--zig PATH] [--zig-lib DIR] [--shader-tool PATH] [--cache DIR] [--jobs N]
+acnh_prepare GAME --out DIR ...      GAME: one folder holding exefs/ and romfs/ (or an emulator's dump folder)
+```
+
+It prints each stage and its progress; the exit code is 0 when the folder is ready, 2 when it is refused (the files,
+the folder, the space, the tools), 1 when a stage failed, 4 when cancelled (Ctrl+C), 64 for a wrong command line. Run
+again on the same folder, what is already right is kept: a library built from this main for this runtime, romfs.pak,
+the add-ons, the shaders (another platform builds that platform only).
+
+## The stages (`prepare.h`, `nx_prepare`)
+
+`prep::start(Options)` runs them on a worker thread, `prep::status()` gives the stage, its fraction and the whole's,
+the current item, the platform k of N, the log lines (each with its stage; an empty one marks where a stage began)
+and, at the end, the exit code and the error; `prep::cancel()` stops it (a child process too). Taken from
+ACNHRecomp-Importer v1.0.7 (`src/nxcore_api.cpp`): its stages after the extraction.
+
+| Stage | |
+|---|---|
+| Check | `io/` `probe()` of the picks (3.0.3 needed, 3.0.2 accepted with a note), the game folder (empty or prepared before; never inside the RomFS), the free space, zig against its `sizes.txt`, the shader tool |
+| ExeFS | `exefs/main, sdk, subsdk0, main.npdm` copied; `analysis/<module>.bin`, the flat image ending where the data segment ends (the loader's size rule), and `analysis/main.npdm` |
+| Recompile | `gen/<module>/` (`recomp/`), main with the hooks of its version and, on 3.0.2 / 3.0.3, the native 60 FPS variant (tmouh's SpeedFix as a second body); if the variant does not recompile, main without it |
+| Shaders | the shader tool: `spirv_harness --prepare <romfs> analysis/main.bin --out .import/shaders_extracted --spirv spirv --jobs N --no-val` |
+| Packs | `romfs.pak` from the player's RomFS (packages left out; not with `--in-place`), `aoc/<index>/` copies of the add-ons, `spirv.pak` (the packed `.spv` then go; `spirv/summary.txt` and `results.tsv` stay) |
+| Compile | `game/<platform>/` for each platform chosen (`gamelib/`); if it fails with the variant, main again without it and every platform again, except when the toolchain itself is at fault; a library of a platform not chosen, built from another main, is removed; then `gen/` goes |
+| Finish | `game.ini` (first line names ACNHRecomp; `title`, `version`, `build_id`), `.import/index.tsv` (the loose files: the RomFS in place, the add-ons) and `.import/complete` |
+
+`--in-place` (taken on its own when the RomFS already is the game folder's `romfs/`): the RomFS stays loose where it
+is, as the game folder's `romfs/` or `extract/romfs/`; `--out` defaults to the folder holding it. An add-on whose
+index its folder's name does not give (`01006F8002327xxx`, `aoc/<n>`) is add-on 1, Happy Home Paradise, with a note;
+`--dlc DIR:index` chooses. `NX_PREPARE_SKIP_RECOMP=1` (tests): no recompile; the compile builds `gen/` as it is when
+there is one (`tools/make_fake_gen.py`'s stand-in).
+
+The folder is the one ACNHRecomp-Importer wrote, played the same way: the launcher's `prepared_folder()` takes both
+(`launcher/files.cpp`), the player loads `game/<platform>/` (`runtime/src/game_folder.cpp`), `analysis/` (`loader.cpp`),
+`romfs.pak` or `romfs/` and `aoc/<n>/` (`hle_fs.cpp`), `spirv.pak` (`nvn_shaders.cpp`).
+
+## gamelib/
+
+The game's library from `gen/`, compiled and linked by zig as child processes (`posix_spawn`, `CreateProcessW`), for
+windows-x64 (`acnh_game.dll`), linux-x64 and android-arm64 (`libacnh_game.so`) and macos-arm64 (`libacnh_game.dylib`):
+the biggest files first, as many jobs as the memory holds, funcs.h precompiled per module, a response file for the
+link, Android's `DT_NEEDED` stubs (`libacnh.so`, `libc++_shared.so`, ...), `cpu_model.c` on x86-64. It is compiled
+against this checkout's `runtime/include/nx/*.h` and `runtime/src/game_abi.cpp` (built in) with the top
+`CMakeLists.txt`'s `NX_GAME_ABI`, so a library and the player of the same checkout always agree; `abi.txt`,
+`build.txt` and `rev.txt` beside it say what it was built from, and one of another runtime is built again. Hot lists
+(`gamelib/hot/<build id>.txt`, none yet) build the functions the game spends its time in at -O2 and the rest faster.
+From the Importer's `src/gamelib/` (its runtime copies were identical to `runtime/`), without its package repair:
+`check_toolchain()` compares the zig folder with the `sizes.txt` `tools/fetch_zig.py` writes.
+
+## The tools it runs
+
+- zig 0.17.0: `tools/fetch_zig.py <host> <dest>` (x86_64-linux, aarch64-linux, x86_64-windows, aarch64-macos), checked
+  against ziglang.org's SHA-256 and trimmed to the four targets (about 335 MB, 12,000 files). The release carries it
+  as `tools/zig/` beside `acnh_prepare` (Android: `libzig.so` in the APK's native libraries, its lib folder unpacked
+  from the APK, `--zig-lib`).
+- The shader tool: `tools/build_shader_tool.py <rid> <dest>` builds `tools/maxwell/spirv_harness` NativeAOT (one
+  executable of about 5 MB, no .NET needed where it runs; .NET 10 SDK to build it), carried as `tools/shaders/`.
 
 ## recomp/
 
@@ -18,8 +79,8 @@ author) unchanged, except for the include paths and the command line's name.
   text, so the Python uses the same version (`tools/setup_acnh.py` installs `capstone==5.0.7`).
 - `acnh/speedfix-*.pchtxt`: tmouh's SpeedFix for main, CC BY-NC 4.0 (`acnh/SPEEDFIX.md`).
 
-`recomp/recomp.cmake` builds them; the top `CMakeLists.txt` includes it on desktop, except in a build of the generated
-code (`NX_GEN_PROBE`). Tests (`-DNX_TESTS=ON`): `ctest -R recomp`.
+`recomp/recomp.cmake` and `prepare.cmake` build them; the top `CMakeLists.txt` includes them on desktop, except in a
+build of the generated code (`NX_GEN_PROBE`). `io/`, `gamelib/` and `prepare.cpp` are plain C++20 too.
 
 ## The source guard
 
@@ -29,3 +90,18 @@ computes it (and the Importer wrote it as `gen/recomp_source.txt`). `recomp_sour
 longer has that hash. A change to the Python recompiler is then ported to `recomp/` here, checked to give the same
 output (`python -m recomp` and `acnh_recomp` with the same arguments on the game's modules), and the new hash, which
 the test prints, goes into `SOURCE`.
+
+## Tests
+
+`-DNX_TESTS=ON`, `ctest -R "prepare|recomp"`, synthetic inputs only (no game data):
+
+- `prepare_io_test`: the probe, the NSOs, the packs (byte for byte with `tools/pack_*.py`).
+- `prepare_e2e`: the stages and `acnh_prepare` end to end on a synthetic ExeFS (`io/test_inputs.h`), RomFS, add-on
+  and a package beside them, the recompile skipped and `fake_shader_tool` for the shaders; the folder checked as the
+  player reads it, kept again on a second run, a cancel during the shader tool, the refusals, `--in-place`.
+- `prepare_e2e_zig`: the Compile stage with a real zig (`NX_PREPARE_ZIG_DIR`, default `<build>/zig`, fetched by
+  `tools/fetch_zig.py` when missing; skipped when it cannot be downloaded) on `tools/make_fake_gen.py`'s stand-in; the
+  library loaded and its `nx_game_abi()` compared with the player's; a recompile of the synthetic modules failing and
+  tried without the variant first.
+- `prepare_launcher`: those folders through `launcher/files.cpp` (`check_file`, `build_contents`, and `find_build`
+  with the player beside it in the build folder); an Importer folder still accepted, others refused.
