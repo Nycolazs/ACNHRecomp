@@ -24,6 +24,7 @@
 #ifndef _WIN32
 #include <dlfcn.h>
 #include <sys/wait.h>
+#include <unistd.h>
 #endif
 
 #include <nx/module.h>
@@ -323,6 +324,34 @@ static int base(const fs::path& src, const fs::path& work, const fs::path& cli, 
     CHECK(r.log.find("spirv.pak: written before, kept") != std::string::npos);
     CHECK(fs::last_write_time(out1 / "romfs.pak") == pak_time);
     check_folder(in, out1, false, 1, hhp);
+
+    std::puts("a stage replacing what a complete folder holds takes its .import/complete away first");
+    // the shaders converted again (spirv.pak gone), cancelled: not complete; then to the end: complete again
+    fs::remove(out1 / "spirv.pak");
+    fs::remove(out1 / "spirv" / "summary.txt");
+    set_env("NX_FAKE_SHADER_SLEEP", "30");
+    r = run_prep(o, 0.3);
+    set_env("NX_FAKE_SHADER_SLEEP", nullptr);
+    CHECK(r.last.rc == 4 && !fs::exists(out1 / ".import" / "complete"));
+    r = run_prep(o);
+    CHECK(r.last.rc == 0 && fs::exists(out1 / ".import" / "complete"));
+    check_folder(in, out1, false, 1, hhp);
+#ifndef _WIN32
+    if (geteuid() != 0) {  // permissions bind (root's do not)
+        // the add-on changed, its old copy cannot be removed whole (a folder of it read-only): the stage fails, and
+        // the folder, aoc/1 half gone, is not taken for complete
+        write_file(hhp / "Model" / "c.bin", pattern(100, 11));
+        fs::permissions(out1 / "aoc" / "1" / "Layout", fs::perms::owner_read | fs::perms::owner_exec);
+        r = run_prep(o);
+        fs::permissions(out1 / "aoc" / "1" / "Layout", fs::perms::owner_all);
+        CHECK(r.last.rc == 1 && r.last.error.find("aoc") != std::string::npos);
+        CHECK(!fs::exists(out1 / ".import" / "complete"));
+        fs::remove(hhp / "Model" / "c.bin");
+        r = run_prep(o);
+        CHECK(r.last.rc == 0 && fs::exists(out1 / ".import" / "complete"));
+        check_folder(in, out1, false, 1, hhp);
+    }
+#endif
 
     std::puts("cancel while the shader tool runs");
     set_env("NX_FAKE_SHADER_SLEEP", "30");

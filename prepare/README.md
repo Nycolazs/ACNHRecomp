@@ -35,7 +35,7 @@ ACNHRecomp-Importer v1.0.7 (`src/nxcore_api.cpp`): its stages after the extracti
 | Shaders | the shader tool: `spirv_harness --prepare <romfs> analysis/main.bin --out .import/shaders_extracted --spirv spirv --jobs N --no-val` |
 | Packs | `romfs.pak` from the player's RomFS (packages left out; not with `--in-place`), `aoc/<index>/` copies of the add-ons, `spirv.pak` (the packed `.spv` then go; `spirv/summary.txt` and `results.tsv` stay) |
 | Compile | `game/<platform>/` for each platform chosen (`gamelib/`); if it fails with the variant, main again without it and every platform again, except when the toolchain itself is at fault; a library of a platform not chosen, built from another main, is removed; then `gen/` goes |
-| Finish | `game.ini` (first line names ACNHRecomp; `title`, `version`, `build_id`), `.import/index.tsv` (the loose files: the RomFS in place, the add-ons) and `.import/complete` |
+| Finish | `game.ini` (first line names ACNHRecomp; `title`, `version`, `build_id`), `.import/index.tsv` (the loose files: the RomFS in place, the add-ons) and `.import/complete` (a stage that replaces what a finished folder holds, an add-on, `romfs.pak`, the shaders, takes it away first) |
 
 `--in-place` (taken on its own when the RomFS already is the game folder's `romfs/`): the RomFS stays loose where it
 is, as the game folder's `romfs/` or `extract/romfs/`; `--out` defaults to the folder holding it. An add-on whose

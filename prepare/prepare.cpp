@@ -1,6 +1,7 @@
 // prepare.h: the stages, on one worker thread. Each stage writes its files as <name>.part and renames them once whole,
-// so a preparation cut short (cancelled, a crash, a full disk) leaves nothing that is taken for complete; run again on
-// the same folder, it keeps what is right and does the rest.
+// and .import/complete goes before a stage replaces or deletes anything a finished folder holds (uncomplete()), so a
+// preparation cut short (cancelled, a crash, a full disk, a rename refused) leaves nothing that is taken for complete;
+// run again on the same folder, it keeps what is right and does the rest.
 #include "prepare.h"
 
 #include <algorithm>
@@ -471,7 +472,8 @@ private:
                    np::detail::human_size(sp.available) + " free on " + str(out_));
 
         // What the folder held before: the last preparation's main, and whether it was complete (it stays so while
-        // only libraries or shaders are added; a folder taking another version's files is not until it is done).
+        // only libraries are added; a stage that replaces what it holds removes the mark first, uncomplete(); a folder
+        // taking another version's files is not complete until it is done).
         previous_build_ = folder_build_id(out_);
         if (fs::exists(out_ / ".import" / "complete", ec) && previous_build_ != build_id_) {
             fs::remove(out_ / ".import" / "complete", ec);
@@ -490,6 +492,14 @@ private:
         std::string first = read_text(out_ / "game.ini", 400);
         first = first.substr(0, first.find('\n'));
         return first.find("ACNHRecomp") != std::string::npos && fs::is_directory(out_ / ".import", ec);
+    }
+
+    // Before a stage replaces or deletes what a finished game folder holds (an add-on, romfs.pak, the shaders): the
+    // folder is no longer complete until finish() says so again.
+    void uncomplete(const std::string& what) {
+        std::error_code ec;
+        if (fs::remove(out_ / ".import" / "complete", ec))
+            log(what + ": the game folder is taken as complete again once this preparation ends");
     }
 
     // ---- ExeFS ----
@@ -599,6 +609,7 @@ private:
         }
         const unsigned jobs = std::max(1u, std::thread::hardware_concurrency());
         const fs::path work = out_ / ".import" / "shaders_extracted", lg = out_ / ".import" / "shaders.log";
+        uncomplete("the shaders");
         fs::remove_all(work, ec);
         fs::create_directories(out_ / ".import", ec);
         fs::create_directories(out_ / "spirv", ec);
@@ -654,6 +665,7 @@ private:
             return;
         }
         progress(0, "romfs.pak");
+        uncomplete("romfs.pak");
         np::RomfsPakOptions po;
         po.exclude_root = r_.romfs.exclude_root;
         po.skip_packages = true;
@@ -683,7 +695,9 @@ private:
         for (const np::DlcInfo& d : r_.dlc) total += d.bytes;
         for (const np::DlcInfo& d : r_.dlc) {
             const fs::path src = u8(d.path), dst = out_ / "aoc" / std::to_string(d.index);
+            const fs::path part = out_ / "aoc" / (std::to_string(d.index) + ".part");
             const std::string name = "aoc/" + std::to_string(d.index);
+            fs::remove_all(part, ec);  // of a preparation cut short
             if (same_file(src, dst)) {
                 log(name + ": in the game folder already");
                 index_aoc(d.index);
@@ -697,16 +711,16 @@ private:
                 done += d.bytes;
                 continue;
             }
-            const fs::path part = out_ / "aoc" / (std::to_string(d.index) + ".part");
-            fs::remove_all(part, ec);
             for (const auto& [rel, size] : from.files) {
                 copy_file_atomic(src / rel, part / rel, cancel_, [&](uint64_t n) {
                     done += n;
                     progress(before + share * (total ? double(done) / double(total) : 1), name);
                 });
             }
+            // the folder's copy replaced (removed first: a folder is renamed over no other on Windows)
+            uncomplete(name);
             fs::remove_all(dst, ec);
-            fs::rename(part, dst, ec);
+            if (!ec) fs::rename(part, dst, ec);
             if (ec) fail("cannot write " + str(dst) + ": " + ec.message());
             log(name + ": " + std::to_string(from.files.size()) + " files, " + np::detail::human_size(from.bytes) +
                 " (add-on " + std::to_string(d.index) + ")");
@@ -731,6 +745,7 @@ private:
             return;
         }
         progress(0.95, "spirv.pak");
+        uncomplete("spirv.pak");
         np::PakOptions po;
         po.cancel = &cancel_;
         np::PakResult pr = np::write_spirv_pak(str(dir), str(pak), po);
