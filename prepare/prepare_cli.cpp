@@ -189,8 +189,10 @@ int main(int argc, char** argv) {
     const char* zig_exe = "tools/zig/zig";
     const char* tool_exe = "tools/shaders/spirv_harness";
 #endif
-    if (o.zig.empty()) o.zig = beside({zig_exe, std::string(zig_exe).substr(6)});  // tools/zig/zig, zig/zig
-    if (o.shader_tool.empty()) o.shader_tool = beside({tool_exe, std::string(tool_exe).substr(14)});
+    // tools/zig/zig, zig/zig; in ACNHRecomp.app (acnh_prepare in Contents/MacOS) Contents/Resources/tools/zig/zig
+    if (o.zig.empty()) o.zig = beside({zig_exe, std::string(zig_exe).substr(6), std::string("../Resources/") + zig_exe});
+    if (o.shader_tool.empty())
+        o.shader_tool = beside({tool_exe, std::string(tool_exe).substr(14), std::string("../Resources/") + tool_exe});
 
     std::signal(SIGINT, on_signal);
     std::signal(SIGTERM, on_signal);

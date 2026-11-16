@@ -91,4 +91,13 @@ void wait();
 // is no platform.
 bool parse_platforms(const std::string& list, std::vector<std::string>& out, std::string& bad);
 
+// The free space the preparation needs on the game folder's drive, as the Check stage counts it (it refuses below
+// `need`), and about what the folder holds once it is done (`result`): from the probe of the picks, for `platforms`
+// platforms; `shaders` and `compile` false when the folder has them already. The launcher shows it before starting.
+struct Space {
+    uint64_t need = 0, result = 0;
+};
+Space space_needed(const nx::prepare::ProbeResult& r, size_t platforms, bool in_place, bool shaders = true,
+                   bool compile = true);
+
 }  // namespace prep

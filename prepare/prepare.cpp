@@ -446,12 +446,7 @@ private:
                 refuse("the shaders are converted from the extracted RomFS: pick its folder (this game folder has "
                        "only romfs.pak, and no spirv/summary.txt)");
         }
-        uint64_t need = 300ull << 20;  // exefs, analysis, the logs
-        if (!in_place_) need += r_.romfs.walked ? r_.romfs.bytes + r_.romfs.files * 64 : 10'600'000'000ull;
-        for (const np::DlcInfo& d : r_.dlc) need += d.bytes;
-        if (!shaders_done_) need += 600ull << 20;
-        // gen/, one platform's objects and zig cache at a time (the cache goes once its library is built), the libraries
-        if (compile) need += (2500ull << 20) + (800ull << 20) + targets_.size() * (350ull << 20);
+        const uint64_t need = space_needed(r_, targets_.size(), in_place_, !shaders_done_, compile).need;
         uint64_t have_already = 0;
         if (fs::is_regular_file(out_ / "romfs.pak", ec)) have_already += fs::file_size(out_ / "romfs.pak", ec);
         const fs::space_info sp = fs::space(out_, ec);
@@ -903,6 +898,19 @@ void wait() {
         t = std::move(j.th);
     }
     t.join();
+}
+
+Space space_needed(const np::ProbeResult& r, size_t platforms, bool in_place, bool shaders, bool compile) {
+    Space s;
+    uint64_t kept = 300ull << 20;  // exefs, analysis, the logs
+    if (!in_place) kept += r.romfs.walked ? r.romfs.bytes + r.romfs.files * 64 : 10'600'000'000ull;  // romfs.pak
+    for (const np::DlcInfo& d : r.dlc) kept += d.bytes;
+    s.need = s.result = kept;
+    if (shaders) s.need += 600ull << 20, s.result += 300ull << 20;  // the shader tool's work, then spirv.pak
+    // gen/, one platform's objects and zig cache at a time (the cache goes once its library is built), the libraries
+    if (compile) s.need += (2500ull << 20) + (800ull << 20) + platforms * (350ull << 20);
+    s.result += platforms * (350ull << 20);
+    return s;
 }
 
 bool parse_platforms(const std::string& list, std::vector<std::string>& out, std::string& bad) {
