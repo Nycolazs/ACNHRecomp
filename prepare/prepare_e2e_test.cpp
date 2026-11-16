@@ -353,6 +353,35 @@ static int base(const fs::path& src, const fs::path& work, const fs::path& cli, 
     }
 #endif
 
+    std::puts("a folder of another version: its shaders and romfs.pak made again; its romfs.pak refused as the RomFS");
+    // as ACNHRecomp-Importer leaves a folder of another update: no records, game.ini's build id is its last main's
+    const std::string other = "11111111111111111111111111111111", ini = text(out1 / "game.ini");
+    CHECK(first_line(out1 / ".import" / "shaders.build_id") == kId303 &&
+          first_line(out1 / ".import" / "romfs.pak.build_id") == kId303);
+    write_text(out1 / "game.ini", std::string(ini).replace(ini.find(kId303), 32, other));
+    fs::remove(out1 / ".import" / "shaders.build_id");
+    fs::remove(out1 / ".import" / "romfs.pak.build_id");
+    r = run_prep(o);
+    CHECK(r.last.rc == 0);
+    CHECK(r.log.find("the shaders were converted for another version of the game (" + other + "): converted again") !=
+          std::string::npos);
+    CHECK(r.log.find("shaders: 2 converted") != std::string::npos);
+    CHECK(r.log.find("romfs.pak: written before") == std::string::npos && r.log.find("romfs.pak: ") != std::string::npos);
+    CHECK(first_line(out1 / ".import" / "shaders.build_id") == kId303 &&
+          first_line(out1 / ".import" / "romfs.pak.build_id") == kId303);
+    check_folder(in, out1, false, 1, hhp);
+    // a change of version cut short leaves the new ExeFS beside the old romfs.pak: refused as the RomFS, in place
+    write_text(out1 / ".import" / "romfs.pak.build_id", other + "\n");
+    prep::Options own = base_options(out1, {}, tool);
+    own.out.clear(), own.in_place = true;
+    r = run_prep(own);
+    CHECK(r.last.rc == 2 &&
+          r.last.error.find("romfs.pak was packed from the RomFS of another version of the game (" + other) != std::string::npos);
+    write_text(out1 / ".import" / "romfs.pak.build_id", std::string(kId303) + "\n");
+    r = run_prep(own);  // of this version: the folder prepared again from it
+    CHECK(r.last.rc == 0 && r.log.find("shaders: converted before, kept") != std::string::npos);
+    check_folder(in, out1, false, 1, hhp);
+
     std::puts("cancel while the shader tool runs");
     set_env("NX_FAKE_SHADER_SLEEP", "30");
     const auto t0 = std::chrono::steady_clock::now();

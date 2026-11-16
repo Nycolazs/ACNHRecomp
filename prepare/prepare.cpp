@@ -412,6 +412,9 @@ private:
             job().st.out = str(out_);
         }
         gen_ = out_ / "gen";
+        // What the folder held before: the last preparation's main (game.ini), and whether that one ended.
+        previous_build_ = folder_build_id(out_);
+        complete_before_ = fs::exists(out_ / ".import" / "complete", ec);
         const bool here = same_file(romfs, out_ / "romfs") || same_file(romfs, out_ / "extract" / "romfs") ||
                           same_file(romfs, out_ / "romfs.pak");
         if (o_.in_place && !here)
@@ -424,6 +427,17 @@ private:
         in_place_ = here;
         if (romfs_pak_ && !here)
             refuse(r_.romfs.path + " is the romfs.pak of another game folder: pick the extracted RomFS folder instead");
+        // the folder's own romfs.pak as the RomFS: only one packed for this main (a change of version cut short leaves
+        // the new ExeFS beside the old romfs.pak)
+        if (romfs_pak_) {
+            const std::string id = made_for("romfs.pak");
+            if (id != build_id_)
+                refuse(str(out_ / "romfs.pak") + " was packed from the RomFS of " +
+                       (id.empty() ? std::string("a preparation that did not end")
+                                   : "another version of the game (" + id + ")") +
+                       ", not of " + (version_.empty() ? build_id_ : version_) +
+                       ": pick the extracted RomFS folder of this version to prepare the game folder");
+        }
         if (!romfs_pak_ && !here && within(out_, romfs))
             refuse("the game folder " + str(out_) + " cannot be inside the RomFS (" + r_.romfs.path + ")");
         if (!r_.exefs.empty() && same_file(out_, u8(r_.exefs)))
@@ -454,15 +468,24 @@ private:
             if (o_.zig.empty()) refuse("the toolchain (zig) that compiles the game's code is missing");
             if (std::string why = gl::check_toolchain(o_.zig, o_.zig_lib); !why.empty()) refuse(why);
         }
-        shaders_done_ = fs::exists(out_ / "spirv" / "summary.txt", ec) || is_spirv_pak(out_ / "spirv.pak");
+        // The shaders depend on the RomFS and on main (the tool extracts from analysis/main.bin too): kept only when
+        // converted for this main.
+        const bool converted = fs::exists(out_ / "spirv" / "summary.txt", ec) || is_spirv_pak(out_ / "spirv.pak");
+        const std::string shaders_for = converted ? made_for("shaders") : "";
+        shaders_done_ = converted && shaders_for == build_id_;
         if (!shaders_done_) {
             if (o_.shader_tool.empty() || !fs::is_regular_file(u8(o_.shader_tool), ec))
                 refuse("the shader tool (spirv_harness) is missing" +
                        (o_.shader_tool.empty() ? std::string() : ": " + o_.shader_tool));
             if (romfs_pak_)
                 refuse("the shaders are converted from the extracted RomFS: pick its folder (this game folder has "
-                       "only romfs.pak, and no spirv/summary.txt)");
+                       "only romfs.pak, and no shaders converted for this version)");
         }
+        if (converted && !shaders_done_)
+            log("the shaders were converted for " +
+                (shaders_for.empty() ? std::string("a preparation that did not end")
+                                     : "another version of the game (" + shaders_for + ")") +
+                ": converted again");
         const uint64_t need = space_needed(r_, targets_.size(), in_place_, !shaders_done_, compile).need;
         uint64_t have_already = 0;
         if (fs::is_regular_file(out_ / "romfs.pak", ec)) have_already += fs::file_size(out_ / "romfs.pak", ec);
@@ -471,11 +494,10 @@ private:
             refuse("not enough free space for the game folder: " + np::detail::human_size(need) + " needed, " +
                    np::detail::human_size(sp.available) + " free on " + str(out_));
 
-        // What the folder held before: the last preparation's main, and whether it was complete (it stays so while
-        // only libraries are added; a stage that replaces what it holds removes the mark first, uncomplete(); a folder
-        // taking another version's files is not complete until it is done).
-        previous_build_ = folder_build_id(out_);
-        if (fs::exists(out_ / ".import" / "complete", ec) && previous_build_ != build_id_) {
+        // Whether the folder stays complete (it does while only libraries are added; a stage that replaces what it
+        // holds removes the mark first, uncomplete(); a folder taking another version's files is not complete until
+        // it is done).
+        if (complete_before_ && previous_build_ != build_id_) {
             fs::remove(out_ / ".import" / "complete", ec);
             log("the game folder held another version of the game (" + previous_build_ + "): prepared again");
         }
@@ -492,6 +514,28 @@ private:
         std::string first = read_text(out_ / "game.ini", 400);
         first = first.substr(0, first.find('\n'));
         return first.find("ACNHRecomp") != std::string::npos && fs::is_directory(out_ / ".import", ec);
+    }
+
+    // The build id of the main the folder's romfs.pak or shaders were made for: .import/<what>.build_id, written with
+    // them (made()); for a folder from before those records, the main of its last preparation (game.ini) when that one
+    // ended (.import/complete). "" when not known: made again.
+    std::string made_for(const std::string& what) const {
+        std::error_code ec;
+        const fs::path rec = out_ / ".import" / (what + ".build_id");
+        if (fs::exists(rec, ec)) {
+            std::istringstream in(read_text(rec, 200));
+            std::string id;
+            in >> id;
+            return id;
+        }
+        return complete_before_ ? previous_build_ : "";
+    }
+    void made(const std::string& what) {
+        write_text_atomic(out_ / ".import" / (what + ".build_id"), build_id_ + "\n");
+    }
+    void unmade(const std::string& what) {
+        std::error_code ec;
+        fs::remove(out_ / ".import" / (what + ".build_id"), ec);
     }
 
     // Before a stage replaces or deletes what a finished game folder holds (an add-on, romfs.pak, the shaders): the
@@ -604,13 +648,19 @@ private:
         stage(Stage::Shaders);
         std::error_code ec;
         if (shaders_done_) {
+            if (!fs::exists(out_ / ".import" / "shaders.build_id", ec)) made("shaders");  // a folder from before it
             log("shaders: converted before, kept");
             return;
         }
         const unsigned jobs = std::max(1u, std::thread::hardware_concurrency());
         const fs::path work = out_ / ".import" / "shaders_extracted", lg = out_ / ".import" / "shaders.log";
         uncomplete("the shaders");
+        // what an earlier conversion left (of another version, or cut short) goes: spirv/ (the preparation's, check()),
+        // spirv.pak
+        unmade("shaders");
         fs::remove_all(work, ec);
+        fs::remove_all(out_ / "spirv", ec);
+        fs::remove(out_ / "spirv.pak", ec);
         fs::create_directories(out_ / ".import", ec);
         fs::create_directories(out_ / "spirv", ec);
         mark_own(out_ / "spirv");
@@ -637,6 +687,7 @@ private:
         if (!fs::exists(out_ / "spirv" / "summary.txt", ec) || spv == 0)
             fail("the shader tool converted no shader (log: " + str(lg) + "): the game would draw nothing");
         fs::remove_all(work, ec);
+        made("shaders");
         std::string summary = tail_of(out_ / "spirv" / "summary.txt", 200);
         while (!summary.empty() && (summary.back() == '\n' || summary.back() == '\r')) summary.pop_back();
         log("shaders: " + std::to_string(spv) + " converted; " + summary);
@@ -660,12 +711,16 @@ private:
         np::RomfsPakLayout l;
         std::string e;
         if (!np::romfs_pak_layout(r_.romfs.path, l, e, r_.romfs.exclude_root, true)) fail("romfs.pak: " + e);
-        if (fs::is_regular_file(pak, ec) && fs::file_size(pak, ec) == l.size && pak_count(pak) == l.files.size()) {
+        const std::string id = made_for("romfs.pak");
+        if (fs::is_regular_file(pak, ec) && fs::file_size(pak, ec) == l.size && pak_count(pak) == l.files.size() &&
+            id == build_id_) {
+            if (!fs::exists(out_ / ".import" / "romfs.pak.build_id", ec)) made("romfs.pak");
             log("romfs.pak: written before from this RomFS (" + std::to_string(l.files.size()) + " files), kept");
             return;
         }
         progress(0, "romfs.pak");
         uncomplete("romfs.pak");
+        unmade("romfs.pak");
         np::RomfsPakOptions po;
         po.exclude_root = r_.romfs.exclude_root;
         po.skip_packages = true;
@@ -676,6 +731,7 @@ private:
         np::PakResult pr = np::write_romfs_pak(r_.romfs.path, str(pak), po);
         if (pr.cancelled) throw Failure{4, "cancelled"};
         if (!pr.ok) fail("romfs.pak: " + pr.error);
+        made("romfs.pak");
         log("romfs.pak: " + std::to_string(pr.files) + " files, " + np::detail::human_size(pr.bytes));
     }
 
@@ -871,7 +927,7 @@ private:
     fs::path out_, gen_;
     std::vector<std::string> targets_;
     std::string build_id_, version_, previous_build_, err_, index_;
-    bool in_place_ = false, romfs_pak_ = false, shaders_done_ = false, skip_recompile_ = false;
+    bool in_place_ = false, romfs_pak_ = false, shaders_done_ = false, skip_recompile_ = false, complete_before_ = false;
 };
 
 void worker(Options o) {
