@@ -3,7 +3,7 @@
 //
 // Super Mario Bros. Wonder, landscape: A (jump, the big one) at the bottom right with B (jump), Y (dash, action) and
 // X (action) around it; ZR (roll), R, L, + and - along the top. The left half is the stick (platform_android_input.cpp):
-// it appears where the thumb lands, and pushed nearly all the way it also holds Y, so running needs no second thumb.
+// it appears where the thumb lands, and pushed past its ring it also holds Y, so running needs no second thumb.
 // Games without a layout here keep their own touch handling (Hades: zones around the thumb).
 //
 // Elsewhere touch_overlay() draws nothing, except with NX_OVERLAY_DEMO=1 (the buttons at rest), to check the look

@@ -63,11 +63,19 @@ struct Touch {
     float x0, y0, x, y;
     bool left;
     uint64_t button;
+    bool run = false;      // the stick: holding the run button (read_pad)
+    uint64_t past_ns = 0;  // the stick: when it went past the run distance, 0 while inside it
 };
 std::vector<Touch> g_touches;
 float g_w = 1, g_h = 1;
 bool g_gamepad = false;  // the last input came from a controller: the drawn touch controls hide
 bool g_pad_connected = false;  // a controller is connected (platform_android.cpp polls the system's input devices)
+
+// The button the on-screen stick holds to run (read_pad): Wonder's Y (dash), ACNH's B.
+uint64_t run_button() {
+    static const uint64_t run = std::strcmp(nx::game::kInfo.id, "acnh") == 0 ? kB : kY;
+    return run;
+}
 
 // Settings > Controls > Confirm / cancel buttons (input.layout), as on the other hosts (platform_sdl.cpp): "console"
 // keeps the game's A on the right face button, "xbox" puts it on the bottom one. Read again when the config changes.
@@ -179,6 +187,9 @@ int32_t on_input(android_app*, AInputEvent* e) {
     if (kind == AMOTION_EVENT_ACTION_DOWN || kind == AMOTION_EVENT_ACTION_POINTER_DOWN) {
         float x = AMotionEvent_getX(e, index), y = AMotionEvent_getY(e, index);
         g_gamepad = false;
+        // The first finger of a gesture: no other is down. A touch left from one whose end was not seen here (the
+        // controls turned off meanwhile) would otherwise keep its button held, or share the new finger's id.
+        if (kind == AMOTION_EVENT_ACTION_DOWN) g_touches.clear();
         size_t drawn = 0;
         touch_buttons(drawn, g_w / g_h);
         if (drawn) {  // a drawn layout (touch_layout.cpp): its buttons first, the rest of the left half is the stick
@@ -227,16 +238,34 @@ void read_pad(PadState& p) {
     float radius = std::max(1.f, g_h * 0.12f);
     size_t drawn = 0;
     touch_buttons(drawn, g_w / g_h);
-    for (const auto& t : g_touches) {
+    // A drawn layout's stick pushed past its ring also holds the run button (Wonder: Y, dash; ACNH: B, run), so running
+    // needs no second thumb on the right side. In ACNH's menus B is also Cancel, and in its software keyboard Delete:
+    // the stick pushed to its edge there (0.9 of the ring before, which any full push reached) backed out of menus and
+    // deleted the name being typed, a letter each time the thumb crossed that line (Discord, 0.8 and 0.9). So it runs
+    // only past the ring (kRunOn) and after a moment there (kRunDelayNs): a push across a menu or the keyboard is
+    // over before that. It stops back inside the ring (kRunOff), not at the same line, so a thumb resting near it does
+    // not press B again and again. Never while the game says its text entry is open (2.0.7: games/acnh/v2_0_7.cpp);
+    // input.touch_run = 0 (Settings > Controls) turns it off.
+    constexpr float kRunOn = 1.3f, kRunOff = 1.1f;
+    constexpr uint64_t kRunDelayNs = 250'000'000;
+    const uint64_t run = run_button();
+    const bool can_run = drawn && config_get_bool("input.touch_run", true) &&
+                         !(keyboard_state_known() && keyboard_typing());
+    const uint64_t now = monotonic_ns();
+    for (auto& t : g_touches) {
         if (t.left) {
             float dx = (t.x - t.x0) / radius, dy = (t.y - t.y0) / radius;
             p.lx = int32_t(std::clamp(dx, -1.f, 1.f) * kStickMax);
             p.ly = int32_t(std::clamp(-dy, -1.f, 1.f) * kStickMax);
-            // A drawn layout's stick pushed nearly all the way also holds the run button (Wonder: Y, dash; ACNH: B,
-            // run), so running needs no second thumb on the right side. input.touch_run = 0 (Settings > Controls) turns
-            // it off: in ACNH's menus B is also Cancel, so a stick pushed to the edge there backed out of them.
-            static const uint64_t run = std::strcmp(nx::game::kInfo.id, "acnh") == 0 ? kB : kY;
-            if (drawn && std::hypot(dx, dy) > 0.9f && config_get_bool("input.touch_run", true)) p.buttons |= run;
+            const float d = std::hypot(dx, dy);
+            if (!can_run || (t.run ? d < kRunOff : d <= kRunOn)) {
+                t.run = false;
+                t.past_ns = 0;
+            } else if (!t.run) {
+                if (!t.past_ns) t.past_ns = now;
+                t.run = now - t.past_ns >= kRunDelayNs;
+            }
+            if (t.run) p.buttons |= run;
         } else {
             p.buttons |= t.button;
         }
@@ -281,7 +310,7 @@ size_t touch_overlay(OverlayShape* out, size_t max) {
     uint64_t held = 0;
     for (const auto& t : g_touches) {
         if (t.left) stick = &t;
-        held |= t.button;
+        held |= t.button | (t.run ? run_button() : 0);
     }
     // A button's letters ("A", "ZR", "+") in the glyphs present.frag draws: "ABXYRLZ+-"; nothing for the d-pad and gear.
     auto label_code = [](const char* t) {
@@ -299,7 +328,8 @@ size_t touch_overlay(OverlayShape* out, size_t max) {
     if (stick && k + 2 <= max) {
         float r = 0.12f, dx = (stick->x - stick->x0) / g_h, dy = (stick->y - stick->y0) / g_h;
         float len = std::hypot(dx, dy), s = len > r ? r / len : 1.f;
-        out[k++] = {stick->x0 / g_w, stick->y0 / g_h, r, std::min(1.0f, 0.14f * shade)};
+        // The ring lights up while the stick holds the run button (read_pad), as that button does.
+        out[k++] = {stick->x0 / g_w, stick->y0 / g_h, r, std::min(1.0f, (stick->run ? 0.3f : 0.14f) * shade)};
         out[k++] = {(stick->x0 / g_h + dx * s) * g_h / g_w, stick->y0 / g_h + dy * s, 0.055f, std::min(1.0f, 0.45f * shade)};
     } else if (k < max) {
         float sx, sy, sr;
