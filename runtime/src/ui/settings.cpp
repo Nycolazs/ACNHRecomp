@@ -630,7 +630,8 @@ void page_game() {
         });
         row("game.clock_speed", "game.clock_speed.desc", [&](float w) {
             combo("game.clock_speed", "1",
-                  {{"1", tr("game.clock_speed.real")}, {"2", "2×"}, {"4", "4×"}, {"12", trf("game.clock_speed.day", "2 h")},
+                  {{"0", tr("game.clock_speed.stopped")}, {"1", tr("game.clock_speed.real")},
+                   {"2", "2×"}, {"4", "4×"}, {"12", trf("game.clock_speed.day", "2 h")},
                    {"24", trf("game.clock_speed.day", "1 h")}, {"60", "60×"}},
                   w);
         });
