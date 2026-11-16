@@ -27,7 +27,9 @@ constexpr sock_t kBadSock = -1;
 inline void sock_close(sock_t s) { close(s); }
 #endif
 
+#include <cerrno>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <string>
@@ -46,6 +48,15 @@ inline void net_init() {
         return WSAStartup(MAKEWORD(2, 2), &d) == 0;
     }();
     (void)done;
+#endif
+}
+
+// The last socket call's error, for the log: errno, or WSAGetLastError on Windows (10054: port unreachable).
+inline int sock_error() {
+#ifdef _WIN32
+    return WSAGetLastError();
+#else
+    return errno;
 #endif
 }
 
@@ -107,16 +118,31 @@ inline bool wait_socket(sock_t s, bool write, int ms) {
 #endif
 }
 
-// connect() that gives up after ms, as an unreachable address would take long.
-inline sock_t connect_within(const sockaddr_in& a, int ms) {
+// connect() that gives up after ms, as an unreachable address would take long. error: why it failed (-1: no answer
+// in time).
+inline sock_t connect_within(const sockaddr_in& a, int ms, int* error = nullptr) {
     const sock_t s = socket(AF_INET, SOCK_STREAM, 0);
-    if (s == kBadSock) return kBadSock;
+    if (s == kBadSock) {
+        if (error) *error = sock_error();
+        return kBadSock;
+    }
     no_sigpipe(s);
     set_nonblocking(s, true);
-    connect(s, reinterpret_cast<const sockaddr*>(&a), sizeof a);
-    int err = 1;
-    socklen_t len = sizeof err;
-    if (!wait_socket(s, true, ms) || getsockopt(s, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&err), &len) || err) {
+    int err = 0;
+    if (connect(s, reinterpret_cast<const sockaddr*>(&a), sizeof a)) {
+        err = sock_error();
+#ifdef _WIN32
+        if (err == WSAEWOULDBLOCK) err = 0;
+#else
+        if (err == EINPROGRESS) err = 0;
+#endif
+        // A connect that failed at once (no route) leaves SO_ERROR at 0 and the socket writable: not connected.
+        socklen_t len = sizeof err;
+        if (!err && !wait_socket(s, true, ms)) err = -1;
+        else if (!err && getsockopt(s, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&err), &len)) err = sock_error();
+    }
+    if (err) {
+        if (error) *error = err;
         sock_close(s);
         return kBadSock;
     }
@@ -226,6 +252,14 @@ inline sockaddr_in ipv4(uint32_t ip, uint16_t port) {  // host byte order in, a 
     a.sin_port = htons(port);
     a.sin_addr.s_addr = htonl(ip);
     return a;
+}
+
+inline std::string addr_text(const sockaddr_in& a) {  // a.b.c.d:port, for the log
+    const uint32_t ip = ntohl(a.sin_addr.s_addr);
+    char b[24];
+    std::snprintf(b, sizeof b, "%u.%u.%u.%u:%u", ip >> 24, (ip >> 16) & 255, (ip >> 8) & 255, ip & 255,
+                  unsigned(ntohs(a.sin_port)));
+    return b;
 }
 
 }  // namespace nx

@@ -27,7 +27,9 @@ changed while the game runs: it is read when you next talk to Orville, and held 
   its address towards the one asking (the virtual LAN's, not the home network's), and keeps the address the first
   visitor connected to. Over the internet without a virtual LAN: not possible, as with ldn_mitm.
 
-UDP and TCP port 11452 and the game's UDP port must be allowed by the firewall (Windows asks the first time). Only
+UDP and TCP port 11452 and the game's UDP port must be allowed by the firewall (Windows asks the first time, for one kind
+of network: a virtual LAN's adapter may be a Public network, `Get-NetConnectionProfile` in PowerShell, which then needs
+ACNHRecomp allowed on public networks too, in Windows Security > Firewall > Allow an app). Only
 private, link-local, CGNAT (Tailscale) and loopback addresses get an answer to a search, and the game's sockets only take
 datagrams from the nodes of the network it is in, so an open port on a public network does not let strangers in.
 
@@ -49,7 +51,11 @@ Variables: `NX_LDN=1` forces it on, `NX_LDN_JOIN=host[:port],...` (addresses to 
 `NX_LDN_IP=a.b.c.d` (the address to use and bind to). Two copies on one PC: `NX_LDN_IP=127.0.0.1` for the first, and
 `NX_LDN_IP=127.0.0.2` with `NX_LDN_JOIN=127.0.0.1` for the second (both need `NX_LDN_IP`: a copy bound to every address
 holds the port on 127.0.0.2 too on Linux; on macOS add 127.0.0.2 first, `sudo ifconfig lo0 alias 127.0.0.2`). Lines
-starting with `ldn:` and `vsock:` in the log show the calls.
+starting with `ldn:` and `vsock:` in the log show the calls, and the link's steps: `ldn: address test:` (the Online
+page's test: where it went, from which local address, the answer or none), `ldn: Scan to` (a station's search: each
+address, the local address it left from, the answers), `ldn: Scan from` (a host: each search answered or why not),
+`ldn: TCP` (connections, with the error when one fails). A search's packets that leave from the home network's address
+instead of the virtual LAN's (100.x on Tailscale) do not go through the virtual LAN.
 
 Known: one copy per address, as with ldn_mitm (ports 11452 and the game's are fixed); the subnet mask given to the game is
 /24. A visitor whose player id is already on the island does not see it (the game's own check, seen with copies of one
