@@ -450,7 +450,8 @@ private:
         if (!in_place_) need += r_.romfs.walked ? r_.romfs.bytes + r_.romfs.files * 64 : 10'600'000'000ull;
         for (const np::DlcInfo& d : r_.dlc) need += d.bytes;
         if (!shaders_done_) need += 600ull << 20;
-        if (compile) need += (2500ull << 20) + targets_.size() * (350ull << 20);  // gen/, the objects, the libraries
+        // gen/, one platform's objects and zig cache at a time (the cache goes once its library is built), the libraries
+        if (compile) need += (2500ull << 20) + (800ull << 20) + targets_.size() * (350ull << 20);
         uint64_t have_already = 0;
         if (fs::is_regular_file(out_ / "romfs.pak", ec)) have_already += fs::file_size(out_ / "romfs.pak", ec);
         const fs::space_info sp = fs::space(out_, ec);
@@ -757,6 +758,8 @@ private:
             int rc = gl::build(g, e);
             if (rc) return err_ = (rc == 4 ? std::string("cancelled") : "compile (" + targets_[k] + "): " + e), rc;
             log(targets_[k] + ": " + gl::find_target(targets_[k])->lib_name + " built");
+            std::error_code ec;
+            if (own_cache) fs::remove_all(cache, ec);  // its objects, of no use to the next platform
         }
         // A platform not chosen this time whose library was built from another main (the folder prepared again with
         // another update) would crash its player: it goes, and that platform needs preparing again.

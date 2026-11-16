@@ -329,7 +329,7 @@ int run_once(const std::vector<std::string>& argv, const std::string& log, const
                 else if (signalled == SIGTERM && std::chrono::steady_clock::now() - since > std::chrono::seconds(2))
                     kill(pid, SIGKILL), signalled = SIGKILL;
             }
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));  // a compile step ends within 10 ms of its child
         }
     } else {
         while (waitpid(pid, &st, 0) < 0 && errno == EINTR) {
@@ -577,6 +577,8 @@ std::string host_target() {
     return "macos-arm64";
 #elif defined(__linux__) && defined(__x86_64__)
     return "linux-x64";
+#elif defined(_WIN32) && (defined(_M_X64) || defined(__x86_64__))
+    return "windows-x64";
 #else
     return "";
 #endif

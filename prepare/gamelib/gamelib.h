@@ -30,7 +30,7 @@ struct Target {
 };
 const std::vector<Target>& targets();
 const Target* find_target(const std::string& name);
-// The target of the device this runs on ("" when it has none)
+// The target of the device this runs on ("" when it has none: Windows on ARM, an Intel Mac, ...)
 std::string host_target();
 
 struct Options {

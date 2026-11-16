@@ -44,7 +44,7 @@ struct Options {
     bool in_place = false;
     std::string zig, zig_lib;  // the toolchain (zig_lib: its lib folder when not beside it, Android)
     std::string shader_tool;   // spirv_harness, NativeAOT (tools/build_shader_tool.py)
-    std::string cache;         // zig's caches; "": <out>/.import/zig-cache, removed once every library is built
+    std::string cache;         // zig's caches; "": <out>/.import/zig-cache, removed as each library is built
     unsigned jobs = 0;         // compile jobs; 0: the cores, as many as the memory holds
     // Tests (or NX_PREPARE_SKIP_RECOMP=1): no recompile; the Compile stage builds <out>/gen as it is when there is one
     // (a stand-in, tools/make_fake_gen.py), else nothing (the folder then has no library). Synthetic modules are no

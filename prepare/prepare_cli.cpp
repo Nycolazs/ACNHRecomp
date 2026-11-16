@@ -162,7 +162,9 @@ int main(int argc, char** argv) {
         } else if (a == "--cache") {
             o.cache = value();
         } else if (a == "--jobs") {
-            o.jobs = unsigned(std::atoi(value().c_str()));
+            const int n = std::atoi(value().c_str());
+            if (n < 1 || n > 1024) usage_error("--jobs takes 1 to 1024");
+            o.jobs = unsigned(n);
         } else if (!a.empty() && a[0] == '-') {
             usage_error("unknown option " + a);
         } else {
