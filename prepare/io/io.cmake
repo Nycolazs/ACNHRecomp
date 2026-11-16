@@ -17,6 +17,16 @@ if(MSVC)
     target_compile_options(nx_prepare_io PRIVATE /utf-8)
     target_compile_definitions(nx_prepare_io PRIVATE _CRT_SECURE_NO_WARNINGS)
 endif()
+# No /arch:AVX2 (the top CMakeLists.txt adds it on Windows): the launcher links it (the probe of the player's picks), and
+# it must start on any x86-64 to tell the player about a CPU the game cannot run on.
+get_target_property(nx_io_opts nx_prepare_io COMPILE_OPTIONS)
+if(nx_io_opts)
+    list(REMOVE_ITEM nx_io_opts /arch:AVX2)
+    set_target_properties(nx_prepare_io PROPERTIES COMPILE_OPTIONS "${nx_io_opts}")
+endif()
+if(TARGET acnhrecomp_launcher)
+    target_link_libraries(acnhrecomp_launcher PRIVATE nx_prepare_io)
+endif()
 
 if(NX_TESTS)
     # Synthetic ExeFS and RomFS only. The packs are compared with tools/pack_romfs.py's and tools/pack_spirv.py's, and

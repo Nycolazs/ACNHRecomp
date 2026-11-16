@@ -8,7 +8,10 @@
 // NX_LAUNCHER_SHOT=<file.bmp> (saves the window after NX_LAUNCHER_SHOT_AFTER seconds, default 1, and exits),
 // NX_LAUNCHER_INI=<file> (another launcher.ini), NX_LAUNCHER_SCRIPT=<script> (runs in place of setup_acnh.py),
 // NX_LAUNCHER_SCROLL=<0..1> (the page scrolled that far), NX_LAUNCHER_SEARCH=keys|base|update|dlc|ptbr (that card
-// of the files page searched).
+// of the files page searched); NX_LAUNCHER_PAGE=prepare|preparing with NX_LAUNCHER_PREPARE_IN / _DLC / _OUT (the
+// picks; "preparing" starts at once), NX_LAUNCHER_PAGE=choose with NX_LAUNCHER_PICK (that folder chosen as the
+// game folder), NX_LAUNCHER_ZIG and NX_LAUNCHER_SHADER_TOOL (the tools), NX_PREPARE_SKIP_RECOMP=1
+// (prepare.h: no recompile, synthetic modules).
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 
@@ -24,6 +27,7 @@
 #include "backends/imgui_impl_sdlrenderer3.h"
 
 #include "launcher.h"
+#include "prepare_job.h"
 #include "ui/i18n.h"
 #include "ui/theme.h"
 
@@ -135,7 +139,8 @@ int main(int argc, char** argv) {
         SDL_RenderPresent(renderer);
     }
 
-    setup_cancel();  // never leave the setup running without its window
+    setup_cancel();      // never leave the setup running without its window
+    prepare_shutdown();  // nor the preparation: stopped, its files left as they are for the next run
     ImGui_ImplSDLRenderer3_Shutdown();
     ImGui_ImplSDL3_Shutdown();
     ImGui::DestroyContext();

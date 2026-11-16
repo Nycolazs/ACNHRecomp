@@ -2,8 +2,10 @@
 // release checks them: the folder's parts and executables (check_file), that it was prepared and finished
 // (prepared_folder: game.ini's first line names ACNHRecomp, .import/complete), the version and add-ons it holds
 // (build_contents), and, with the player beside this test in the build folder, the game's library for this computer
-// (find_build). A folder from ACNHRecomp-Importer passes the same way; one prepared by neither does not.
-//   prepare_launcher_test <folder without a library> [<folder with this computer's library>]
+// (find_build). A folder from ACNHRecomp-Importer passes the same way; one prepared by neither does not, and is told
+// as one to prepare (FileCheck::unprepared). The synthetic extraction it was prepared from is found and checked as
+// what to prepare from (Kind::Extract).
+//   prepare_launcher_test <folder without a library> [<folder with this computer's library> [<extraction>]]
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -76,11 +78,35 @@ int main(int argc, char** argv) {
     CHECK(check_file(Kind::Game, copy.string()).status == Status::Ok);
     set_first_line(copy / "game.ini", "# some other tool");
     CHECK(check_file(Kind::Game, copy.string()).status == Status::Error);
-    if (!player.empty()) CHECK(std::string(find_build(copy.string(), b)) == "launcher.err.game_importer");
+    CHECK(check_file(Kind::Game, copy.string()).unprepared);
+    if (!player.empty()) CHECK(std::string(find_build(copy.string(), b)) == "launcher.err.game_unprepared");
     set_first_line(copy / "game.ini", "# ACNHRecomp game folder");
     fs::remove(copy / ".import" / "complete");
     CHECK(check_file(Kind::Game, copy.string()).status == Status::Error);
     fs::remove_all(copy);
+    CHECK(!check_file(Kind::Game, folder).unprepared && is_prepared_folder(folder));
+
+    // The extraction the folders were prepared from: what to prepare from (its package beside is only a warning), a
+    // game folder not prepared yet, and found by the search near it. A prepared folder is no extraction to find.
+    if (argc > 3) {
+        const std::string ex = argv[3];
+        FileCheck e = check_file(Kind::Extract, ex);
+        std::printf("check_file extract: %d %s\n", int(e.status), e.text.c_str());
+        CHECK(e.status != Status::Error && e.text.find("3.0.3") != std::string::npos);
+        CHECK(check_file(Kind::Game, ex).unprepared && !is_prepared_folder(ex));
+        bool found = false;
+        for (const Found& f : search_files(Kind::Extract, {fs::path(ex).parent_path().string()})) {
+            found |= fs::equivalent(f.path, ex);
+            CHECK(!is_prepared_folder(f.path));
+        }
+        CHECK(found);
+        // its ExeFS alone: the RomFS beside it is found too; a folder of neither (prepare_e2e's busy/) is refused
+        CHECK(check_file(Kind::Extract, (fs::path(ex) / "exefs").string()).status != Status::Error);
+        const fs::path busy = fs::path(ex).parent_path().parent_path() / "busy";
+        if (fs::is_directory(busy)) CHECK(check_file(Kind::Extract, busy.string()).status == Status::Error);
+    }
+    CHECK(translate("launcher.ok.extract", {"3.0.3"}, "x").find("3.0.3") != std::string::npos);
+    CHECK(translate("prepare.no.such.key", {"a"}, "english a") == "english a");
 
     std::printf("%d checks, %d failed\n", g_checks, g_failed);
     return g_failed ? 1 : 0;
