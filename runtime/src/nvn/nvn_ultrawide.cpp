@@ -229,6 +229,9 @@ bool uw_widen_texture(Texture& t) {
     // screen outdoors.
     static const bool off = std::getenv("NX_SCREEN_SCALE") && std::getenv("NX_SCREEN_SCALE")[0] == '0';
     if (off || (t.target != 1 && t.target != 4) || (t.flags & 4) || t.width < 16 || t.height < 9) return false;
+    // Pitch-linear (a stride): the CPU reads or writes its memory at the game's size. Happy Home Paradise decodes each
+    // photo's JPEG into a 960x540 one; widened, it was cleared instead of uploaded and the photo was blank.
+    if (t.stride) return false;
     double r = double(t.width) / double(t.height);
     if (std::fabs(r - k169) / k169 > 0.03) return false;
     // The 1920x1080 and 1280x720 chains (halved down to the bloom's 30x17, heights padded: 480x272), not a UI layer

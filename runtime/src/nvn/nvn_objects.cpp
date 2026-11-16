@@ -745,6 +745,7 @@ void textures_written(uint64_t addr, uint64_t size) {
             imaged++;
             uint64_t base = std::max(addr, t->memory), end = std::min(addr + size, t->memory + t->storage_size);
             t->mark_dirty(base - t->memory, end - t->memory);
+            t->written_behind = true;
         }
     static int logged = 0;
     if (logged++ < 4) {

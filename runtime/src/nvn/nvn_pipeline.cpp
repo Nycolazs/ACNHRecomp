@@ -1392,6 +1392,10 @@ GpuImage* ensure_contents(VkCommandBuffer cb, uint64_t texture) {
         if (!clean) worker_bail("texture contents");
         return img;
     }
+    if (t->written_behind.exchange(false) && t->dirty.load(std::memory_order_acquire)) {
+        img->rendered = false;  // the CPU's bytes replace what the GPU drew (textures_written)
+        img->texels = false;
+    }
     bool dirty = t->dirty.exchange(false);
     uint64_t dirty_lo = t->dirty_lo.exchange(UINT64_MAX), dirty_hi = t->dirty_hi.exchange(0);
     if (dirty_hi <= dirty_lo) dirty_lo = 0, dirty_hi = UINT64_MAX;  // marked without a range: all of it

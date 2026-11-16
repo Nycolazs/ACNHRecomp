@@ -34,8 +34,21 @@ void SetPixelData(CPU& c) {
     call(c, real);
 }
 
+// Result Decode(JpegDecoder*, void* pixels, size_t size, int lineAlignment): Happy Home Paradise decodes each photo
+// straight into a texture's memory, a target it cleared on the GPU first. The CPU's pixels are uploaded over that.
+void Decode(CPU& c) {
+    static const uint64_t real = find_symbol("_ZN2nn5image11JpegDecoder6DecodeEPvmi");
+    const uint64_t pixels = c.x[1], size = c.x[2];
+    call(c, real);
+    static int logged = 0;
+    if (logged++ < 8) log("jpeg: Decode %llu bytes at %llx: result %#x", (unsigned long long)size,
+                          (unsigned long long)pixels, uint32_t(c.x[0]));
+    if (pixels && size && uint32_t(c.x[0]) == 0) textures_written(pixels, size);
+}
+
 }  // namespace
 
 NX_HLE("_ZN2nn5image11JpegEncoder12SetPixelDataEPKvNS0_11PixelFormatERKNS0_9DimensionEi", SetPixelData);
+NX_HLE("_ZN2nn5image11JpegDecoder6DecodeEPvmi", Decode);
 
 }  // namespace nx
