@@ -349,6 +349,32 @@ static int base(const fs::path& src, const fs::path& work, const fs::path& cli, 
     r = run_prep(no_tool);
     CHECK(r.last.rc == 2 && r.last.error.find("shader tool") != std::string::npos);
 
+    std::puts("refused: a gen/ or spirv/ the preparation did not make (tools/setup_acnh.py's data folder), in place or not");
+    const fs::path dev = work / "dev";
+    make_exefs(dev / "exefs", kId303);
+    make_romfs(dev / "extract" / "romfs");
+    write_text(dev / "gen" / "main" / "table.cpp", "// a developer's NX_GEN_DIR\n");
+    write_text(dev / "spirv" / "0123456789abcdef.spv", "a developer's shader");
+    prep::Options od = base_options(dev, {}, tool);
+    od.out.clear(), od.in_place = true;
+    r = run_prep(od);
+    CHECK(r.last.rc == 2 && r.last.error.find(s(fs::path("dev") / "gen") + " was not made by ACNHRecomp's preparation") !=
+                                std::string::npos);
+    fs::remove_all(dev / "gen");
+    r = run_prep(od);
+    CHECK(r.last.rc == 2 && r.last.error.find(s(fs::path("dev") / "spirv") + " was not made") != std::string::npos);
+    CHECK(read_all(dev / "spirv" / "0123456789abcdef.spv").size() == 20 && !fs::exists(dev / "analysis"));
+    fs::remove_all(dev / "spirv");
+    write_text(dev / "gen" / "main" / "table.cpp", "// a developer's NX_GEN_DIR\n");
+    r = run_prep(base_options(in, dev, tool));  // its exefs/ lets it be the game folder; its gen/ does not
+    CHECK(r.last.rc == 2 && r.last.error.find("was not made") != std::string::npos);
+    CHECK(text(dev / "gen" / "main" / "table.cpp") == "// a developer's NX_GEN_DIR\n");
+    // a folder prepared before keeps its spirv/ (the mark, or game.ini and .import/ for one from before it)
+    CHECK(fs::exists(out1 / "spirv" / ".acnhrecomp_prepare"));
+    fs::remove(out1 / "spirv" / ".acnhrecomp_prepare");
+    r = run_prep(o);
+    CHECK(r.last.rc == 0 && r.log.find("shaders: converted before, kept") != std::string::npos);
+
     std::puts("refused: no toolchain, a damaged one");
     prep::Options compile = base_options(in, work / "out_zig", tool);
     compile.skip_recompile = false;

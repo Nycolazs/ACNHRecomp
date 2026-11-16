@@ -43,6 +43,11 @@ index its folder's name does not give (`01006F8002327xxx`, `aoc/<n>`) is add-on 
 `--dlc DIR:index` chooses. `NX_PREPARE_SKIP_RECOMP=1` (tests): no recompile; the compile builds `gen/` as it is when
 there is one (`tools/make_fake_gen.py`'s stand-in).
 
+The stages overwrite and delete `gen/` and `spirv/`, so a game folder (in place or not) whose `gen/` or `spirv/` the
+preparation did not make is refused: they carry its mark (`.acnhrecomp_prepare`), or `gen/recomp_source.txt`, or are in
+a folder a preparation finished before (`game.ini` naming ACNHRecomp, `.import/`). `tools/setup_acnh.py`'s data folder
+(`extract/romfs/` and a `gen/` that is `NX_GEN_DIR`) is such a folder.
+
 The folder is the one ACNHRecomp-Importer wrote, played the same way: the launcher's `prepared_folder()` takes both
 (`launcher/files.cpp`), the player loads `game/<platform>/` (`runtime/src/game_folder.cpp`), `analysis/` (`loader.cpp`),
 `romfs.pak` or `romfs/` and `aoc/<n>/` (`hle_fs.cpp`), `spirv.pak` (`nvn_shaders.cpp`).

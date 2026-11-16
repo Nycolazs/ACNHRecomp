@@ -129,6 +129,16 @@ void write_bytes_atomic(const fs::path& p, const std::vector<uint8_t>& b) {
     if (ec) fail("cannot write " + str(p) + ": " + ec.message());
 }
 
+// The mark of a folder the preparation made in the game folder and replaces, empties and deletes as it goes (gen/,
+// spirv/). It touches no such folder it did not make: in place, the folder of an extraction may be tools/setup_acnh.py's
+// data folder, whose gen/ is a developer's NX_GEN_DIR and whose spirv/ its shaders.
+const char* const kOwnMark = ".acnhrecomp_prepare";
+void mark_own(const fs::path& dir) {
+    std::error_code ec;
+    if (!fs::exists(dir / kOwnMark, ec))
+        write_text_atomic(dir / kOwnMark, "made by ACNHRecomp's preparation (prepare/), which deletes or replaces what is in it\n");
+}
+
 // A file copied as <to>.part, then renamed; `tick` after each MiB.
 void copy_file_atomic(const fs::path& from, const fs::path& to, const std::atomic<bool>& cancel,
                       const std::function<void(uint64_t)>& tick = {}) {
@@ -421,6 +431,12 @@ private:
         if (fs::is_directory(out_, ec) && !here && !fs::is_empty(out_, ec) && !fs::exists(out_ / "game.ini", ec) &&
             !fs::exists(out_ / ".import", ec) && !fs::exists(out_ / "exefs", ec))
             refuse(str(out_) + " holds other things: choose an empty folder for the game (or one prepared before)");
+        // gen/ and spirv/ are rewritten and deleted by the stages: only those the preparation made (in place too)
+        for (const char* d : {"gen", "spirv"})
+            if (fs::exists(out_ / d, ec) && !made_here(out_ / d))
+                refuse(str(out_ / d) + " was not made by ACNHRecomp's preparation, which would overwrite and delete it " +
+                       "(a folder of tools/setup_acnh.py?): move it out of " + str(out_) +
+                       ", or prepare the game folder somewhere else");
         fs::create_directories(out_, ec);
         if (ec) refuse("cannot make the game folder " + str(out_) + ": " + ec.message());
 
@@ -462,6 +478,18 @@ private:
             log("the game folder held another version of the game (" + previous_build_ + "): prepared again");
         }
         progress(1);
+    }
+
+    // Whether the preparation made this folder of the game folder (gen/, spirv/): its mark, the recompile stage's
+    // gen/recomp_source.txt (this preparation's or ACNHRecomp-Importer's), or a folder a preparation finished before
+    // (game.ini naming ACNHRecomp, .import/: the Importer's and this one's before the mark).
+    bool made_here(const fs::path& dir) const {
+        std::error_code ec;
+        if (fs::exists(dir / kOwnMark, ec)) return true;
+        if (dir.filename() == "gen" && fs::exists(dir / "recomp_source.txt", ec)) return true;
+        std::string first = read_text(out_ / "game.ini", 400);
+        first = first.substr(0, first.find('\n'));
+        return first.find("ACNHRecomp") != std::string::npos && fs::is_directory(out_ / ".import", ec);
     }
 
     // ---- ExeFS ----
@@ -517,6 +545,7 @@ private:
         double before = 0;
         try {
             fs::create_directories(gen_);
+            mark_own(gen_);
             std::error_code ec;
             fs::remove_all(gen_ / "split", ec);  // regrouped from the files written now (gamelib split())
             fs::remove(speedfix_file, ec);
@@ -572,6 +601,8 @@ private:
         const fs::path work = out_ / ".import" / "shaders_extracted", lg = out_ / ".import" / "shaders.log";
         fs::remove_all(work, ec);
         fs::create_directories(out_ / ".import", ec);
+        fs::create_directories(out_ / "spirv", ec);
+        mark_own(out_ / "spirv");
         // extracted from the RomFS and main, then translated (spirv_harness --prepare)
         const std::vector<std::string> argv = {o_.shader_tool, "--prepare", r_.romfs.path, str(out_ / "analysis" / "main.bin"),
                                                "--out", str(work), "--spirv", str(out_ / "spirv"), "--jobs",

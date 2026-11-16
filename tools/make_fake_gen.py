@@ -52,6 +52,9 @@ def main():
     module(gen, "main", 0x0, files)
     module(gen, "sdk", 0x10000000, max(1, files // 10))
     module(gen, "subsdk0", 0x18000000, max(1, files // 19))
+    # what the recompile stage leaves beside the code (prepare.cpp): the preparation then takes gen/ for its own
+    with open(os.path.join(gen, "recomp_source.txt"), "w") as f:
+        f.write("a stand-in (tools/make_fake_gen.py)\n")
     with open(os.path.join(sys.argv[1], "game.ini"), "w") as f:
         f.write("# a stand-in (tools/make_fake_gen.py)\nbuild_id = 00000000000000000000000000000000\n")
 
