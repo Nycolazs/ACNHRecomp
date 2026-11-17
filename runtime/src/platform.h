@@ -100,6 +100,9 @@ float default_render_scale();
 [[noreturn]] void restart_app();
 // Android: `url` in the app `package` when it is installed (Instagram, GitHub), else in the browser (platform_android).
 bool open_url_in_app(const std::string& url, const char* package);  // false: nothing opened it
+// Nextendo's sign-in page (`url`, whose redirect_uri is the loopback listener) in the app's own screen, a WebView
+// (android/java SignIn), so the app stays in front while the player signs in; the browser when that screen can't start.
+bool open_sign_in(const std::string& url);
 // An HTTPS request on java.net.HttpURLConnection (Android's TLS and certificate store): nextendo_http.cpp, as Android
 // has no curl. status 0 and `error` when nothing came back.
 bool https_request(const std::string& method, const std::string& url,
@@ -236,6 +239,9 @@ void input_script(PadState& p);  // NX_INPUT_SCRIPT presses (input_script.cpp), 
 // ---- for the settings screen (ui/settings.cpp) ----
 void set_fullscreen(bool on);                  // live
 int display_refresh_hz();                      // the display the window is on (60 when unknown)
+// A fatal error said to the player in a dialog box (desktop; not headless, not Android), before the process ends: a
+// game that stops before its window shows otherwise closes with the launcher and nothing said.
+void show_fatal(const char* text);
 void set_master_volume(float v);               // 0..1, live (scales the device output)
 std::string controller_name();                 // the connected controller ("" = none)
 std::string controller_kind();                 // "switch", "xbox", "playstation", "generic" or "" (none)

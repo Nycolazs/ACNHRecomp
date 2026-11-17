@@ -1473,8 +1473,26 @@ ffxReturnCode_t fg_dispatch(ffxDispatchDescFrameGeneration* params, void* ctx) {
     return g.fx.dispatch(reinterpret_cast<ffxContext*>(ctx), &params->header);
 }
 
+// AMD's swapchain keeps the context its callback was last configured with, and takes a new one only when the callback,
+// the on/off state or the flags change (setFrameGenerationConfig, SDK 2.4): a context made again for the same swapchain
+// (made again in place on a resize, ffx_fg_create_swapchain) has the same callback, and the next generated frame called
+// into the freed one (amd_fidelityfx_framegeneration_vk.dll+fbdc4 on going full screen). Turned off without a callback
+// first, the swapchain lets go of it; the new context's first configure turns it on again with its own.
 void fg_destroy_contexts() {
-    if (fg.fg_ctx) g.fx.destroy(&fg.fg_ctx, nullptr), fg.fg_ctx = nullptr;
+    if (!fg.fg_ctx) return;
+    if (fg.swapchain) {
+        ffxConfigureDescFrameGeneration c{};
+        c.header.type = FFX_API_CONFIGURE_DESC_TYPE_FRAMEGENERATION;
+        c.swapChain = reinterpret_cast<void*>(fg.swapchain);
+        c.frameGenerationEnabled = false;
+        c.frameID = fg.frame_id + 1;
+        if (const ffxReturnCode_t r = g.fx.configure(&fg.fg_ctx, &c.header); r != FFX_API_RETURN_OK) {
+            static int n = 0;  // the swapchain may still hold the context destroyed next (the crash this prevents)
+            if (n++ < 5) log("nvn/fg-fsr: turning frame generation off before a new context failed (%u)", r);
+        }
+    }
+    g.fx.destroy(&fg.fg_ctx, nullptr), fg.fg_ctx = nullptr;
+    fg.prepared = false;  // what this frame gave went to the context gone
 }
 
 // The frame generation context for a swapchain of `ci` (made again with it).

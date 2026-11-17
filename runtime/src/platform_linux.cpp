@@ -532,6 +532,12 @@ void update_refresh_hz() {
 }
 int display_refresh_hz() { return g_refresh_hz.load(); }
 
+void show_fatal(const char* text) {
+    if (headless()) return;
+    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "ACNHRecomp", text, nullptr);
+}
+
+
 void set_fullscreen(bool on) {
     run_on_main([on] {
         if (g_window) SDL_SetWindowFullscreen(g_window, on);
@@ -831,7 +837,7 @@ void game_thread() {
 
 int main(int argc, char** argv) {
     nx::plat::g_main_thread = pthread_self();
-    // acnh <game folder>: the folder ACNHRecomp-Importer prepared (else NX_DATA_ROOT, else the setup's data folder)
+    // acnh <game folder>: the prepared game folder (else NX_DATA_ROOT, else the setup's data folder)
     if (argc > 1) setenv("NX_DATA_ROOT", argv[1], 1);
     nx::config_apply();  // config.ini -> NX_* defaults, before anything reads them (config.h)
     if (nx::report_mode()) return 0;

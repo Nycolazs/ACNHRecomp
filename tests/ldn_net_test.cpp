@@ -64,6 +64,26 @@ int main() {
     p = lan_packet(kScanResp, info.data(), info.size());
     CHECK(p.size() <= kLanMaxPacket && lan_parse(p.data(), p.size(), type, body) && body == info);
 
+    // Addresses for the log.
+    CHECK(addr_text(ipv4(0x64656C04, kLanPort)) == "100.101.108.4:11452");
+
+    // connect_within: a port that takes connections, then the same port closed (refused: an error, not a socket).
+    net_init();
+    sock_t l = socket(AF_INET, SOCK_STREAM, 0);
+    sockaddr_in a = ipv4(0x7F000001, 0);
+    socklen_t al = sizeof a;
+    CHECK(l != kBadSock && !bind(l, reinterpret_cast<sockaddr*>(&a), sizeof a) && !listen(l, 1) &&
+          !getsockname(l, reinterpret_cast<sockaddr*>(&a), &al));
+    int err = 0;
+    sock_t c = connect_within(a, 1000, &err);
+    CHECK(c != kBadSock);
+    if (c != kBadSock) sock_close(c);
+    sock_close(l);
+    err = 0;
+    c = connect_within(a, 1000, &err);
+    CHECK(c == kBadSock && err != 0);
+    if (c != kBadSock) sock_close(c);
+
     if (!g_failed) std::printf("ldn_net: all passed\n");
     return g_failed ? 1 : 0;
 }

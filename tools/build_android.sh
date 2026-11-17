@@ -3,6 +3,12 @@
 # game folder) and, from the game set up on this computer, the game's recompiled code as lib<game>_game.so, which
 # goes into the game folder on the phone with the data (tools/push_android.sh), never into the APK. Packs the APK,
 # signs it with a local debug key and, with --install, installs it on the phone connected by adb.
+# The APK also prepares the game folder on the phone (Prepare.java, prepare/prepare_jni.cpp: lib<game>_prepare.so)
+# with the tools it carries as native libraries, the only files Android lets an app run: libzig.so (zig for
+# aarch64-linux, tools/fetch_zig.py --android) with its lib folder as assets/zig-lib.zip, and libspirv_harness.so (the
+# shader tool built NativeAOT for linux-bionic-arm64, tools/build_shader_tool.py: the .NET 10 SDK, on Linux). Made
+# once into private/android-tools/ (PREPARE_TOOLS= another folder; a spirv_harness put in its shaders/ is used as it
+# is).
 #
 # usage: tools/build_android.sh [--install] [--jobs N] [--no-game]
 #   --no-game: the app only, without the game set up here (what a release carries)
@@ -51,6 +57,35 @@ while [ $# -gt 0 ]; do
   shift
 done
 [ -d "$NDK" ] || { echo "NDK not found: $NDK"; exit 1; }
+
+# The preparation's tools (prepare/README.md "The tools it runs"), made once.
+TOOLS=${PREPARE_TOOLS:-private/android-tools}
+if [ ! -f "$TOOLS/zig/zig" ] || [ ! -f "$TOOLS/zig/sizes.txt" ]; then
+  echo "== zig for the phone (tools/fetch_zig.py aarch64-linux --android)"
+  python3 tools/fetch_zig.py aarch64-linux "$TOOLS/zig" --android ||
+    { echo "zig could not be downloaded into $TOOLS/zig (no network?): the APK carries it to prepare the game"; exit 1; }
+fi
+if [ ! -f "$TOOLS/shaders/spirv_harness" ]; then
+  echo "== the shader tool for the phone (tools/build_shader_tool.py linux-bionic-arm64)"
+  if [ "$(uname)" != Linux ] || ! dotnet --list-sdks 2>/dev/null | grep -q '^10\.'; then
+    echo "The shader tool the APK carries (spirv_harness, NativeAOT for linux-bionic-arm64) is built with the .NET 10"
+    echo "SDK on Linux: not found here ($(uname); dotnet SDKs: $(dotnet --list-sdks 2>/dev/null | cut -d' ' -f1 | tr '\n' ' '))."
+    echo "Install it (https://dotnet.microsoft.com/download/dotnet/10.0) and run this again, or put a spirv_harness"
+    echo "built on Linux with tools/build_shader_tool.py linux-bionic-arm64 <dest> into $TOOLS/shaders/."
+    exit 1
+  fi
+  ANDROID_NDK_ROOT=$NDK PATH="$NDK/toolchains/llvm/prebuilt/$HOST/bin:$PATH" \
+    python3 tools/build_shader_tool.py linux-bionic-arm64 "$TOOLS/shaders" > "$TOOLS/shaders.log" 2>&1 ||
+    { tail -20 "$TOOLS/shaders.log"; echo "the shader tool did not build (log: $TOOLS/shaders.log)"; exit 1; }
+fi
+# zig's lib folder with its sizes.txt at its top, as the asset the app unpacks (PrepareService.java); zipped again
+# when zig changes
+if [ ! -f "$TOOLS/zig-lib.zip" ] || [ "$TOOLS/zig/sizes.txt" -nt "$TOOLS/zig-lib.zip" ]; then
+  rm -f "$TOOLS/zig-lib.zip.tmp"
+  (cd "$TOOLS/zig/lib" && zip -q -r -9 ../../zig-lib.zip.tmp .)
+  (cd "$TOOLS/zig" && zip -q -9 ../zig-lib.zip.tmp sizes.txt)
+  mv "$TOOLS/zig-lib.zip.tmp" "$TOOLS/zig-lib.zip"
+fi
 GEN=$PWD/private/$GAME/gen
 if [ $GAMELIB = 0 ]; then
   BUILD=private/$GAME/build-android-app
@@ -69,9 +104,9 @@ cmake -S . -B "$BUILD" -G Ninja -DCMAKE_BUILD_TYPE=Release \
   -DNX_VULKAN_SDK="$PWD/private/third_party/Vulkan-Headers-1.4.357" > "$OUT.cmake.log" 2>&1 ||
   { tail -20 "$OUT.cmake.log"; exit 1; }
 
-TARGETS=$GAME
+TARGETS="$GAME nx_prepare_jni"
 # (NX_ANDROID_GAME_IN_APP=ON in the build's cache, for comparisons: no separate game library)
-[ $GAMELIB = 1 ] && ninja -C "$BUILD" -t targets all | grep -q "^lib${GAME}_game.so:" && TARGETS="$GAME ${GAME}_game"
+[ $GAMELIB = 1 ] && ninja -C "$BUILD" -t targets all | grep -q "^lib${GAME}_game.so:" && TARGETS="$TARGETS ${GAME}_game"
 echo "== build $TARGETS with $JOBS jobs (the first time compiles the whole game: ~$(( 300 / JOBS + 5 )) min)"
 until mkdir private/build.lock 2>/dev/null; do echo "waiting for another build"; sleep 10; done
 trap 'rmdir private/build.lock 2>/dev/null' EXIT
@@ -82,9 +117,13 @@ echo "== package"
 STRIP=$NDK/toolchains/llvm/prebuilt/$HOST/bin/llvm-strip
 rm -rf "$OUT"; mkdir -p "$OUT/lib/arm64-v8a"
 "$STRIP" --strip-unneeded -o "$OUT/lib/arm64-v8a/lib$GAME.so" "$BUILD/lib$GAME.so"
+"$STRIP" --strip-unneeded -o "$OUT/lib/arm64-v8a/lib${GAME}_prepare.so" "$BUILD/lib${GAME}_prepare.so"
 cp "$NDK/toolchains/llvm/prebuilt/$HOST/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so" "$OUT/lib/arm64-v8a/"
+# The preparation's tools, run from the app's native library folder (extractNativeLibs in the manifest)
+cp "$TOOLS/zig/zig" "$OUT/lib/arm64-v8a/libzig.so"
+cp "$TOOLS/shaders/spirv_harness" "$OUT/lib/arm64-v8a/libspirv_harness.so"
 # The game's code, for the game folder (push_android.sh): beside the APK, not in it.
-[ "$TARGETS" != "$GAME" ] && "$STRIP" --strip-unneeded -o "$OUT/lib${GAME}_game.so" "$BUILD/lib${GAME}_game.so"
+[[ " $TARGETS " == *" ${GAME}_game "* ]] && "$STRIP" --strip-unneeded -o "$OUT/lib${GAME}_game.so" "$BUILD/lib${GAME}_game.so"
 # Home.java: javac, then d8 to classes.dex.
 mkdir -p "$OUT/classes"
 javac -nowarn -Xlint:-options -source 8 -target 8 -bootclasspath "$PLATFORM" -classpath "$BT/core-lambda-stubs.jar" \
@@ -112,6 +151,14 @@ rm -rf "${OUT:?}/assets"
 tools/bundle_mods.sh "$OUT/assets"
 # Mbed TLS is linked into the game library (Nextendo Online): Apache 2.0 asks for its licence text in the package.
 mkdir -p "$OUT/assets/licenses" && cp "$BUILD/_deps/mbedtls-src/LICENSE" "$OUT/assets/licenses/LICENSE-mbedtls.txt"
+# Capstone (BSD 3-clause, LLVM's licence for its tables) and tmouh's SpeedFix (CC BY-NC 4.0: its attribution) are built
+# into libacnh_prepare.so (the recompiler): their notices
+cp third_party/capstone/LICENSE.TXT "$OUT/assets/licenses/LICENSE-capstone.txt"
+cp third_party/capstone/LICENSE_LLVM.TXT "$OUT/assets/licenses/LICENSE-capstone-llvm.txt"
+cp prepare/recomp/acnh/SPEEDFIX.md "$OUT/assets/licenses/SPEEDFIX.txt"
+# zig's licence (MIT; LLVM's and the libraries' own are in its lib folder) and that folder, unpacked on the phone
+cp "$TOOLS/zig/LICENSE" "$OUT/assets/licenses/LICENSE-zig.txt"
+cp "$TOOLS/zig-lib.zip" "$OUT/assets/zig-lib.zip"
 (cd "$OUT" && zip -q -r base.apk lib classes.dex && zip -q -r -0 base.apk assets)
 "$BT/zipalign" -f -P 16 4 "$OUT/base.apk" "$OUT/aligned.apk"
 KEY=private/android-debug.keystore

@@ -1,14 +1,16 @@
 // The first-run launcher: the program a player opens before there is a game build (README, "Installation").
 //
-// It asks for the player's game folder (the game's executables and files from the player's own dump: exefs/, romfs/,
-// aoc/ for add-on content) and the optional pt-BR translation, checks what this computer has, runs
-// tools/setup_acnh.py as a child process and follows its stages, then starts the game it built. Or it is pointed at a
-// build folder made earlier. It holds no game code, no keys and reads no game container.
+// A release (the player beside it) prepares the game folder from the ExeFS and RomFS the player extracted from their
+// own copy with their emulator (prepare/, prepare_job.h), or takes a folder prepared before, and starts the game. From
+// a checkout it can also ask for a game folder and the optional pt-BR translation, check what this computer has, run
+// tools/setup_acnh.py as a child process and follow its stages, then start the game it built. It holds no game code,
+// no keys and reads no game container (NSP, XCI, NCA).
 //
-//   main.cpp      SDL3 window, Dear ImGui (SDL_Renderer backend), fonts and the frame loop
-//   pages.cpp     the pages: welcome, files, install, build, done, home, settings
-//   files.cpp     paths, launcher.ini, checks of the chosen files and of build folders, prerequisites
-//   pipeline.cpp  the setup as a child process (stages, progress, cancel) and starting the game
+//   main.cpp         SDL3 window, Dear ImGui (SDL_Renderer backend), fonts and the frame loop
+//   pages.cpp        the pages: welcome, prepare, preparing, files, install, build, done, home, settings
+//   files.cpp        paths, launcher.ini, checks of the chosen files and of build folders, prerequisites
+//   prepare_job.cpp  the preparation of the game folder and the probe of the picks on their threads, its tools
+//   pipeline.cpp     the setup as a child process (stages, progress, cancel) and starting the game
 #pragma once
 
 #include <cstdint>
@@ -56,29 +58,43 @@ Ini& settings();  // launcher.ini (launcher_ini_path)
 
 std::string launcher_ini_path();    // NX_LAUNCHER_INI, else the user's settings folder (SDL_GetPrefPath)
 std::string default_install_dir();  // ~/.local/share, ~/Library/Application Support, %LOCALAPPDATA% + /ACNHRecomp
+std::string default_game_dir();     // where the launcher prepares the game folder unless told: <install dir>/Game
 std::string repo_root();            // the checkout holding tools/setup_acnh.py, "" if not found
 std::string human_size(uint64_t bytes);
 uint64_t free_space(const std::string& dir);  // of the folder, or of its nearest existing parent
 std::string parent_dir(const std::string& path);
 std::string file_name(const std::string& path);
+std::string path_join(const std::string& dir, const std::string& name);  // dir/name, in the OS's own form
+bool same_path(const std::string& a, const std::string& b);              // the same file or folder
+bool path_within(const std::string& path, const std::string& dir);       // path is dir or inside it
+// A folder holding other things than a game folder's (no game.ini, .import/ or exefs/): the preparation refuses it.
+bool dir_has_other_things(const std::string& path);
 bool is_file(const std::string& path);
 bool is_dir(const std::string& path);
 
 // ---- the player's files (files.cpp) ---------------------------------------------------------------------------
 
-// The game folder (exefs/ and romfs/ of the player's own dump, aoc/ for add-on content) and the optional pt-BR
-// translation package.
-enum class Kind { Game, Mod };
+// The game folder (prepared: game.ini, exefs/, romfs.pak or romfs/, aoc/ for add-on content), the optional pt-BR
+// translation package, and the files the player extracted with their emulator to prepare the game folder from (an
+// ExeFS and a RomFS: prepare/io/inputs.h).
+enum class Kind { Game, Mod, Extract };
 enum class Status { Empty, Ok, Warning, Error };  // Warning: usable, but not everything works
 
 struct FileCheck {
     Status status = Status::Empty;
     std::string text;  // translated
+    bool unprepared = false;  // Game: the files of a game, not prepared yet: the launcher offers to prepare them
 };
 
 // Cheap checks: for the game folder its layout, the executables' headers (main's build id gives the version) and the
-// RomFS's Shader/ folder; for the package, a zip's magic. Nothing is decrypted or unpacked.
+// RomFS's Shader/ folder; for the package, a zip's magic; for an extraction, prepare/io's probe without reading the
+// executables whole or walking the RomFS. Nothing is decrypted or unpacked.
 FileCheck check_file(Kind kind, const std::string& path);
+// Whether the folder is a game folder prepared and finished (ACNHRecomp's preparation or ACNHRecomp-Importer's).
+bool is_prepared_folder(const std::string& path);
+// A text of the i18n tables with its "{}" filled from `args` in order; `english` when the key has no text (prepare/io's
+// findings carry their English sentence).
+std::string translate(const std::string& key, const std::vector<std::string>& args, const std::string& english);
 // What a dropped file or folder is: false when it is none of the kinds.
 bool classify_file(const std::string& path, Kind& kind);
 
@@ -88,8 +104,9 @@ struct Found {
     uint64_t size;
     FileCheck check;
 };
-// The game folders or packages in the user's Downloads, Desktop and Documents (a few folders deep), the top of the
-// home folder and the folders of `near` (files or folders); each checked, the usable ones first.
+// The game folders, packages or extractions in the user's Downloads, Desktop and Documents (a few folders deep), the
+// top of the home folder, the folders of `near` (files or folders) and, for extractions, the emulators' dump folders
+// (yuzu, Eden and their forks: dump/01006F8002326000); each checked, the usable ones first.
 std::vector<Found> search_files(Kind kind, const std::vector<std::string>& near);
 std::string short_dir(const std::string& path);  // the file's (folder's) parent, the home folder shown as "~"
 

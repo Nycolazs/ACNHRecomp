@@ -307,10 +307,13 @@ Readback g_readback;
 
 bool frame_dump_record(VkCommandBuffer cb, GpuImage& img) {
     VkDevice d = vk_device();
-    uint64_t size = uint64_t(img.width) * img.height * 4;
+    // 8-bit colour, or RGBA16F: the window's textures with HDR output on (nvn_image.cpp), which the first-picture
+    // probe has to read too (else the window stayed hidden behind the launcher for the 60 s fallback)
+    const bool half = img.format == VK_FORMAT_R16G16B16A16_SFLOAT;
     if (img.format != VK_FORMAT_R8G8B8A8_UNORM && img.format != VK_FORMAT_R8G8B8A8_SRGB &&
-        img.format != VK_FORMAT_B8G8R8A8_UNORM)
+        img.format != VK_FORMAT_B8G8R8A8_UNORM && !half)
         return false;
+    uint64_t size = uint64_t(img.width) * img.height * (half ? 8 : 4);
     if (g_readback.size < size) {
         if (g_readback.buffer) p_vkDestroyBuffer(d, g_readback.buffer, nullptr);
         if (g_readback.memory) p_vkFreeMemory(d, g_readback.memory, nullptr);
@@ -335,6 +338,33 @@ bool frame_dump_record(VkCommandBuffer cb, GpuImage& img) {
     return true;
 }
 
+namespace {
+// NaN as 0, as the HDR present pass draws it (nvn_screenshot.cpp's rule): a frame of NaNs isn't a picture
+float half_to_float(uint16_t h) {
+    const uint32_t e = (h >> 10) & 31, m = h & 1023;
+    const float v = e == 0 ? std::ldexp(float(m), -24) : e == 31 ? (m ? 0.0f : 65504.0f) : std::ldexp(float(m | 1024), int(e) - 25);
+    return (h & 0x8000) ? -v : v;
+}
+// A pixel of the readback as 8-bit RGB: 8-bit formats as they are; RGBA16F (the HDR window texture, linear light
+// relative to the UI's white) encoded with sRGB's curve, so the probe's threshold means what it does in SDR.
+void pixel_rgb(const GpuImage& img, const uint8_t* px, size_t index, uint8_t out[3]) {
+    if (img.format == VK_FORMAT_R16G16B16A16_SFLOAT) {
+        const uint8_t* s = px + index * 8;
+        for (int c = 0; c < 3; c++) {
+            uint16_t h;
+            std::memcpy(&h, s + 2 * c, 2);
+            const float l = std::clamp(half_to_float(h), 0.0f, 1.0f);
+            const float e = l <= 0.0031308f ? 12.92f * l : 1.055f * std::pow(l, 1.0f / 2.4f) - 0.055f;
+            out[c] = uint8_t(e * 255.0f + 0.5f);
+        }
+        return;
+    }
+    const uint8_t* s = px + index * 4;
+    const bool bgra = img.format == VK_FORMAT_B8G8R8A8_UNORM;
+    out[0] = bgra ? s[2] : s[0], out[1] = s[1], out[2] = bgra ? s[0] : s[2];
+}
+}  // namespace
+
 void frame_dump_write(const GpuImage& img, uint64_t frame, const char* suffix) {
     void* p = nullptr;
     if (p_vkMapMemory(vk_device(), g_readback.memory, 0, VK_WHOLE_SIZE, 0, &p) != VK_SUCCESS) return;
@@ -345,15 +375,9 @@ void frame_dump_write(const GpuImage& img, uint64_t frame, const char* suffix) {
     if (FILE* f = plat::fopen_utf8(dir + name, "wb")) {
         std::fprintf(f, "P6\n%u %u\n255\n", img.width, img.height);
         const uint8_t* px = static_cast<const uint8_t*>(p);
-        bool bgra = img.format == VK_FORMAT_B8G8R8A8_UNORM;
         std::vector<uint8_t> row(size_t(img.width) * 3);
         for (uint32_t y = 0; y < img.height; y++) {
-            for (uint32_t x = 0; x < img.width; x++) {
-                const uint8_t* s = px + (size_t(y) * img.width + x) * 4;
-                row[x * 3 + 0] = bgra ? s[2] : s[0];
-                row[x * 3 + 1] = s[1];
-                row[x * 3 + 2] = bgra ? s[0] : s[2];
-            }
+            for (uint32_t x = 0; x < img.width; x++) pixel_rgb(img, px, size_t(y) * img.width + x, &row[x * 3]);
             std::fwrite(row.data(), 1, row.size(), f);
         }
         std::fclose(f);
@@ -370,7 +394,8 @@ bool frame_readback_lit(const GpuImage& img) {
     bool lit = false;
     for (uint32_t gy = 0; gy < 72 && !lit; gy++)
         for (uint32_t gx = 0; gx < 128 && !lit; gx++) {
-            const uint8_t* s = px + (size_t(gy * img.height / 72) * img.width + gx * img.width / 128) * 4;
+            uint8_t s[3];
+            pixel_rgb(img, px, size_t(gy * img.height / 72) * img.width + gx * img.width / 128, s);
             lit = s[0] > 40 || s[1] > 40 || s[2] > 40;
         }
     p_vkUnmapMemory(vk_device(), g_readback.memory);

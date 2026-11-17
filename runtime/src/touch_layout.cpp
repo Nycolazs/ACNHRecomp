@@ -3,7 +3,7 @@
 //
 // Super Mario Bros. Wonder, landscape: A (jump, the big one) at the bottom right with B (jump), Y (dash, action) and
 // X (action) around it; ZR (roll), R, L, + and - along the top. The left half is the stick (platform_android_input.cpp):
-// it appears where the thumb lands, and pushed nearly all the way it also holds Y, so running needs no second thumb.
+// it appears where the thumb lands, and pushed past its ring it also holds Y, so running needs no second thumb.
 // Games without a layout here keep their own touch handling (Hades: zones around the thumb).
 //
 // Elsewhere touch_overlay() draws nothing, except with NX_OVERLAY_DEMO=1 (the buttons at rest), to check the look
@@ -126,6 +126,11 @@ void clamp_offset(const char* group, float aspect, float s, float& dx, float& dy
     if (loy <= hiy) dy = std::clamp(dy, loy, hiy);
 }
 
+// Settings > Controls > Confirm / cancel buttons = Xbox (input.layout): the drawn A and B trade places, A (confirm) at
+// the bottom of the diamond and B (cancel, run) on the right, as the controller's buttons do (platform_android_input.cpp).
+// Their letters go with them (touch_label).
+std::atomic<bool> g_face_swapped{false};
+
 // Two buffers: a new shape, size or layout is written into the one not handed out last (the input and present threads
 // read the layout without a lock; it changes only when a setting does).
 const TouchButton* acnh_buttons(float aspect) {
@@ -134,12 +139,16 @@ const TouchButton* acnh_buttons(float aspect) {
     static std::mutex lock;
     static float made_aspect = 0, made_scale = 0;
     static std::string made_layout;
+    static bool made_swap = false;
     if (!(aspect > 0.5f && aspect < 5.0f)) aspect = kAcnhAspect;
     const float s = touch_size_scale();
     const std::string layout = config_get("input.touch_layout", "");
+    const bool swap = config_get("input.layout", "console") == "xbox";
     std::lock_guard lk(lock);
     int c = cur.load(std::memory_order_relaxed);
-    if (c >= 0 && std::fabs(made_aspect - aspect) < 1e-3f && made_scale == s && made_layout == layout) return buf[c];
+    if (c >= 0 && std::fabs(made_aspect - aspect) < 1e-3f && made_scale == s && made_layout == layout &&
+        made_swap == swap)
+        return buf[c];
     const int next = c == 0 ? 1 : 0;
     const std::vector<Offset> offsets = parse_layout(layout);
     for (size_t k = 0; k < kAcnhCount; k++) {
@@ -150,9 +159,11 @@ const TouchButton* acnh_buttons(float aspect) {
                 clamp_offset(kAcnhGroups[k], aspect, s, dx, dy);
                 b.x += dx / aspect, b.y += dy;
             }
+        if (swap && (b.button == kA || b.button == kB)) b.button = b.button == kA ? kB : kA;
         buf[next][k] = b;
     }
-    made_aspect = aspect, made_scale = s, made_layout = layout;
+    made_aspect = aspect, made_scale = s, made_layout = layout, made_swap = swap;
+    g_face_swapped.store(swap, std::memory_order_relaxed);
     cur.store(next, std::memory_order_release);
     return buf[next];
 }
@@ -249,7 +260,12 @@ const char* touch_group(size_t index) {
     return acnh && index < kAcnhCount ? kAcnhGroups[index] : nullptr;
 }
 
-const char* touch_label(size_t index) { return index < kAcnhCount ? kAcnhLabels[index] : ""; }
+const char* touch_label(size_t index) {
+    if (index >= kAcnhCount) return "";
+    // kAcnh's first two are A and B: with the Xbox layout they trade buttons, and so letters (acnh_buttons).
+    if (index < 2 && g_face_swapped.load(std::memory_order_relaxed)) return kAcnhLabels[1 - index];
+    return kAcnhLabels[index];
+}
 
 void touch_layout_move(const char* group, float dx, float dy, float aspect) {
     if (!(aspect > 0.5f && aspect < 5.0f)) aspect = kAcnhAspect;

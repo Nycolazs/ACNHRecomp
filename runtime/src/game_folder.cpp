@@ -1,4 +1,5 @@
-// The desktop player's game code: game/<platform>/lib<game>_game from the game folder ACNHRecomp-Importer prepared
+// The desktop player's game code: game/<platform>/lib<game>_game from the game folder prepared by the launcher
+// (prepare/, or ACNHRecomp-Importer before it)
 // (NX_GAME_DYNAMIC, CMake's NX_GAME_FROM_FOLDER), as the Android app loads lib<game>_game.so. The executable holds no
 // game code: it exports the runtime's calls (NX_GAME_API) and refuses a library built against other runtime headers
 // (NX_GAME_ABI).
@@ -122,12 +123,13 @@ const nx::ModuleInfo* game_module(const char* name) {
 bool load_game_or_explain() {
     std::string why = load_game(data_root());
     if (why.empty()) return true;
-    // not a folder prepared for this ACNHRecomp: what to do, with the importer's place
+    // not a folder prepared for this ACNHRecomp: what to do (the launcher prepares it), and where to ask for help
     std::string msg = why.rfind("abi", 0) == 0
-        ? "This game folder was prepared for another version of ACNHRecomp. Prepare it again with the "
-          "ACNHRecomp-Importer that matches this version (on our Discord: discord.gg/VJW9Dtdu7a).\n\n" + why
-        : "This is not a game folder prepared by ACNHRecomp-Importer for this computer. Prepare your game with "
-          "ACNHRecomp-Importer (on our Discord: discord.gg/VJW9Dtdu7a) and choose the folder it writes.\n\n" + why;
+        ? "This game folder was prepared for another version of ACNHRecomp. Open the ACNHRecomp launcher and choose "
+          "Prepare again on its home page: the game's code is built again for this version, the rest is kept.\n\n" + why
+        : "This is not a game folder prepared for this computer. Open the ACNHRecomp launcher and prepare your game "
+          "there, from the ExeFS and RomFS you extracted from your own copy with your emulator (a folder prepared "
+          "before: Prepare again, with this computer ticked).\n\n" + why;
     nx::log("platform: %s", why.c_str());
     const SDL_MessageBoxButtonData buttons[] = {{SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, 1, "Discord"},
                                                 {SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, 0, "Close"}};

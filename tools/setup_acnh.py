@@ -210,18 +210,18 @@ def msvc_env():
     return env
 
 
-DISCORD = "https://discord.gg/VJW9Dtdu7a"  # where ACNHRecomp-Importer is downloaded
+DISCORD = "https://discord.gg/VJW9Dtdu7a"  # help
 
 
 def from_importer(game):
-    """Whether ACNHRecomp-Importer prepared the folder (and finished): its game.ini says so and .import/complete is
-    there."""
+    """Whether the folder was prepared (and that finished): its game.ini's first line names ACNHRecomp (the launcher's
+    preparation, prepare/, or ACNHRecomp-Importer's) and .import/complete is there."""
     try:
         with open(os.path.join(game, "game.ini"), encoding="utf-8", errors="replace") as f:
             first = f.readline()
     except OSError:
         return False
-    return "ACNHRecomp-Importer" in first and os.path.exists(os.path.join(game, ".import", "complete"))
+    return "ACNHRecomp" in first and os.path.exists(os.path.join(game, ".import", "complete"))
 
 
 def find_game(game):
@@ -238,10 +238,13 @@ def find_game(game):
     exefs = sub_dir("exefs")
     romfs = sub_dir("romfs") or (os.path.join(game, "extract", "romfs") if os.path.isdir(os.path.join(game, "extract", "romfs")) else "")
     if not exefs or not romfs:
-        fail(f"{game} must hold exefs/ and romfs/ (the game's executables and files from your own dump)")
+        fail(f"{game} must hold exefs/ and romfs/ (the game's executables and files from your own dump; a folder "
+             f"prepared with its RomFS in romfs.pak is played by a release's player, not built here: prepare it in place "
+             f"instead, acnh_prepare --in-place)")
     if not from_importer(game):
-        fail(f"{game} was not prepared by ACNHRecomp-Importer. ACNHRecomp only takes game folders the importer "
-             f"prepared: get it on our Discord ({DISCORD}), prepare your game with it, then pass its folder here.")
+        fail(f"{game} is not prepared yet: prepare it first from the ExeFS and RomFS you extracted from your own copy "
+             f"(the launcher's Prepare this folder, or acnh_prepare {game} --in-place), then pass it here. "
+             f"Help: our Discord ({DISCORD}).")
     for m in ("main", "sdk", "subsdk0"):
         f = os.path.join(exefs, m)
         if not os.path.isfile(f):
@@ -345,9 +348,12 @@ def main():
     py = os.path.join(P, "venv", "Scripts" if WIN else "bin", "python.exe" if WIN else "python")
     if not os.path.exists(py):
         run([sys.executable, "-m", "venv", os.path.join(P, "venv")])
-    if subprocess.call([py, "-c", "import capstone, lz4, zstandard, fontTools, cmake, ninja"],
-                       stderr=subprocess.DEVNULL):
-        run([py, "-m", "pip", "install", "-q", "capstone", "lz4", "zstandard", "fonttools", "cmake", "ninja", "unicorn"])
+    # capstone 5.0.7 exactly: the version prepare/recomp/ (the C++ port, third_party/capstone) gives the same code with
+    # (5.0.9's __version__ says 5.0.7 too: the package's own metadata is checked)
+    if subprocess.call([py, "-c", "import capstone, lz4, zstandard, fontTools, cmake, ninja, importlib.metadata as m; "
+                        "assert m.version('capstone') == '5.0.7'"], stderr=subprocess.DEVNULL):
+        run([py, "-m", "pip", "install", "-q", "capstone==5.0.7", "lz4", "zstandard", "fonttools", "cmake", "ninja",
+             "unicorn"])
     bindir = os.path.dirname(py)
     cmake = os.path.join(bindir, "cmake.exe" if WIN else "cmake")
     ninja = os.path.join(bindir, "ninja.exe" if WIN else "ninja")

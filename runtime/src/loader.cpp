@@ -158,6 +158,9 @@ void fatal(const char* fmt, ...) {
     vsnprintf(buf, sizeof buf, fmt, ap);
     va_end(ap);
     log("FATAL: %s", buf);
+    log_flush();
+    static std::atomic_flag shown = ATOMIC_FLAG_INIT;  // one dialog: another thread's fatal meanwhile only logs and ends
+    if (!shown.test_and_set()) plat::show_fatal(buf);
     plat::exit_process(1);
 }
 
@@ -554,8 +557,16 @@ void load_modules(const ModuleInfo* const* mods, size_t count, const std::string
         uint64_t size = ((mi->bss + mi->bss_size) + 0xFFF) & ~0xFFFull;
         if (!commit(mi->base, size)) fatal("cannot commit module %s", mi->name);
         std::string path = data_dir + "/" + mi->name + ".bin";
-        std::ifstream f(path, std::ios::binary);
+        std::ifstream f(path, std::ios::binary | std::ios::ate);
         if (!f) fatal("missing %s (run tools/nso2bin.py)", path.c_str());
+        // The image ends where the code's data segment ends (nso2bin.py and the Importer both write it so): another
+        // size is another build of the game than the one its code was recompiled from, a folder that mixes two versions
+        // (a new update prepared over an older folder). Running it crashed at boot ("call to 0") on a wrong address.
+        if (const auto have = uint64_t(f.tellg()); have != image)
+            fatal("%s is from another version of the game than its recompiled code (%llx bytes, expected %llx): the game "
+                  "folder mixes two versions. Prepare the game again into a new, empty folder, then copy your user "
+                  "folder (the save) into it.", path.c_str(), (unsigned long long)have, (unsigned long long)image);
+        f.seekg(0);
         f.read(reinterpret_cast<char*>(mi->base), std::streamsize(image));
         if (uint64_t(f.gcount()) != image) fatal("%s: expected %llx bytes", path.c_str(), (unsigned long long)image);
         if (auto it = variants().find(mi->name); it != variants().end()) {

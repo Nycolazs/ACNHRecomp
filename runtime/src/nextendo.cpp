@@ -282,7 +282,10 @@ std::string percent_encode(const std::string& s) {
 
 bool open_browser(const std::string& url) {
 #if defined(__ANDROID__)
-    return plat::open_url_in_app(url, nullptr);  // the phone's browser (it logs what it opened, or that nothing did)
+    // The app's own sign-in screen (android/java SignIn, a WebView), not the phone's browser: with the browser in
+    // front, Android froze the game in the background or ended it for memory, and the return to 127.0.0.1 found no
+    // listener (Discord, 0.9.0).
+    return plat::open_sign_in(url);
 #elif defined(NX_HAVE_SDL3)
     return SDL_OpenURL(url.c_str());
 #elif defined(_WIN32)
@@ -366,7 +369,7 @@ bool oauth_listen(const std::string& expect_state, std::string& code_out, int ti
         }
         return out;
     };
-    std::string code, state;
+    std::string code, state, error;
     for (size_t i = 0; i < query.size();) {
         size_t amp = query.find('&', i);
         std::string pair = query.substr(i, amp == std::string::npos ? std::string::npos : amp - i);
@@ -375,11 +378,15 @@ bool oauth_listen(const std::string& expect_state, std::string& code_out, int ti
         std::string v = eq == std::string::npos ? "" : percent_decode(pair.substr(eq + 1));
         if (k == "code") code = v;
         if (k == "state") state = v;
+        if (k == "error") error = v;
         if (amp == std::string::npos) break;
         i = amp + 1;
     }
     if (code.empty()) {
-        set_error("OAuth callback missing authorization code.");
+        // access_denied: the permissions were refused, or (Android) the sign-in screen was closed
+        set_error(error == "access_denied" ? "Sign-in was cancelled."
+                  : !error.empty()        ? "Nextendo refused the sign-in (" + error.substr(0, 64) + ")."
+                                          : "OAuth callback missing authorization code.");
         return false;
     }
     if (state != expect_state) {
@@ -717,6 +724,7 @@ void sign_in_start() {
         std::string redirect_uri;
         if (!oauth_listen(state, code, 180, [&](uint16_t port) {
                 redirect_uri = "http://127.0.0.1:" + std::to_string(port) + "/callback";
+                log("nextendo: sign-in started, waiting on 127.0.0.1:%u", unsigned(port));
                 const std::string url =
                     auth_base() + "/api/oauth/authorize?client_id=" + percent_encode(cid) +
                     "&redirect_uri=" + percent_encode(redirect_uri) + "&response_type=code&scope=" +
@@ -725,6 +733,7 @@ void sign_in_start() {
                 if (!open_browser(url)) set_error("Could not open a browser for Nextendo sign-in.");
             })) {
             if (last_error().empty()) set_error("Sign-in timed out or was cancelled.");
+            log("nextendo: sign-in did not finish: %s", last_error().c_str());
             return;
         }
         if (code.empty()) return;
@@ -732,7 +741,10 @@ void sign_in_start() {
             "grant_type=authorization_code&client_id=" + percent_encode(cid) + "&code=" + percent_encode(code) +
             "&redirect_uri=" + percent_encode(redirect_uri) + "&code_verifier=" + percent_encode(verifier);
         Account a;
-        if (!exchange_token(form, a)) return;
+        if (!exchange_token(form, a)) {
+            log("nextendo: sign-in did not finish: %s", last_error().c_str());
+            return;
+        }
         set_account(a);
         save_account();
         ensure_online_identity();

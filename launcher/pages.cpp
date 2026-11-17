@@ -1,6 +1,10 @@
 // The launcher's pages (launcher.h), in the settings screen's style (ui/theme.h).
 //
-//   welcome   two ways in: set up from the game files, or pick a build folder made before
+//   welcome   two ways in: prepare the game from the files extracted with an emulator, or pick a game folder prepared
+//             before (a release); from a checkout, set up from the game folder or pick a build folder made before
+//   prepare   the preparation's picks: the extracted ExeFS and RomFS, add-on content, the game folder, the platforms and
+//             60 FPS; each pick checked by prepare/io's probe (prepare_job.h), its findings shown translated
+//   preparing the preparation running (prepare/prepare.h): stages, progress, log, stop; the error explained; then Play
 //   files     step 1: a card each for the keys, base game, update (any version, optional), DLC and the pt-BR translation: Browse…,
 //             Search (the usual folders, results to pick from) or a file dropped on it; each file checked when chosen
 //   install   step 2: where the build goes, and what this computer has (with the command to install the rest)
@@ -15,12 +19,14 @@
 #include "launcher.h"
 #include "ldn_lan.h"
 #include "nextendo.h"
+#include "prepare_job.h"
 
 #include <thread>
 #include <atomic>
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cfloat>
 #include <cmath>
 #include <cstdio>
@@ -50,14 +56,14 @@ ImU32 rgb(int r, int g, int b, int a = 255) { return IM_COL32(r, g, b, a); }
 const ImU32 kInk = rgb(107, 79, 54), kInkSoft = rgb(150, 128, 100), kPaper = rgb(248, 239, 214);
 const ImU32 kGreen = rgb(124, 194, 103), kMint = rgb(118, 200, 170), kYellow = rgb(255, 217, 102);
 const ImU32 kOrange = rgb(245, 166, 35), kRed = rgb(232, 115, 122), kBlue = rgb(79, 179, 217);
-// The project's Discord, where ACNHRecomp-Importer (which prepares the game folder) is downloaded
+// The project's Discord: help, news
 const char* const kDiscordUrl = "https://discord.gg/VJW9Dtdu7a";
 const ImU32 kPurple = rgb(155, 125, 212), kBrown = rgb(176, 140, 100), kGrey = rgb(214, 200, 168);
 const ImU32 kWhite = rgb(255, 255, 255);
 
 ImVec4 col4(ImU32 c) { return ImGui::ColorConvertU32ToFloat4(c); }
 
-enum class Page { Welcome, Files, Install, Build, Done, Home, Settings, Online, Credits };
+enum class Page { Welcome, Files, Install, Build, Done, Home, Settings, Online, Credits, Prepare, Preparing, Count };
 
 Page g_page = Page::Welcome;
 
@@ -186,8 +192,9 @@ std::string g_banner;  // an error under the page title (a refused file or folde
 std::string g_toast;
 double g_toast_until = 0;
 
-// The files page's cards; a file dialog's target is its card (kPickGame, kPickMod in the same order).
-enum Slot { kSlotGame, kSlotMod, kSlotCount };
+// The cards files are given to: the files page's (the game folder, the pt-BR package) and the prepare page's (the
+// extraction, add-on content, the game folder to write). slot_target() is the file dialog of each.
+enum Slot { kSlotGame, kSlotMod, kSlotPrepGame, kSlotPrepDlc, kSlotPrepOut, kSlotCount };
 struct SlotState {
     bool open = false;         // the search's results shown
     std::vector<Found> found;  // its results
@@ -199,7 +206,17 @@ ImVec2 g_drag_pos;
 ImVec2 g_page_min, g_page_max;  // the visible part of the page (it scrolls)
 
 // File dialogs answer on their own time (and maybe on another thread): queued here, applied in the frame.
-enum Target { kPickGame, kPickMod, kPickInstall, kPickBuild, kPickSaveImport, kPickModImportFolder, kPickModImportZip };
+enum Target { kPickGame, kPickMod, kPickInstall, kPickBuild, kPickSaveImport, kPickModImportFolder, kPickModImportZip,
+              kPickPrepGame, kPickPrepDlc, kPickPrepOut };
+Target slot_target(int slot) {
+    switch (slot) {
+        case kSlotMod: return kPickMod;
+        case kSlotPrepGame: return kPickPrepGame;
+        case kSlotPrepDlc: return kPickPrepDlc;
+        case kSlotPrepOut: return kPickPrepOut;
+        default: return kPickGame;
+    }
+}
 struct Picked {
     int target;
     std::vector<std::string> paths;
@@ -224,6 +241,26 @@ bool prereqs_block();
 void play();
 bool g_confirm_stop = false, g_confirm_quit = false;
 bool g_quit_after_stop = false;
+
+// The preparation of the game folder (prepare and preparing pages): what the player picked, and the probe's answer.
+struct PrepPicks {
+    std::vector<std::string> inputs;  // one folder (holding the ExeFS and the RomFS) or two (the ExeFS, the RomFS)
+    std::vector<std::string> dlc;     // add-on content's RomFS folders
+    std::string out;                  // the game folder to write
+    bool in_place = false;            // the extraction folder becomes the game folder (its RomFS stays loose there)
+    bool fps60 = true;
+    std::vector<std::string> extra;   // platforms besides this computer's
+    int serial = 0;                   // the probe's answer shown
+    bool probed = false;              // `probe` is the answer to the picks as they are
+    nx::prepare::ProbeResult probe;
+};
+PrepPicks g_prep;
+bool g_prep_flow = false;             // the steps shown are the preparation's (your files, prepare, play)
+Page g_prep_back = Page::Welcome;     // where Back goes from the prepare page
+std::vector<std::string> g_prep_log;  // the preparing page's log
+void prep_pick(int slot, const std::string& path);
+void prep_open(const std::vector<std::string>& inputs, const std::string& out, bool in_place);
+bool prep_offer(const std::string& folder);
 
 // The game's config.ini (settings page).
 Ini g_game_ini;
@@ -269,9 +306,13 @@ void recheck_files() {
 
 void refresh_save_profiles();
 
+// The game folder's library was built for another ACNHRecomp (the player would refuse it): prepared again first.
+bool g_build_stale = false;
+
 void set_build(const std::string& folder, bool remember) {
     g_build = Build();
     g_build_problem = find_build(folder, g_build);
+    g_build_stale = *g_build_problem == 0 && !player_beside().empty() && prepare_library_stale(g_build.data);
     if (*g_build_problem == 0 && remember) {
         settings().set("launcher.build", folder);
         settings().save();
@@ -364,11 +405,20 @@ void pick(Target t) {
         case kPickSaveImport: SDL_ShowOpenFolderDialog(on_picked, user, g_window, where, false); break;
         case kPickModImportFolder: SDL_ShowOpenFolderDialog(on_picked, user, g_window, where, false); break;
         case kPickModImportZip: SDL_ShowOpenFileDialog(on_picked, user, g_window, zip, 2, where, false); break;
+        case kPickPrepGame:
+        case kPickPrepDlc: SDL_ShowOpenFolderDialog(on_picked, user, g_window, where, false); break;
+        case kPickPrepOut: {
+            static std::string out_dir;
+            out_dir = parent_dir(g_prep.out);
+            SDL_ShowOpenFolderDialog(on_picked, user, g_window, is_dir(out_dir) ? out_dir.c_str() : where, false);
+            break;
+        }
     }
 }
 
 // A game folder or package chosen for `kind`, by a dialog, a search result or a drop.
 void use_file(Kind kind, const std::string& path) {
+    if (kind == Kind::Extract) return prep_pick(kSlotPrepGame, path);
     set_item(kind == Kind::Game ? g_game : g_ptbr, kind, path);
     settings().set("files.last_dir", parent_dir(path));
     save_files();
@@ -401,11 +451,17 @@ void express_continue() {
 }
 
 // What a file or folder given to a card is: the card's kind (a wrong one then shows why).
-Kind slot_kind(int slot, const std::string&) { return slot == kSlotGame ? Kind::Game : Kind::Mod; }
+Kind slot_kind(int slot, const std::string&) {
+    return slot == kSlotGame ? Kind::Game : slot == kSlotMod ? Kind::Mod : Kind::Extract;
+}
 
 int slot_at(ImVec2 p) {
-    if (g_page != Page::Files) return -1;
-    for (int k = 0; k < kSlotCount; k++) {
+    int lo = kSlotGame, hi = kSlotMod;
+    if (g_page == Page::Prepare)
+        lo = kSlotPrepGame, hi = kSlotPrepOut;
+    else if (g_page != Page::Files)
+        return -1;
+    for (int k = lo; k <= hi; k++) {
         const SlotState& s = g_slot[k];
         if (p.x >= s.min.x && p.x < s.max.x && p.y >= s.min.y && p.y < s.max.y) return k;
     }
@@ -415,14 +471,19 @@ int slot_at(ImVec2 p) {
 // Search: the game folders (or packages) in the usual folders and near what was chosen so far.
 void search(int slot) {
     std::vector<std::string> near = {settings().get("files.last_dir"), g_game.path, g_ptbr.path};
+    for (const std::string& i : g_prep.inputs) near.push_back(i);
     SlotState& s = g_slot[slot];
-    s.found = search_files(slot == kSlotGame ? Kind::Game : Kind::Mod, near);
+    s.found = search_files(slot_kind(slot, ""), near);
     s.open = true;
 }
 
 void use_build_folder(const std::string& folder) {
     Build b;
     const char* why = find_build(folder, b);
+    // a release: the game's files not prepared yet (or prepared without this computer's code) are prepared here
+    if (*why && !player_beside().empty() && prep_offer(folder)) return;
+    if (std::strcmp(why, "launcher.err.game_unprepared") == 0 && !player_beside().empty() && prepare_built())
+        why = "launcher.err.not_game";  // neither prepared nor extracted files: nothing to prepare from
     if (*why) {
         // a release (the player beside) takes game folders: the reason alone says what is wrong with this one
         g_banner = player_beside().empty() ? trf("launcher.build_invalid", tr(why)) : std::string(tr(why));
@@ -473,6 +534,9 @@ void apply_picks() {
                     g_banner = trf("launcher.mods.import_failed", err);
                 break;
             }
+            case kPickPrepGame: prep_pick(kSlotPrepGame, first); break;
+            case kPickPrepDlc: prep_pick(kSlotPrepDlc, first); break;
+            case kPickPrepOut: prep_pick(kSlotPrepOut, first); break;
             default:  // a card
                 use_file(slot_kind(p.target, first), first);
                 if (g_express && p.target == kPickGame) express_continue();
@@ -680,21 +744,25 @@ void ribbon() {
     ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + h + S(12)));
 }
 
-// Step 1..4 of the setup, the current one highlighted.
+// The steps of the setup (1..4) or, in the preparation's flow (g_prep_flow), of the preparation (1..3), the current
+// one highlighted.
 void steps(int current) {
-    const char* labels[] = {tr("launcher.step.files"), tr("launcher.step.install"), tr("launcher.step.build"),
-                            tr("launcher.step.done")};
+    const char* setup[] = {tr("launcher.step.files"), tr("launcher.step.install"), tr("launcher.step.build"),
+                           tr("launcher.step.done")};
+    const char* prep[] = {tr("launcher.step.files"), tr("launcher.step.prepare"), tr("launcher.step.done")};
+    const char* const* labels = g_prep_flow ? prep : setup;
+    const int n = g_prep_flow ? 3 : 4;
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2 p = ImGui::GetCursorScreenPos();
     float w = ImGui::GetContentRegionAvail().x, r = S(15), h = S(40);
-    float seg = w / 4;
+    float seg = w / float(n);
     const float fs = font_size(g_body) * 0.85f;
-    for (int k = 0; k < 4; k++) {
+    for (int k = 0; k < n; k++) {
         float cx = p.x + seg * k + r + S(2), cy = p.y + h * 0.5f;
         bool label = !g_portrait || k == current;
         float lw = label ? measure(g_body, fs, labels[k], -1).x + S(16) : 0;
         float x0 = cx + r + S(6) + lw, x1 = p.x + seg * (k + 1) - S(6);
-        if (k < 3 && x1 > x0)
+        if (k < n - 1 && x1 > x0)
             dl->AddRectFilled(ImVec2(x0, cy - S(1.5f)), ImVec2(x1, cy + S(1.5f)), k < current ? kGreen : kGrey, S(1.5f));
         ImU32 c = k < current ? kGreen : k == current ? kYellow : kGrey;
         dl->AddCircleFilled(ImVec2(cx, cy), r, c);
@@ -766,19 +834,35 @@ bool card(const char* id, const Card& c, ImVec2 size) {
 
 void go_files() {
     g_banner.clear();
+    g_prep_flow = false;  // the setup's steps
     g_page = Page::Files;
 }
 
-// A release: the player is beside the launcher and the game comes ready in the folder ACNHRecomp-Importer prepared,
-// so the one thing to do is to choose that folder.
+// A release: the player is beside the launcher and plays a prepared game folder. Two ways in: prepare it here from the
+// ExeFS and RomFS extracted with an emulator, or choose one prepared before (by ACNHRecomp or ACNHRecomp-Importer).
 void page_welcome_play() {
     heading(tr("launcher.welcome.title"), tr("launcher.welcome.text"));
-    Card play{nx::ui::kIconLeaf, kGreen, tr("launcher.welcome.play"), tr("launcher.welcome.play.desc"), nullptr, true};
-    float avail = ImGui::GetContentRegionAvail().x;
-    if (card("##play", play, ImVec2(avail, card_height(play, avail)))) pick(kPickBuild);
+    const bool can_prepare = prepare_built();
+    Card prep{nx::ui::kIconLeaf, kGreen, tr("launcher.welcome.prepare"), tr("launcher.welcome.prepare.desc"),
+              can_prepare && !prepare_tools().problem.empty() ? tr("launcher.prep.tools_missing_short") : nullptr,
+              can_prepare};
+    Card play{nx::ui::kIconFolder, kBlue, tr("launcher.welcome.play"), tr("launcher.welcome.play.desc"), nullptr, true};
+    float avail = ImGui::GetContentRegionAvail().x, gap = S(20);
+    auto open_prepare = [] { g_prep_back = Page::Welcome, prep_open({}, "", false); };
+    if (g_portrait) {
+        if (card("##prepare", prep, ImVec2(avail, card_height(prep, avail)))) open_prepare();
+        ImGui::Dummy(ImVec2(0, S(2)));
+        if (card("##play", play, ImVec2(avail, card_height(play, avail)))) pick(kPickBuild);
+    } else {
+        float w = (avail - gap) * 0.5f;
+        float h = std::max(card_height(prep, w), card_height(play, w));
+        if (card("##prepare", prep, ImVec2(w, h))) open_prepare();
+        ImGui::SameLine(0, gap);
+        if (card("##play", play, ImVec2(w, h))) pick(kPickBuild);
+    }
     ImGui::Dummy(ImVec2(0, S(6)));
-    text_small(tr("launcher.files.importer"));
-    if (button(tr("launcher.files.discord"), kBlue)) SDL_OpenURL(kDiscordUrl);
+    text_small(tr("launcher.welcome.extract"));
+    if (button(tr("launcher.help.discord"), kBlue)) SDL_OpenURL(kDiscordUrl);
     if (g_portrait) {  // in landscape the footer says it
         ImGui::Dummy(ImVec2(0, S(4)));
         text_small(tr("launcher.welcome.legal"));
@@ -891,7 +975,11 @@ bool file_row(const char* id, const Item& it, bool auto_found, const char* empty
     return cleared;
 }
 
-bool chosen(const std::string& path) { return path == g_game.path || path == g_ptbr.path; }
+bool chosen(const std::string& path) {
+    for (const std::string& i : g_prep.inputs)
+        if (path == i) return true;
+    return path == g_game.path || path == g_ptbr.path;
+}
 
 // The search's results under a card, `w` wide: name, size and folder, the check, and Use (Add for the DLC).
 void found_list(int slot, float w) {
@@ -956,6 +1044,7 @@ struct FileCard {
     const char* title;
     const char* desc;
     bool required;
+    bool can_search = true;  // Search beside Browse…
 };
 
 // A card of the files page: its icon (coloured by its files' checks), title, Required or Optional and what it is,
@@ -972,7 +1061,8 @@ void file_card(const FileCard& c, Status st, const std::function<void(float)>& r
     const float avail = ImGui::GetContentRegionAvail().x, sp = ImGui::GetStyle().ItemSpacing.x;
     const char* search_l = tr("launcher.search");
     const char* browse_l = tr("launcher.browse");
-    const float sw = button_width(search_l), bw = button_width(browse_l), btns = sw + sp + bw;
+    const float sw = c.can_search ? button_width(search_l) : 0, bw = button_width(browse_l);
+    const float btns = c.can_search ? sw + sp + bw : bw;
     const bool narrow = avail < btns + S(380);
     const ImVec2 p0 = ImGui::GetCursorScreenPos();
     const float x0 = ImGui::GetCursorPosX(), r = S(g_portrait ? 20 : 24);
@@ -1003,9 +1093,11 @@ void file_card(const FileCard& c, Status st, const std::function<void(float)>& r
     bool do_search = false, do_browse = false;
     if (!narrow) {
         ImGui::SetCursorScreenPos(ImVec2(p0.x + avail - btns, p0.y + std::max(0.0f, r - ImGui::GetFrameHeight() * 0.5f)));
-        do_search = button(search_l, kWhite, true, sw);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("launcher.search.where"));
-        ImGui::SameLine();
+        if (c.can_search) {
+            do_search = button(search_l, kWhite, true, sw);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("launcher.search.where"));
+            ImGui::SameLine();
+        }
         do_browse = button(browse_l, kMint, true, bw);
     }
     // The files, under the title (from the card's edge on a phone).
@@ -1015,9 +1107,11 @@ void file_card(const FileCard& c, Status st, const std::function<void(float)>& r
     rows(rw);
     if (narrow) {
         ImGui::Dummy(ImVec2(0, S(2)));
-        float half = (rw - sp) * 0.5f;
-        do_search = button(search_l, kWhite, true, half);
-        ImGui::SameLine();
+        float half = c.can_search ? (rw - sp) * 0.5f : rw;
+        if (c.can_search) {
+            do_search = button(search_l, kWhite, true, half);
+            ImGui::SameLine();
+        }
         do_browse = button(browse_l, kMint, true, half);
     }
     if (g_slot[c.slot].open) {
@@ -1026,7 +1120,7 @@ void file_card(const FileCard& c, Status st, const std::function<void(float)>& r
     }
     if (indent > 0) ImGui::Unindent(indent);
     if (do_search) search(c.slot);
-    if (do_browse) pick(Target(c.slot));
+    if (do_browse) pick(slot_target(c.slot));
     // Where it is for drops (only its visible part), lit while files are dragged over it.
     SlotState& s = g_slot[c.slot];
     ImVec2 wp = ImGui::GetWindowPos(), ws = ImGui::GetWindowSize();
@@ -1079,10 +1173,15 @@ void page_files() {
            tr("launcher.status.game_missing"), g_game);
     single("##ptbr", kSlotMod, nx::ui::kIconText, tr("launcher.item.ptbr"), tr("launcher.item.ptbr.desc"), false,
            tr("launcher.status.none_drop"), g_ptbr);
-    // where the game folder comes from: ACNHRecomp-Importer, on the Discord
+    // where the game folder comes from: prepared here from the files the player extracted with their emulator
     ImGui::Dummy(ImVec2(0, S(6)));
-    text_small(tr("launcher.files.importer"));
-    if (button(tr("launcher.files.discord"), kBlue)) SDL_OpenURL(kDiscordUrl);
+    text_small(tr("launcher.files.prepare"));
+    if (g_game.check.unprepared && prepare_built()) {
+        if (button(tr("launcher.prep.this_folder"), kGreen))
+            g_prep_back = Page::Files, prep_open({g_game.path}, "", true);
+        ImGui::SameLine();
+    }
+    if (button(tr("launcher.help.discord"), kBlue)) SDL_OpenURL(kDiscordUrl);
 }
 
 void footer_files() {
@@ -1196,6 +1295,7 @@ void page_install() {
 }
 
 void start_setup(bool rebuild) {
+    g_prep_flow = false;
     SetupArgs a;
     a.install_dir = rebuild ? g_build.data : g_install;
     // A rebuild keeps the game folder the install folder links to; a new setup links the chosen one.
@@ -1288,8 +1388,8 @@ void stage_list(const SetupState& s, bool failed) {
     ImGui::PopStyleColor();
 }
 
-// The setup's output, following the end unless scrolled up.
-void log_view(float height) {
+// The setup's (or the preparation's) output, following the end unless scrolled up.
+void log_view(float height, const std::vector<std::string>& lines = g_log) {
     ImGui::PushStyleColor(ImGuiCol_ChildBg, col4(rgb(92, 70, 50)));
     ImGui::BeginChild("##log", ImVec2(0, height), ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_HorizontalScrollbar);
     ImGui::PushStyleColor(ImGuiCol_Text, col4(rgb(255, 244, 214)));
@@ -1297,9 +1397,9 @@ void log_view(float height) {
     ImGui::SetWindowFontScale(0.78f);
     bool follow = ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 4;
     ImGuiListClipper clip;
-    clip.Begin(int(g_log.size()));
+    clip.Begin(int(lines.size()));
     while (clip.Step())
-        for (int i = clip.DisplayStart; i < clip.DisplayEnd; i++) ImGui::TextUnformatted(g_log[size_t(i)].c_str());
+        for (int i = clip.DisplayStart; i < clip.DisplayEnd; i++) ImGui::TextUnformatted(lines[size_t(i)].c_str());
     if (follow) ImGui::SetScrollHereY(1.0f);
     ImGui::SetWindowFontScale(1.0f);
     ImGui::PopStyleVar();
@@ -1358,9 +1458,9 @@ void page_build() {
     }
 }
 
-std::string log_text() {
+std::string log_text(const std::vector<std::string>& lines = g_log) {
     std::string t;
-    for (const std::string& l : g_log) t += l + "\n";
+    for (const std::string& l : lines) t += l + "\n";
     return t;
 }
 
@@ -1379,6 +1479,598 @@ void footer_build() {
     if (button(logs, kWhite)) open_folder(parent_dir(setup_log_path()));
     ImGui::SameLine();
     if (button(tr("launcher.retry"), kGreen)) start_setup(g_rebuild);
+}
+
+// ---- prepare: the game folder from the ExeFS and RomFS the player extracted (prepare_job.h) ---------------------
+
+const BuildContents& contents(bool refresh);
+
+std::string lower_text(std::string s) {
+    for (char& c : s) c = char(std::tolower(static_cast<unsigned char>(c)));
+    return s;
+}
+
+Status severity_status(nx::prepare::Severity s) {
+    return s == nx::prepare::Severity::Error ? Status::Error
+         : s == nx::prepare::Severity::Warning ? Status::Warning : Status::Ok;
+}
+
+// A launcher text with its "{}" filled in order.
+std::string trn(const char* key, const std::vector<std::string>& args) { return translate(key, args, key); }
+
+std::string message_text(const nx::prepare::Message& m) { return translate(m.key, m.args, m.text); }
+
+// The add-on folder picked that a finding is about, -1 for the game's files.
+int message_dlc(const nx::prepare::Message& m) {
+    for (size_t i = 0; i < g_prep.dlc.size(); i++)
+        if (path_within(m.path, g_prep.dlc[i])) return int(i);
+    return -1;
+}
+
+void prep_probe() {
+    g_prep.probed = false;
+    if (!g_prep.inputs.empty()) probe_start(g_prep.inputs, g_prep.dlc);
+}
+
+void prep_poll() {
+    if (probe_poll(g_prep.serial, g_prep.probe)) g_prep.probed = true;
+}
+
+// The folder holding the RomFS found (as romfs/, extract/romfs/, or a game folder's romfs.pak): the game folder when
+// it is prepared where it is. "" when the RomFS is no such folder's (two picks named otherwise, one folder holding all).
+std::string prep_romfs_home() {
+    if (!g_prep.probed || g_prep.probe.romfs.path.empty()) return "";
+    std::string r = g_prep.probe.romfs.path;
+    while (r.size() > 1 && (r.back() == '/' || r.back() == '\\')) r.pop_back();
+    const std::string name = lower_text(file_name(r));
+    if (name != "romfs" && name != "romfs.pak") return "";
+    std::string d = parent_dir(r);
+    if (name == "romfs" && lower_text(file_name(d)) == "extract") d = parent_dir(d);
+    if (same_path(d, g_prep.probe.exefs)) return "";  // the ExeFS folder itself is no game folder
+    return d;
+}
+
+// Where the game folder is written, and whether that is where the RomFS already is (nothing copied).
+std::string prep_out_dir(bool* here = nullptr) {
+    const std::string home = prep_romfs_home();
+    const bool in_place = g_prep.in_place && !home.empty();
+    const std::string out = in_place ? home : g_prep.out;
+    if (here) *here = !home.empty() && (in_place || same_path(out, home));
+    return out;
+}
+
+std::vector<std::string> prep_platforms_chosen() {
+    std::vector<std::string> out;
+    const std::string host = prepare_host_platform();
+    for (const std::string& p : prepare_platforms())
+        if (p == host || std::find(g_prep.extra.begin(), g_prep.extra.end(), p) != g_prep.extra.end()) out.push_back(p);
+    return out;
+}
+
+const char* platform_label(const std::string& p) {
+    if (p == "windows-x64") return tr("launcher.prep.platform.windows");
+    if (p == "linux-x64") return tr("launcher.prep.platform.linux");
+    if (p == "macos-arm64") return tr("launcher.prep.platform.macos");
+    if (p == "android-arm64") return tr("launcher.prep.platform.android");
+    return p.c_str();
+}
+
+// The game folder's check: usable or why not, the free space against what the preparation needs.
+FileCheck prep_out_check() {
+    bool here = false;
+    const std::string out = prep_out_dir(&here);
+    if (out.empty()) return {};
+    if (is_file(out)) return {Status::Error, tr("launcher.prep.out.file")};
+    if (!here && dir_has_other_things(out)) return {Status::Error, tr("launcher.prep.out.busy")};
+    if (g_prep.probed && !here && path_within(out, g_prep.probe.romfs.path))
+        return {Status::Error, tr("launcher.prep.out.in_romfs")};
+    const uint64_t free = free_space(out);
+    std::string again = is_prepared_folder(out) ? std::string(" · ") + tr("launcher.prep.out.again") : std::string();
+    if (!g_prep.probed || !g_prep.probe.ok) return {Status::Ok, trf("launcher.install.free", human_size(free)) + again};
+    const PrepareSpace sp = prepare_space(g_prep.probe, std::max<size_t>(1, prep_platforms_chosen().size()), here);
+    if (free < sp.need)
+        return {Status::Error, trn("launcher.prep.out.space_low", {human_size(sp.need), human_size(free)})};
+    return {Status::Ok, trn("launcher.prep.out.space", {human_size(free), human_size(sp.need), human_size(sp.result)}) + again};
+}
+
+// What the prepare page lacks before Prepare can start; nullptr when it can.
+const char* prep_not_ready() {
+    if (!prepare_tools().problem.empty()) return tr("launcher.prep.why.tools");
+    if (g_prep.inputs.empty()) return tr("launcher.prep.why.game");
+    if (!g_prep.probed) return tr("launcher.prep.checking");
+    if (!g_prep.probe.ok) return tr("launcher.prep.why.fix");
+    const Status out = prep_out_check().status;
+    if (out == Status::Error || out == Status::Empty) return tr("launcher.prep.why.out");
+    if (prep_platforms_chosen().empty()) return tr("launcher.prep.why.platform");
+    return nullptr;
+}
+
+void prep_pick(int slot, const std::string& path) {
+    g_banner.clear();
+    settings().set("files.last_dir", parent_dir(path));
+    settings().save();
+    if (slot == kSlotPrepOut) {
+        // A folder holding other things (Documents, a games folder): the game folder goes inside it.
+        g_prep.out = dir_has_other_things(path) ? path_join(path, "ACNHRecomp Game") : path;
+        g_prep.in_place = false;
+        return;
+    }
+    if (slot == kSlotPrepDlc) {
+        if (std::find(g_prep.dlc.begin(), g_prep.dlc.end(), path) == g_prep.dlc.end()) g_prep.dlc.push_back(path);
+    } else {
+        // A second folder joins the first when the first is one half only (an ExeFS, or a RomFS); else it replaces it.
+        bool join = false;
+        if (g_prep.inputs.size() == 1 && g_prep.inputs[0] != path) {
+            nx::prepare::ProbeOptions po;
+            po.verify_nso = false, po.walk_romfs = false;
+            const nx::prepare::ProbeResult r = nx::prepare::probe({g_prep.inputs[0]}, po);
+            join = r.has("prepare.input.no_exefs") || r.has("prepare.input.no_romfs");
+        }
+        if (join)
+            g_prep.inputs.push_back(path);
+        else
+            g_prep.inputs = {path};
+        g_slot[kSlotPrepGame].open = false;
+    }
+    prep_probe();
+}
+
+void prep_open(const std::vector<std::string>& inputs, const std::string& out, bool in_place) {
+    Ini& s = settings();
+    g_prep.inputs = inputs;
+    g_prep.dlc.clear();
+    g_prep.in_place = in_place;
+    g_prep.out = !out.empty() ? out : s.get("prepare.out", default_game_dir());
+    g_prep.fps60 = s.get("prepare.60fps", "1") != "0";
+    g_prep.extra.clear();
+    const std::string extra = s.get("prepare.platforms");
+    for (size_t a = 0; a < extra.size();) {
+        size_t b = extra.find(',', a);
+        if (b == std::string::npos) b = extra.size();
+        if (b > a) g_prep.extra.push_back(extra.substr(a, b - a));
+        a = b + 1;
+    }
+    for (int k = kSlotPrepGame; k <= kSlotPrepOut; k++) g_slot[k].open = false;
+    g_prep_flow = true;
+    g_banner.clear();
+    prepare_tools(true);  // again: the player may have put them back
+    prep_probe();
+    g_page = Page::Prepare;
+}
+
+// A folder chosen as the game folder that is not one yet (a release): the files of a game the player extracted are
+// prepared where they are; a folder prepared without this computer's code (or for another ACNHRecomp) is prepared
+// again, keeping what is right. False when it is neither (the reason is then said as before).
+bool prep_offer(const std::string& folder) {
+    if (!prepare_built() || !is_dir(folder)) return false;
+    const Page back = g_page == Page::Prepare || g_page == Page::Preparing ? Page::Welcome : g_page;
+    if (is_prepared_folder(folder)) {
+        g_prep_back = back;
+        prep_open({folder}, folder, false);
+        return true;
+    }
+    nx::prepare::ProbeOptions po;
+    po.verify_nso = false, po.walk_romfs = false;
+    const nx::prepare::ProbeResult r = nx::prepare::probe({folder}, po);
+    if (r.exefs.empty() && r.romfs.path.empty()) return false;
+    g_prep_back = back;
+    prep_open({folder}, "", true);
+    return true;
+}
+
+void prep_start() {
+    PrepareArgs a;
+    a.inputs = g_prep.inputs;
+    a.dlc = g_prep.dlc;
+    bool here = false;
+    a.out = prep_out_dir(&here);
+    a.in_place = g_prep.in_place && here;
+    a.platforms = prep_platforms_chosen();
+    a.variant_60fps = g_prep.fps60;
+    std::string err;
+    g_prep_log.clear();
+    if (!prepare_start(a, err)) {
+        g_banner = trf("launcher.prep.start_failed", err);
+        return;
+    }
+    Ini& s = settings();
+    if (!here) s.set("prepare.out", a.out);
+    s.set("prepare.60fps", g_prep.fps60 ? "1" : "0");
+    std::string extra;
+    for (const std::string& p : g_prep.extra) extra += (extra.empty() ? "" : ",") + p;
+    s.set("prepare.platforms", extra);
+    s.save();
+    g_banner.clear();
+    g_prep_flow = true;
+    g_page = Page::Preparing;
+}
+
+// A turning arc, as the stage running.
+void spinner(ImDrawList* dl, ImVec2 c, float r) {
+    float t = float(ImGui::GetTime());
+    dl->AddCircle(c, r, kGrey, 0, S(3));
+    dl->PathArcTo(c, r, t * 5.0f, t * 5.0f + 2.0f, 16);
+    dl->PathStroke(kOrange, 0, S(3));
+}
+
+// One finding of the probe, `w` wide: its mark and its text, translated.
+void message_row(const nx::prepare::Message& m, float w) {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const float x0 = ImGui::GetCursorPosX(), r = S(7), lh = ImGui::GetTextLineHeight() * 0.84f;
+    const Status st = severity_status(m.severity);
+    if (m.severity == nx::prepare::Severity::Info)
+        dl->AddCircleFilled(ImVec2(p.x + r, p.y + lh * 0.5f + S(1)), S(3), kInkSoft);
+    else
+        status_mark(dl, ImVec2(p.x + r, p.y + lh * 0.5f + S(1)), r, st);
+    ImGui::SetCursorPosX(x0 + 2 * r + S(8));
+    ImGui::PushTextWrapPos(x0 + w);
+    text_small(message_text(m).c_str(), m.severity == nx::prepare::Severity::Info ? kInkSoft : status_ink(st));
+    ImGui::PopTextWrapPos();
+}
+
+// What a picked folder was found to be: the ExeFS, the RomFS, both, or neither.
+const char* prep_role(const std::string& in) {
+    const nx::prepare::ProbeResult& r = g_prep.probe;
+    const bool ex = !r.exefs.empty() && path_within(r.exefs, in);
+    const bool ro = !r.romfs.path.empty() && path_within(r.romfs.path, in);
+    if (ex && ro) return tr("launcher.prep.role.both");
+    if (ex) return tr("launcher.prep.role.exefs");
+    if (ro) return tr("launcher.prep.role.romfs");
+    return tr("launcher.prep.role.none");
+}
+
+void card_title(const char* title) {
+    ImGui::PushFont(g_title);
+    ImGui::SetWindowFontScale(0.72f);
+    ImGui::TextWrapped("%s", title);
+    ImGui::SetWindowFontScale(1.0f);
+    ImGui::PopFont();
+}
+
+// The platforms the game's code is compiled for (this computer's always) and the native 60 FPS.
+void prep_options_card() {
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, col4(kPaper));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(g_portrait ? 14 : 20), S(16)));
+    ImGui::BeginChild("##prepopts", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding |
+                      ImGuiChildFlags_NavFlattened, ImGuiWindowFlags_NoScrollbar);
+    ImGui::PopStyleVar();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec2 p0 = ImGui::GetCursorScreenPos();
+    const float r = S(g_portrait ? 20 : 24), x0 = ImGui::GetCursorPosX(), tx = 2 * r + S(14);
+    dl->AddCircleFilled(ImVec2(p0.x + r, p0.y + r), r, kPurple);
+    theme_icon(dl, nx::ui::kIconGear, ImVec2(p0.x + r, p0.y + r), r * 0.6f, kWhite);
+    ImGui::SetCursorPosX(x0 + tx);
+    ImGui::BeginGroup();
+    ImGui::PushTextWrapPos(0);
+    card_title(tr("launcher.prep.options"));
+    text_small(tr("launcher.prep.platforms"));
+    ImGui::Dummy(ImVec2(0, S(2)));
+    const std::string host = prepare_host_platform();
+    float x = 0;
+    const float room = ImGui::GetContentRegionAvail().x;
+    for (const std::string& p : prepare_platforms()) {
+        const bool own = p == host;
+        bool on = own || std::find(g_prep.extra.begin(), g_prep.extra.end(), p) != g_prep.extra.end();
+        std::string label = platform_label(p);
+        if (own) label += std::string(" · ") + tr("launcher.prep.platform.this");
+        const float w = ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize(label.c_str()).x;
+        if (x > 0 && x + S(24) + w <= room)
+            ImGui::SameLine(0, S(24));
+        else
+            x = 0;
+        x += (x > 0 ? S(24) : 0) + w;
+        ImGui::BeginDisabled(own);  // Play needs it: always built
+        if (ImGui::Checkbox(label.c_str(), &on) && !own) {
+            auto it = std::find(g_prep.extra.begin(), g_prep.extra.end(), p);
+            if (on && it == g_prep.extra.end()) g_prep.extra.push_back(p);
+            if (!on && it != g_prep.extra.end()) g_prep.extra.erase(it);
+        }
+        nav_item();
+        ImGui::EndDisabled();
+    }
+    ImGui::Dummy(ImVec2(0, S(4)));
+    bool fps = g_prep.fps60;
+    if (ImGui::Checkbox(tr("launcher.prep.fps60"), &fps)) g_prep.fps60 = fps;
+    nav_item();
+    text_small(tr("launcher.prep.fps60.desc"));
+    ImGui::PopTextWrapPos();
+    ImGui::EndGroup();
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
+}
+
+void page_prepare() {
+    prep_poll();
+    steps(0);
+    heading(tr("launcher.prep.title"), tr("launcher.prep.text"));
+    g_page_min = ImGui::GetWindowPos();
+    g_page_max = ImVec2(g_page_min.x + ImGui::GetWindowSize().x, g_page_min.y + ImGui::GetWindowSize().y);
+    if (const PrepareTools& t = prepare_tools(); !t.problem.empty()) {
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, col4(rgb(253, 226, 222)));
+        ImGui::BeginChild("##tools", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
+        ImGui::PushStyleColor(ImGuiCol_Text, col4(rgb(170, 70, 70)));
+        ImGui::TextWrapped("%s", trf("launcher.prep.tools_missing", t.problem).c_str());
+        ImGui::PopStyleColor();
+        ImGui::EndChild();
+        ImGui::PopStyleColor();
+        ImGui::Dummy(ImVec2(0, S(2)));
+    }
+    const bool probing = !g_prep.inputs.empty() && !g_prep.probed;
+    // The findings: the game's files', and each add-on's.
+    Status game_st = Status::Empty;
+    std::vector<const nx::prepare::Message*> game_msgs;
+    std::vector<std::vector<const nx::prepare::Message*>> dlc_msgs(g_prep.dlc.size());
+    std::vector<Status> dlc_st(g_prep.dlc.size(), Status::Empty);
+    if (g_prep.probed)
+        for (const nx::prepare::Message& m : g_prep.probe.messages) {
+            const int d = message_dlc(m);
+            if (d >= 0) {
+                dlc_msgs[size_t(d)].push_back(&m);
+                dlc_st[size_t(d)] = std::max(dlc_st[size_t(d)], severity_status(m.severity));
+            } else {
+                game_st = std::max(game_st, severity_status(m.severity));
+                if (m.key != "prepare.input.found") game_msgs.push_back(&m);  // the rows say which is which
+            }
+        }
+    // what stops the preparation first, then what is only said
+    std::stable_sort(game_msgs.begin(), game_msgs.end(), [](const nx::prepare::Message* a, const nx::prepare::Message* b) {
+        return int(a->severity) > int(b->severity);
+    });
+    if (g_prep.probed && !g_prep.inputs.empty() && game_st == Status::Empty) game_st = Status::Ok;
+
+    file_card({"##prepgame", kSlotPrepGame, nx::ui::kIconLeaf, tr("launcher.prep.game"), tr("launcher.prep.game.desc"), true},
+              game_st, [&](float w) {
+        if (g_prep.inputs.empty()) file_row("none", Item(), false, tr("launcher.prep.game.empty"), true, w);
+        for (size_t k = 0; k < g_prep.inputs.size(); k++) {
+            Item it{g_prep.inputs[k], {}};
+            const char* role = probing ? tr("launcher.prep.checking") : prep_role(it.path);
+            it.check = {probing ? Status::Empty : role == tr("launcher.prep.role.none") ? Status::Error : game_st, role};
+            if (file_row(k == 0 ? "in0" : "in1", it, false, "", true, w)) {
+                g_prep.inputs.erase(g_prep.inputs.begin() + long(k));
+                prep_probe();
+                break;
+            }
+        }
+        if (probing) {
+            const ImVec2 c = ImGui::GetCursorScreenPos();
+            spinner(ImGui::GetWindowDrawList(), ImVec2(c.x + S(8), c.y + ImGui::GetTextLineHeight() * 0.45f), S(7));
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + S(24));
+            text_small(tr("launcher.prep.checking_long"));
+        } else {
+            for (const nx::prepare::Message* m : game_msgs) message_row(*m, w);
+        }
+        if (!probing && g_prep.inputs.size() == 1 &&
+            (g_prep.probe.has("prepare.input.no_exefs") || g_prep.probe.has("prepare.input.no_romfs")))
+            text_small(tr("launcher.prep.game.add_other"), rgb(190, 120, 20));
+    });
+    ImGui::Dummy(ImVec2(0, S(2)));
+
+    Status all_dlc = Status::Empty;
+    for (Status s : dlc_st) all_dlc = std::max(all_dlc, s == Status::Empty && g_prep.probed ? Status::Ok : s);
+    file_card({"##prepdlc", kSlotPrepDlc, nx::ui::kIconHouse, tr("launcher.prep.dlc"), tr("launcher.prep.dlc.desc"),
+               false, false}, all_dlc, [&](float w) {
+        if (g_prep.dlc.empty()) file_row("none", Item(), false, tr("launcher.prep.dlc.empty"), false, w);
+        for (size_t k = 0; k < g_prep.dlc.size(); k++) {
+            ImGui::PushID(int(k));
+            Item it{g_prep.dlc[k], {}};
+            // its row says its first error, else what it holds (prepare.dlc.summary); the other findings follow
+            std::vector<const nx::prepare::Message*> ms = dlc_msgs[k];
+            std::stable_sort(ms.begin(), ms.end(), [](const nx::prepare::Message* a, const nx::prepare::Message* b) {
+                const int ka = a->severity == nx::prepare::Severity::Error ? 0 : a->key == "prepare.dlc.summary" ? 1 : 2;
+                const int kb = b->severity == nx::prepare::Severity::Error ? 0 : b->key == "prepare.dlc.summary" ? 1 : 2;
+                return ka < kb;
+            });
+            if (probing)
+                it.check = {Status::Empty, tr("launcher.prep.checking")};
+            else if (!g_prep.probed)
+                it.check = {Status::Empty, tr("launcher.prep.dlc.with_game")};
+            else
+                it.check = {dlc_st[k] == Status::Empty ? Status::Ok : dlc_st[k],
+                            ms.empty() ? std::string(tr("launcher.prep.dlc.ok")) : message_text(*ms[0])};
+            const bool cleared = file_row("dlc", it, false, "", false, w);
+            for (size_t i = 1; g_prep.probed && i < ms.size(); i++) message_row(*ms[i], w);
+            ImGui::PopID();
+            if (cleared) {
+                g_prep.dlc.erase(g_prep.dlc.begin() + long(k));
+                prep_probe();
+                break;
+            }
+        }
+    });
+    ImGui::Dummy(ImVec2(0, S(2)));
+
+    const FileCheck oc = prep_out_check();
+    file_card({"##prepout", kSlotPrepOut, nx::ui::kIconFolder, tr("launcher.prep.out"), tr("launcher.prep.out.desc"),
+               true, false}, oc.status, [&](float w) {
+        Item it{prep_out_dir(), oc};
+        if (file_row("out", it, false, tr("launcher.prep.out.empty"), true, w))
+            g_prep.out = default_game_dir(), g_prep.in_place = false;
+        const std::string home = prep_romfs_home();
+        if (!home.empty() && !same_path(g_prep.out, home)) {
+            ImGui::Dummy(ImVec2(0, S(2)));
+            bool v = g_prep.in_place;
+            if (ImGui::Checkbox(tr("launcher.prep.in_place"), &v)) g_prep.in_place = v;
+            nav_item();
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + w);
+            text_small(trf("launcher.prep.in_place.desc", home).c_str());
+            ImGui::PopTextWrapPos();
+        }
+    });
+    ImGui::Dummy(ImVec2(0, S(2)));
+    prep_options_card();
+    ImGui::Dummy(ImVec2(0, S(4)));
+    text_small(tr("launcher.prep.how"));
+    if (g_portrait) {
+        ImGui::Dummy(ImVec2(0, S(2)));
+        text_small(tr("launcher.welcome.legal"));
+    }
+}
+
+void footer_prepare() {
+    if (button(tr("common.back"), kWhite)) g_banner.clear(), g_page = g_prep_back;
+    const char* why = prep_not_ready();
+    const char* go = tr("launcher.prep.start");
+    if (why) {  // why Prepare is off, when it fits beside it
+        ImGui::SameLine();
+        float room = ImGui::GetContentRegionAvail().x - button_width(go) - ImGui::GetStyle().ItemSpacing.x;
+        if (ImGui::CalcTextSize(why).x * 0.84f <= room) {
+            ImGui::AlignTextToFramePadding();
+            ImGui::SetWindowFontScale(0.84f);
+            ImGui::TextColored(col4(kInkSoft), "%s", why);
+            ImGui::SetWindowFontScale(1.0f);
+        }
+    }
+    align_right({go});
+    if (button(go, kGreen, why == nullptr)) prep_start();
+}
+
+// ---- preparing: the stages running ----------------------------------------------------------------------------
+
+const char* prep_stage_label(int s) {
+    static const char* keys[] = {"launcher.prep.stage.check",  "launcher.prep.stage.exefs",   "launcher.prep.stage.recompile",
+                                 "launcher.prep.stage.shaders", "launcher.prep.stage.packs",  "launcher.prep.stage.compile",
+                                 "launcher.prep.stage.finish"};
+    return s >= kPrepCheck && s <= kPrepFinish ? tr(keys[s - kPrepCheck]) : tr("launcher.stage.prepare");
+}
+
+void prep_stage_list(const PrepareState& s, bool failed) {
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, col4(kPaper));
+    ImGui::BeginChild("##prepstages", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
+    for (int k = kPrepCheck; k <= kPrepFinish; k++) {
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        const ImVec2 c = ImGui::GetCursorScreenPos();
+        const float r = S(11), lh = ImGui::GetTextLineHeight();
+        const ImVec2 m(c.x + r, c.y + lh * 0.5f);
+        const bool current = s.stage == k && !s.done[k];
+        if (s.done[k])
+            status_mark(dl, m, r, Status::Ok);
+        else if (current && failed)
+            status_mark(dl, m, r, Status::Error);
+        else if (current && s.running)
+            spinner(dl, m, r);
+        else
+            dl->AddCircle(m, r, kGrey, 0, S(2));
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 2 * r + S(10));
+        ImGui::PushStyleColor(ImGuiCol_Text, col4(s.done[k] || current ? kInk : kInkSoft));
+        std::string label = prep_stage_label(k);
+        if (k == kPrepCompile && current && s.platforms > 1)
+            label += "  " + trn("launcher.prep.platform_n", {std::to_string(s.platform), std::to_string(s.platforms)});
+        ImGui::TextUnformatted(label.c_str());
+        ImGui::PopStyleColor();
+        if (current && s.running && s.fraction > 0) {
+            ImGui::SameLine();
+            ImGui::TextColored(col4(kInkSoft), "%d%%", int(s.fraction * 100));
+        }
+        if (current && s.running && !s.item.empty()) {  // what it is doing
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 2 * r + S(10));
+            ImGui::PushTextWrapPos(0);
+            text_small(s.item.substr(0, 160).c_str());
+            ImGui::PopTextWrapPos();
+        }
+    }
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
+}
+
+// The heading's text when the preparation stopped on an error: where, and what to do.
+std::string prep_failure_text(const PrepareState& s) {
+    if (s.rc == 2) return tr("launcher.prep.refused");
+    const char* hint = s.stage == kPrepCompile ? tr("launcher.prep.hint.compile")
+                     : s.stage == kPrepShaders ? tr("launcher.prep.hint.shaders") : tr("launcher.prep.hint.other");
+    return trf("launcher.prep.failed", prep_stage_label(s.stage)) + " " + hint;
+}
+
+void prep_done(const PrepareState& s) {
+    g_banner.clear();
+    if (!player_beside().empty()) {  // a release: the folder is the game folder, played as it is
+        set_build(s.out, true);
+        if (*g_build_problem == 0) {
+            load_game_ini();
+            contents(true);
+            g_page = Page::Done;
+        } else {
+            g_banner = trf("launcher.build_invalid", tr(g_build_problem));
+            g_page = Page::Prepare;
+        }
+        return;
+    }
+    use_file(Kind::Game, s.out);  // a checkout: the setup builds the game from it
+    g_prep_flow = false;
+    g_page = Page::Files;
+}
+
+void page_preparing() {
+    const PrepareState s = prepare_state();
+    prepare_lines(g_prep_log.size(), g_prep_log);
+    if (s.finished && s.rc == 0) return prep_done(s);
+    const bool failed = s.finished && s.rc != 4, stopped = s.finished && s.rc == 4;
+    steps(1);
+    if (failed)
+        heading(tr("launcher.prep.failed_title"), prep_failure_text(s).c_str());
+    else if (stopped)
+        heading(tr("launcher.prep.stopped_title"), tr("launcher.prep.cancelled"));
+    else
+        heading(tr("launcher.prep.running_title"), tr("launcher.prep.running_text"));
+    progress_bar(float(s.overall), failed);
+    text_small(trf("launcher.build.elapsed", clock_text(s.elapsed)).c_str());
+    ImGui::Dummy(ImVec2(0, S(2)));
+    if (failed) {  // what went wrong: the check's findings translated, else the stage's own words
+        std::vector<const nx::prepare::Message*> errors;
+        for (const nx::prepare::Message& m : s.messages)
+            if (m.severity == nx::prepare::Severity::Error) errors.push_back(&m);
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, col4(rgb(253, 226, 222)));
+        ImGui::BeginChild("##preperror", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
+        const float w = ImGui::GetContentRegionAvail().x;
+        if (s.stage == kPrepCheck && !errors.empty()) {
+            for (const nx::prepare::Message* m : errors) message_row(*m, w);
+        } else {
+            ImGui::PushStyleColor(ImGuiCol_Text, col4(rgb(170, 70, 70)));
+            ImGui::TextWrapped("%s", s.error.c_str());
+            ImGui::PopStyleColor();
+        }
+        ImGui::EndChild();
+        ImGui::PopStyleColor();
+        ImGui::Dummy(ImVec2(0, S(2)));
+    }
+    const float avail = ImGui::GetContentRegionAvail().x;
+    if (!g_portrait && avail > S(820)) {
+        const float left = std::min(S(400), avail * 0.42f);
+        ImGui::BeginChild("##left", ImVec2(left, 0), ImGuiChildFlags_AutoResizeY);
+        prep_stage_list(s, failed);
+        ImGui::EndChild();
+        ImGui::SameLine(0, S(16));
+        ImGui::BeginGroup();
+        ImGui::SetNextItemOpen(true, ImGuiCond_Once);
+        const bool details_open = ImGui::CollapsingHeader(tr("launcher.build.details"));
+        nav_item();
+        if (details_open) log_view(std::max(S(160), ImGui::GetContentRegionAvail().y - S(4)), g_prep_log);
+        ImGui::EndGroup();
+    } else {
+        prep_stage_list(s, failed);
+        ImGui::Dummy(ImVec2(0, S(2)));
+        if (failed) ImGui::SetNextItemOpen(true, ImGuiCond_Always);
+        const bool details_open = ImGui::CollapsingHeader(tr("launcher.build.details"));
+        nav_item();
+        if (details_open) log_view(std::max(S(200), ImGui::GetContentRegionAvail().y - S(4)), g_prep_log);
+    }
+}
+
+void footer_preparing() {
+    if (prepare_running()) {
+        align_right({tr("launcher.stop")});
+        if (button(tr("launcher.stop"), kRed)) g_confirm_stop = true;
+        return;
+    }
+    if (button(tr("common.back"), kWhite)) g_page = Page::Prepare, prep_probe();
+    const char* logs = tr("launcher.open_logs");
+    align_right({tr("launcher.copy_log"), logs, tr("launcher.retry")});
+    if (button(tr("launcher.copy_log"), kWhite))
+        SDL_SetClipboardText(log_text(g_prep_log).c_str()), toast(tr("launcher.copied"));
+    ImGui::SameLine();
+    if (button(logs, kWhite)) open_folder(parent_dir(prepare_log_path()));
+    ImGui::SameLine();
+    if (button(tr("launcher.retry"), kGreen)) prep_start();
 }
 
 // ---- done and home --------------------------------------------------------------------------------------------
@@ -1553,13 +2245,14 @@ void play_block() {
 }
 
 void page_done() {
-    steps(3);
+    steps(g_prep_flow ? 2 : 3);
     if (!g_banner.empty()) heading("", "");
     ImGui::Dummy(ImVec2(0, S(10)));
     hero(nx::ui::kIconCheck, kGreen, S(48));
     centered(tr("launcher.done.title"), g_title, 1.15f, kInk);
     ImGui::Dummy(ImVec2(0, S(4)));
-    centered(trf("launcher.done.text", g_build.data).c_str(), g_body, 1.0f, kInkSoft);
+    centered(trf(g_prep_flow ? "launcher.prep.done.text" : "launcher.done.text", g_build.data).c_str(), g_body, 1.0f,
+             kInkSoft);
     ImGui::Dummy(ImVec2(0, S(18)));
     play_block();
 }
@@ -2328,6 +3021,14 @@ void page_home() {
         right.push_back({"##rebuild", nx::ui::kIconLeaf, kOrange, tr("launcher.home.rebuild"),
                          tr(can_rebuild ? "launcher.home.rebuild.desc" : "launcher.home.rebuild.unavailable"),
                          can_rebuild, 1});
+    // The game folder's code built for another ACNHRecomp, or not for this computer: prepared again here, keeping the
+    // rest (prepare/README.md: run again on the same folder).
+    const std::string folder = settings().get("launcher.build");
+    const bool again = player && prepare_built() && is_prepared_folder(folder) &&
+                       ((valid && g_build_stale) || std::strcmp(g_build_problem, "launcher.reason.no_game_lib") == 0);
+    if (again)
+        right.push_back({"##again", nx::ui::kIconLeaf, kGreen, tr("launcher.home.prepare_again"),
+                         tr(valid ? "launcher.home.prepare_again.stale" : "launcher.home.prepare_again.desc"), true, 5});
     right.push_back({"##change", nx::ui::kIconFolder, kBlue,
                      tr(player ? "launcher.home.change_game" : "launcher.home.change"),
                      tr(player ? "launcher.home.change_game.desc" : "launcher.home.change.desc"), true, 2});
@@ -2337,6 +3038,7 @@ void page_home() {
         if (action == 4) load_game_ini(), g_page = Page::Online;
         if (action == 1) start_setup(true);
         if (action == 2) pick(kPickBuild);
+        if (action == 5) g_prep_back = Page::Home, prep_open({folder}, folder, false);
     };
 
     float avail = ImGui::GetContentRegionAvail().x, gap = S(14);
@@ -2760,10 +3462,17 @@ void popups() {
     if (g_confirm_stop) ImGui::OpenPopup("stop");
     if (g_confirm_quit) ImGui::OpenPopup("quit");
     ImGui::SetNextWindowSize(ImVec2(std::min(ImGui::GetIO().DisplaySize.x * 0.9f, S(560)), 0));
+    const bool preparing = prepare_running();
     if (ImGui::BeginPopupModal("stop", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize)) {
-        ImGui::TextWrapped("%s", tr("launcher.build.cancel_confirm"));
+        ImGui::TextWrapped("%s", tr(preparing ? "launcher.prep.cancel_confirm" : "launcher.build.cancel_confirm"));
         ImGui::Dummy(ImVec2(0, S(6)));
-        if (button(tr("launcher.stop"), kRed)) setup_cancel(), g_confirm_stop = false, ImGui::CloseCurrentPopup();
+        if (button(tr("launcher.stop"), kRed)) {
+            if (preparing)
+                prepare_cancel();
+            else
+                setup_cancel();
+            g_confirm_stop = false, ImGui::CloseCurrentPopup();
+        }
         ImGui::SameLine();
         bool cancel = button(tr("common.no"), kWhite);
         ImGui::SetItemDefaultFocus();
@@ -2772,10 +3481,11 @@ void popups() {
     }
     ImGui::SetNextWindowSize(ImVec2(std::min(ImGui::GetIO().DisplaySize.x * 0.9f, S(560)), 0));
     if (ImGui::BeginPopupModal("quit", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize)) {
-        ImGui::TextWrapped("%s", tr("launcher.quit_confirm"));
+        ImGui::TextWrapped("%s", tr(preparing ? "launcher.prep.quit_confirm" : "launcher.quit_confirm"));
         ImGui::Dummy(ImVec2(0, S(6)));
         if (button(tr("launcher.stop_quit"), kRed)) {
             setup_cancel();
+            prepare_cancel();
             g_quit_after_stop = true;
             g_confirm_quit = false;
             ImGui::CloseCurrentPopup();
@@ -2786,7 +3496,7 @@ void popups() {
         if (cancel || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) g_confirm_quit = false, ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
-    if (g_quit_after_stop && !setup_state().running) g_exit = true;
+    if (g_quit_after_stop && !setup_state().running && !prepare_running()) g_exit = true;
     addons_popup();
     saves_popup();
     mods_popup();
@@ -2832,15 +3542,42 @@ void pages_init(SDL_Window* window) {
         if (n == "addons") g_page = Page::Home, g_addons_open = true, g_addons_since = -1;  // the add-on panel open
         if (n == "settings") g_page = Page::Settings;
         if (n == "credits") g_page = Page::Credits;
+        // a folder chosen as the game folder (NX_LAUNCHER_PICK), as the welcome page's card or a drop gives it
+        if (const char* f = std::getenv("NX_LAUNCHER_PICK"); n == "choose" && f) g_page = Page::Welcome, use_build_folder(f);
+        // the prepare page with NX_LAUNCHER_PREPARE_IN (folders, ';' between), _DLC, _OUT; "preparing": started at once
+        if (n == "prepare" || n == "preparing") {
+            auto list = [](const char* v) {
+                std::vector<std::string> out;
+                for (std::string t = v ? v : ""; !t.empty();) {
+                    const size_t c = t.find(';');
+                    if (c) out.push_back(t.substr(0, c));
+                    t = c == std::string::npos ? std::string() : t.substr(c + 1);
+                }
+                return out;
+            };
+            const char* o = std::getenv("NX_LAUNCHER_PREPARE_OUT");
+            prep_open(list(std::getenv("NX_LAUNCHER_PREPARE_IN")), o ? o : "", false);
+            g_prep.dlc = list(std::getenv("NX_LAUNCHER_PREPARE_DLC"));
+            prep_probe();
+            if (n == "preparing") prep_start();
+        }
     }
 }
 
 void pages_drop(const std::string& path, float x, float y) {
     g_dragging = false;
-    if (g_page == Page::Build) return;
-    // On a card it is that card's; elsewhere it goes where it looks like it belongs: a game folder to the files page,
-    // another folder is taken for a build folder (welcome and home).
+    if (g_page == Page::Build || g_page == Page::Preparing) return;
+    // On a card it is that card's; elsewhere it goes where it looks like it belongs: on the prepare page the game's
+    // files (or an add-on's, by its folder's name), in a release a folder is the game folder (prepared first when it
+    // is not yet), else a game folder to the files page and another folder is taken for a build folder.
     int slot = slot_at(ImVec2(x, y));
+    if (slot >= kSlotPrepGame) return prep_pick(slot, path);
+    if (g_page == Page::Prepare) {
+        const bool addon = nx::prepare::dlc_index_from_path(path) >= 0 && !g_prep.inputs.empty();
+        return prep_pick(addon ? kSlotPrepDlc : kSlotPrepGame, path);
+    }
+    if (!player_beside().empty() && is_dir(path) && (g_page == Page::Welcome || g_page == Page::Home))
+        return use_build_folder(path);
     Kind k;
     if (slot >= 0) {
         k = slot_kind(slot, path);
@@ -2861,13 +3598,16 @@ void pages_drag(bool over, float x, float y) {
 
 void pages_close_requested() {
     if (update_progress().stage == UpdateStage::Installing) return;  // a moment: the files are being swapped
-    if (setup_state().running)
+    if (setup_state().running || prepare_running())
         g_confirm_quit = true;
     else
         g_exit = true;
 }
 
-bool pages_busy() { return setup_state().running || ImGui::GetTime() < g_toast_until || g_opening_since >= 0; }
+bool pages_busy() {
+    return setup_state().running || prepare_running() || probe_busy() || ImGui::GetTime() < g_toast_until ||
+           g_opening_since >= 0;
+}
 
 bool pages_draw(float scale, ImFont* title) {
     g_scale = scale, g_title = title, g_body = ImGui::GetFont();
@@ -2876,7 +3616,7 @@ bool pages_draw(float scale, ImFont* title) {
     static bool controller_navigation = false, controller_connected = false, popup_last_frame = false;
     static bool nav_page_valid = false;
     static Page nav_page = Page::Welcome;
-    static ImGuiID saved_focus[int(Page::Credits) + 1] = {};
+    static ImGuiID saved_focus[int(Page::Count)] = {};
     const bool connected = (io.BackendFlags & ImGuiBackendFlags_HasGamepad) != 0;
     if (connected && !controller_connected) controller_navigation = true;
     if (!connected) controller_navigation = false;
@@ -2926,11 +3666,17 @@ bool pages_draw(float scale, ImFont* title) {
         }
     }
     apply_picks();
+    if (prepare_running()) prepare_state();  // follows the job (its end) whatever the page
     if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) && !popup_before && ctx.ActiveId == 0) {
         switch (g_page) {
             case Page::Settings: case Page::Online: case Page::Credits: case Page::Done: g_page = Page::Home; break;
             case Page::Files: g_page = Page::Welcome; break;
             case Page::Install: g_page = Page::Files; break;
+            case Page::Prepare: g_page = g_prep_back; break;
+            case Page::Preparing:
+                if (prepare_running()) g_confirm_stop = true;
+                else g_page = Page::Prepare;
+                break;
             case Page::Build:
                 if (setup_state().running) g_confirm_stop = true;
                 else g_page = g_rebuild ? Page::Home : Page::Install;
@@ -2970,7 +3716,7 @@ bool pages_draw(float scale, ImFont* title) {
     // The short pages sit in the middle of the card: their height from the last frame. The offset is whole pixels:
     // ImGui rounds item positions down, so a fractional start changed the measured height and the page bobbed by a
     // pixel every frame.
-    static float content_h[int(Page::Credits) + 1] = {};
+    static float content_h[int(Page::Count)] = {};
     const int pi = int(g_page);
     const bool center = g_page == Page::Welcome || g_page == Page::Done || g_page == Page::Home;
     // Home's update notice floats at the top of the card, in the space above the centred page: it moves nothing
@@ -2997,6 +3743,9 @@ bool pages_draw(float scale, ImFont* title) {
         case Page::Settings: page_settings(); break;
         case Page::Online: page_online(); break;
         case Page::Credits: page_credits(); break;
+        case Page::Prepare: page_prepare(); break;
+        case Page::Preparing: page_preparing(); break;
+        case Page::Count: break;
     }
     if (int(g_page) == pi) content_h[pi] = ImGui::GetCursorPosY() - start;
     static const char* scroll = std::getenv("NX_LAUNCHER_SCROLL");  // tests: 0..1 of the page's scroll range
@@ -3019,6 +3768,9 @@ bool pages_draw(float scale, ImFont* title) {
         case Page::Settings: footer_settings(); break;
         case Page::Online: footer_online(); break;
         case Page::Credits: footer_credits(); break;
+        case Page::Prepare: footer_prepare(); break;
+        case Page::Preparing: footer_preparing(); break;
+        case Page::Count: break;
     }
     g_nav_section = -1;
     popups();

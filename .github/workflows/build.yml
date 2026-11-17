@@ -1,6 +1,9 @@
-# The release packages (README "Downloads"): the launcher and the player, which plays the game folder
-# ACNHRecomp-Importer prepared, with the libraries they need; nothing of the game. One per system, each built on the
-# oldest one it should run on. Run from the Actions tab (Build > Run workflow); each package is an artifact of the run.
+# The release packages (README "Downloads"): the launcher, which prepares the game folder from the player's extracted
+# ExeFS and RomFS, the player, which plays it, the libraries they need, and the preparation's tools (tools/zig, from
+# ziglang.org checked against its SHA-256, and tools/shaders, the shader tool built here with .NET NativeAOT) with
+# acnh_prepare; nothing of the game. One per system, each built on the oldest one it should run on (about 100 MB
+# each, far under GitHub's 2 GB per release file). Run from the Actions tab (Build > Run workflow); each package is an
+# artifact of the run.
 name: Build
 
 on:
@@ -17,6 +20,8 @@ permissions:
 env:
   SDL3: "3.4.16"          # as tools/setup_acnh.py
   VK_HEADERS: "1.4.357"   # as tools/setup_acnh.py
+  DOTNET: "10.0.x"        # the shader tool (tools/build_shader_tool.py: tools/maxwell/spirv_harness, NativeAOT)
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
 
 jobs:
   version:
@@ -60,6 +65,9 @@ jobs:
         run: |
           "$(cygpath -u "$VCPKG_INSTALLATION_ROOT")/vcpkg.exe" install libvpx:x64-windows-static-md-release \
               libvorbis:x64-windows-static-md-release zlib:x64-windows-static-md-release --disable-metrics
+      - uses: actions/setup-dotnet@v5  # the shader tool; NativeAOT links with the Visual Studio C++ tools above
+        with:
+          dotnet-version: ${{ env.DOTNET }}
       - name: Package
         run: |
           export PATH="/c/Program Files/LLVM/bin:$PATH"
@@ -87,6 +95,9 @@ jobs:
           fetch-depth: 0
       - name: Tools
         run: brew install ninja sdl3 molten-vk vulkan-loader vulkan-headers libvpx libvorbis
+      - uses: actions/setup-dotnet@v5  # the shader tool (NativeAOT, with Xcode's command line tools)
+        with:
+          dotnet-version: ${{ env.DOTNET }}
       - name: Package
         run: tools/package_release_mac.sh "$VERSION"
       - uses: actions/upload-artifact@v7
@@ -110,14 +121,18 @@ jobs:
         run: |
           sudo apt-get update
           # clang 18 (apt.llvm.org); SDL3's build dependencies (SDL's docs/README-linux.md): it loads these libraries
-          # at run time when present; the game's: Vulkan, libvpx, libvorbis.
+          # at run time when present; the game's: Vulkan, libvpx, libvorbis; NativeAOT's (the shader tool): clang and
+          # zlib1g-dev.
           curl -fsSL https://apt.llvm.org/llvm.sh | sudo bash -s 18
-          sudo apt-get install -y --no-install-recommends ninja-build patchelf pkg-config \
+          sudo apt-get install -y --no-install-recommends ninja-build patchelf pkg-config clang zlib1g-dev \
                libvulkan-dev libvpx-dev libvorbis-dev \
                libasound2-dev libpulse-dev libpipewire-0.3-dev libx11-dev libxext-dev libxrandr-dev libxcursor-dev \
                libxfixes-dev libxi-dev libxss-dev libxtst-dev libxkbcommon-dev libdrm-dev libgbm-dev \
                libgl1-mesa-dev libegl1-mesa-dev libdbus-1-dev libibus-1.0-dev libudev-dev libwayland-dev \
                wayland-protocols libdecor-0-dev
+      - uses: actions/setup-dotnet@v5  # the shader tool
+        with:
+          dotnet-version: ${{ env.DOTNET }}
       - name: SDL3, Vulkan headers
         run: |
           # Ubuntu 22.04's Vulkan headers (1.3.204) are older than the runtime's

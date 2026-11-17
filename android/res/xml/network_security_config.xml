@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Plain HTTP only to this phone itself: Nextendo's sign-in returns to the game's listener on 127.0.0.1 (nextendo.cpp
+     oauth_listen) inside the app's WebView (android/java SignIn). Everything else keeps Android's defaults: HTTPS only,
+     the system's certificates. -->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">localhost</domain>
+    </domain-config>
+</network-security-config>

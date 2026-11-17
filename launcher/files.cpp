@@ -14,6 +14,7 @@
 #include <sstream>
 
 #include "ini_key.h"
+#include "inputs.h"
 #include "ui/i18n.h"
 
 namespace launcher {
@@ -31,9 +32,17 @@ std::string str(const fs::path& p) {
     return std::string(s.begin(), s.end());
 }
 
+// UTF-8, as every path here: on Windows getenv gives the ANSI code page (a user "João"'s USERPROFILE would not be
+// UTF-8, and u8() of it throws), so the variable is read as UTF-16.
 std::string env(const char* name) {
+#if defined(_WIN32)
+    const std::wstring w(name, name + std::strlen(name));
+    const wchar_t* v = _wgetenv(w.c_str());
+    return v ? str(fs::path(v)) : "";
+#else
     const char* v = std::getenv(name);
     return v ? v : "";
+#endif
 }
 
 std::string home() {
@@ -91,7 +100,7 @@ fs::path child_dir(const fs::path& dir, const char* name) {
 
 struct GameFolder {
     fs::path exefs, romfs, aoc;
-    bool pak = false;  // romfs is romfs.pak: the RomFS in one file (ACNHRecomp-Importer's option, hle_fs.cpp)
+    bool pak = false;  // romfs is romfs.pak: the RomFS in one file (prepare/prepare.cpp writes it, hle_fs.cpp)
 };
 
 // Whether the file starts like a packed RomFS ("NXRP", version 1).
@@ -115,15 +124,16 @@ bool game_parts(const std::string& path, GameFolder& g) {
     return !g.exefs.empty() && !g.romfs.empty();
 }
 
-// Whether ACNHRecomp-Importer prepared the folder (and finished): its game.ini says so and .import/complete is
-// there. ACNHRecomp only takes such folders; the importer is on the project's Discord (launcher.files.importer).
-bool from_importer(const std::string& path) {
+// Whether the folder was prepared for ACNHRecomp and that finished: its game.ini says so (ACNHRecomp's own preparation
+// from the game's extracted ExeFS and RomFS, prepare/prepare.cpp, or ACNHRecomp-Importer's: its first line names
+// ACNHRecomp) and .import/complete is there.
+bool prepared_folder(const std::string& path) {
     std::error_code ec;
     fs::path d = u8(path);
     std::ifstream f(d / "game.ini");
     std::string first;
     std::getline(f, first);
-    return first.find("ACNHRecomp-Importer") != std::string::npos && fs::exists(d / ".import" / "complete", ec);
+    return first.find("ACNHRecomp") != std::string::npos && fs::exists(d / ".import" / "complete", ec);
 }
 
 // main's build id (hex), "" when the file is not an NSO.
@@ -145,7 +155,42 @@ uint64_t file_size(const std::string& path) {
 
 FileCheck ok(Status s, std::string text) { return {s, std::move(text)}; }
 
+// The dump folders of yuzu, Eden and their forks, where Dump RomFS (and Dump ExeFS) write <title>/romfs and exefs.
+std::vector<fs::path> emulator_dump_dirs() {
+    std::vector<fs::path> bases;
+#if defined(_WIN32)
+    if (std::string a = env("APPDATA"); !a.empty()) bases.push_back(u8(a));
+#elif defined(__APPLE__)
+    bases.push_back(u8(home()) / "Library" / "Application Support");
+#else
+    std::string x = env("XDG_DATA_HOME");
+    bases.push_back(x.empty() ? u8(home()) / ".local" / "share" : u8(x));
+#endif
+    std::vector<fs::path> out;
+    for (const fs::path& b : bases)
+        for (const char* e : {"yuzu", "eden", "suyu", "sudachi", "citron", "torzu"}) out.push_back(b / e / "dump");
+    return out;
+}
+
 }  // namespace
+
+bool is_prepared_folder(const std::string& path) { return prepared_folder(path); }
+
+std::string translate(const std::string& key, const std::vector<std::string>& args, const std::string& english) {
+    const char* t = tr(key.c_str());
+    if (!t || key == t) return english;
+    std::string out;
+    size_t k = 0;
+    for (const char* p = t; *p; p++) {
+        if (p[0] == '{' && p[1] == '}') {
+            if (k < args.size()) out += args[k];
+            k++, p++;
+        } else {
+            out += *p;
+        }
+    }
+    return out;
+}
 
 // ---- Ini ------------------------------------------------------------------------------------------------------
 
@@ -238,6 +283,8 @@ std::string default_install_dir() {
 #endif
 }
 
+std::string default_game_dir() { return str(u8(default_install_dir()) / "Game"); }
+
 std::string repo_root() {
     std::vector<std::string> starts;
     if (const char* base = SDL_GetBasePath()) starts.push_back(base);  // the launcher's own folder
@@ -277,6 +324,28 @@ uint64_t free_space(const std::string& dir) {
 }
 
 std::string parent_dir(const std::string& path) { return str(u8(path).parent_path()); }
+std::string path_join(const std::string& dir, const std::string& name) { return str(u8(dir) / u8(name)); }
+
+bool same_path(const std::string& a, const std::string& b) {
+    if (a.empty() || b.empty()) return false;
+    std::error_code ec;
+    if (fs::equivalent(u8(a), u8(b), ec)) return true;
+    return fs::weakly_canonical(u8(a), ec) == fs::weakly_canonical(u8(b), ec);
+}
+
+bool path_within(const std::string& path, const std::string& dir) {
+    if (path.empty() || dir.empty()) return false;
+    std::error_code ec;
+    const fs::path rel = fs::weakly_canonical(u8(path), ec).lexically_relative(fs::weakly_canonical(u8(dir), ec));
+    return !rel.empty() && *rel.begin() != "..";  // "." when they are the same
+}
+
+bool dir_has_other_things(const std::string& path) {
+    std::error_code ec;
+    const fs::path d = u8(path);
+    if (!fs::is_directory(d, ec) || fs::is_empty(d, ec)) return false;
+    return !fs::exists(d / "game.ini", ec) && !fs::exists(d / ".import", ec) && !fs::exists(d / "exefs", ec);
+}
 std::string file_name(const std::string& path) { return str(u8(path).filename()); }
 
 bool is_file(const std::string& path) {
@@ -301,11 +370,24 @@ FileCheck check_file(Kind kind, const std::string& path) {
         return std::memcmp(m, "PK\x03\x04", 4) == 0 ? ok(Status::Ok, trf("launcher.ok.zip", human_size(file_size(path))))
                                                     : ok(Status::Error, tr("launcher.err.zip"));
     }
+    if (!is_dir(path)) return ok(Status::Error, tr("launcher.err.not_folder"));
+    if (kind == Kind::Extract) {  // what to prepare the game folder from: its first problem, else the version found
+        nx::prepare::ProbeOptions po;
+        po.verify_nso = false, po.walk_romfs = false;
+        const nx::prepare::ProbeResult r = nx::prepare::probe({path}, po);
+        for (const nx::prepare::Message& m : r.messages)
+            if (m.severity == nx::prepare::Severity::Error) return ok(Status::Error, translate(m.key, m.args, m.text));
+        return ok(r.count(nx::prepare::Severity::Warning) ? Status::Warning : Status::Ok,
+                  trf("launcher.ok.extract", r.version.empty() ? r.build_id : r.version));
+    }
     // The game folder: only what is needed to tell it apart is read (the executables' headers, folder names).
     GameFolder g;
-    if (!is_dir(path)) return ok(Status::Error, tr("launcher.err.not_folder"));
     if (!game_parts(path, g)) return ok(Status::Error, tr("launcher.err.game_layout"));
-    if (!from_importer(path)) return ok(Status::Error, tr("launcher.err.game_importer"));
+    if (!prepared_folder(path)) {  // the game's files, extracted: prepared by the launcher once the player says so
+        FileCheck c = ok(Status::Error, tr("launcher.err.game_unprepared"));
+        c.unprepared = true;
+        return c;
+    }
     std::error_code ec;
     std::string id;
     for (const char* m : {"main", "sdk", "subsdk0"}) {
@@ -340,12 +422,18 @@ std::string short_dir(const std::string& path) {
 
 namespace {
 
-// Whether a found entry is worth checking as `kind`: a folder holding exefs/ and romfs/, or the pt-BR package (a .zip
-// named like a translation).
+// Whether a found entry is worth checking as `kind`: a folder holding exefs/ and romfs/ (for an extraction, one not
+// prepared yet, or an emulator's dump of the game: 01006F8002326000/romfs), or the pt-BR package (a .zip named like a
+// translation).
 bool search_match(Kind kind, const std::string& path) {
     if (kind == Kind::Game) {
         GameFolder g;
         return game_parts(path, g);
+    }
+    if (kind == Kind::Extract) {
+        GameFolder g;
+        if (game_parts(path, g)) return !prepared_folder(path);
+        return lower(file_name(path)) == "01006f8002326000" && !child_dir(u8(path), "romfs").empty();
     }
     std::string name = lower(file_name(path));
     if (ext(path) != ".zip") return false;
@@ -371,8 +459,10 @@ std::vector<Found> search_files(Kind kind, const std::vector<std::string>& near)
     const fs::path h = u8(home());
     for (const char* n : {"Downloads", "Desktop", "Documents"}) root(h / n, 3);
     for (const std::string& n : near) root(is_dir(n) ? u8(n) : u8(n).parent_path(), 2);
+    if (kind == Kind::Extract)
+        for (const fs::path& d : emulator_dump_dirs()) root(d, 2);
     root(h, 1);
-    std::vector<fs::path> files;  // the files (the pt-BR package) or folders (a game folder) to check
+    std::vector<fs::path> files;  // the files (the pt-BR package) or folders (a game folder, an extraction) to check
     for (const auto& [r, depth] : roots) {
         int budget = 20000;  // entries per folder: a huge Downloads folder costs a moment, never a hang
         for (auto it = fs::recursive_directory_iterator(r, fs::directory_options::skip_permission_denied, ec);
@@ -381,7 +471,7 @@ std::vector<Found> search_files(Kind kind, const std::vector<std::string>& near)
             const fs::path& p = it->path();
             if (it->is_directory(ec)) {
                 std::string n = str(p.filename());
-                if (kind == Kind::Game && search_match(kind, str(p))) {
+                if (kind != Kind::Mod && search_match(kind, str(p))) {
                     files.push_back(p);
                     it.disable_recursion_pending();  // its own exefs/ and romfs/ are not other games
                     continue;
@@ -389,18 +479,18 @@ std::vector<Found> search_files(Kind kind, const std::vector<std::string>& near)
                 if (it.depth() + 1 >= depth || n.empty() || n[0] == '.' || n == "node_modules") it.disable_recursion_pending();
                 continue;
             }
-            if (kind != Kind::Game) files.push_back(p);
+            if (kind == Kind::Mod) files.push_back(p);
         }
     }
     std::vector<Found> out;
     std::vector<fs::path> seen;
     for (const fs::path& p : files) {
         std::string s = str(p);
-        if (kind != Kind::Game && (!fs::is_regular_file(p, ec) || !search_match(kind, s))) continue;
+        if (kind == Kind::Mod && (!fs::is_regular_file(p, ec) || !search_match(kind, s))) continue;
         fs::path c = fs::weakly_canonical(p, ec);
         if (std::find(seen.begin(), seen.end(), c) != seen.end()) continue;
         seen.push_back(c);
-        out.push_back({s, kind, kind == Kind::Game ? 0 : file_size(s), check_file(kind, s)});
+        out.push_back({s, kind, kind == Kind::Mod ? file_size(s) : 0, check_file(kind, s)});
         if (out.size() >= 40) break;
     }
     // The usable ones first, then by name.
@@ -421,7 +511,8 @@ BuildContents build_contents(const std::string& data) {
         size_t eq = l.find('=');
         if (eq != std::string::npos && trim(l.substr(0, eq)) == "version") c.version = trim(l.substr(eq + 1));
     }
-    // A game folder ACNHRecomp-Importer prepared: its game.ini has main's build id, the version from kBuilds
+    // A prepared game folder (ACNHRecomp's or ACNHRecomp-Importer's): its game.ini has main's build id, the version
+    // from kBuilds
     if (c.version.empty()) {
         std::ifstream gi(u8(data + "/game.ini"));
         for (std::string l; std::getline(gi, l);) {
@@ -472,7 +563,7 @@ std::string player_beside() {
     return str(u8(base) / exe);
 }
 
-// The game's library for this computer in a game folder ACNHRecomp-Importer prepared (game/<platform>/...).
+// The game's library for this computer in a prepared game folder (game/<platform>/...).
 fs::path game_library(const fs::path& f) {
 #if defined(_WIN32)
     return f / "game" / "windows-x64" / "acnh_game.dll";
@@ -490,10 +581,10 @@ const char* find_build(const std::string& folder, Build& out) {
     const char* exe = "acnh";
 #endif
     const fs::path f = u8(folder);
-    // A game folder ACNHRecomp-Importer prepared, played by the player beside the launcher: nothing to build.
+    // A prepared game folder, played by the player beside the launcher: nothing to build.
     if (std::string player = player_beside(); !player.empty() && is_dir(folder)) {
         std::error_code ec;
-        if (!from_importer(folder)) return "launcher.err.game_importer";
+        if (!prepared_folder(folder)) return "launcher.err.game_unprepared";
         if (!fs::is_regular_file(game_library(f), ec)) return "launcher.reason.no_game_lib";
         out = {player, str(fs::absolute(f, ec))};
         return "";

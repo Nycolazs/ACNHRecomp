@@ -170,22 +170,45 @@ if(ZLIB_FOUND)
     target_compile_definitions(nx_mod_manager PRIVATE NX_HAVE_ZLIB)
 endif()
 
+# What the player and lib<game>_game must agree on (the CPU context, the module tables, the runtime's calls): a game
+# library built from other headers is refused at start, asking for the game folder to be prepared again. Computed
+# before the game's targets and the preparation (prepare/prepare.cmake), which compiles the game folder's libraries
+# with it.
+set(NX_ABI_TEXT "")
+foreach(h cpu.h module.h runtime.h)
+    file(READ "${CMAKE_SOURCE_DIR}/runtime/include/nx/${h}" t)
+    string(APPEND NX_ABI_TEXT "${t}")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/runtime/include/nx/${h}")
+endforeach()
+string(SHA1 NX_GAME_ABI "${NX_ABI_TEXT}")
+string(SUBSTRING "${NX_GAME_ABI}" 0 12 NX_GAME_ABI)
+
 # The launcher (launcher/): the program a player opens first. It has no game code, so it builds from a plain
 # checkout (cmake --build <dir> --target acnhrecomp_launcher) and leaves the game's targets as they are.
 option(NX_LAUNCHER "Build the first-run launcher (acnhrecomp_launcher)" ON)
 if(NX_LAUNCHER AND NOT ANDROID)
     include(launcher/launcher.cmake)
+    include(prepare/io/io.cmake)  # preparing the game folder: the player's ExeFS and RomFS, the packs
 endif()
 
-# Desktop: the game's code from the game folder (game/<platform>/lib<game>_game, which ACNHRecomp-Importer builds)
+# The game folder's preparation (prepare/README.md): the recompiler (nx_recomp, acnh_recomp), the game library's build
+# and the stages (nx_gamelib, nx_prepare) and the command line acnh_prepare, on desktop; on Android the app's own
+# libacnh_prepare.so (prepare_jni.cpp), which the APK carries with or without the game set up here. Not in a desktop
+# build with the generated code (NX_GEN_PROBE, used below too: tools/setup_acnh.py's, made by the Python recompiler).
+file(GLOB NX_GEN_PROBE "${NX_GEN_DIR}/main/*.cpp")
+if(ANDROID OR NOT NX_GEN_PROBE)
+    include(prepare/recomp/recomp.cmake)
+    include(prepare/prepare.cmake)  # the game library's build (gamelib), the stages, acnh_prepare
+endif()
+
+# Desktop: the game's code from the game folder (game/<platform>/lib<game>_game, which the preparation builds)
 # instead of linked into the executable: the player then only needs the folder.
 option(NX_GAME_FROM_FOLDER "Desktop: load the game's code from the game folder" OFF)
 
-# Without the generated code (a checkout with no game data) only the tests and the launcher above are built.
+# Without the generated code (a checkout with no game data) only the tests, launcher and recompiler above are built.
 # Android builds the runtime without it too: the app (lib<game>.so) holds no game code and loads lib<game>_game.so,
 # made from the player's own copy on their computer, from the game folder picked on the phone (docs/ANDROID.md). So
 # does the desktop player (NX_GAME_FROM_FOLDER): the release's, which loads the game folder's library.
-file(GLOB NX_GEN_PROBE "${NX_GEN_DIR}/main/*.cpp")
 if(NOT NX_GEN_PROBE AND NOT ANDROID AND NOT NX_GAME_FROM_FOLDER)
     message(WARNING "No generated code in ${NX_GEN_DIR}/main: building the unit tests only")
     return()
@@ -375,16 +398,6 @@ if(DEFINED ENV{VULKAN_SDK})
 else()
     set(NX_VULKAN_SDK "C:/VulkanSDK/1.4.357.0" CACHE PATH "Vulkan SDK")
 endif()
-
-# What the player and lib<game>_game must agree on (the CPU context, the module tables, the runtime's calls): a game
-# library built from other headers is refused at start, asking for the game folder to be prepared again.
-set(NX_ABI_TEXT "")
-foreach(h cpu.h module.h runtime.h)
-    file(READ "${CMAKE_SOURCE_DIR}/runtime/include/nx/${h}" t)
-    string(APPEND NX_ABI_TEXT "${t}")
-endforeach()
-string(SHA1 NX_GAME_ABI "${NX_ABI_TEXT}")
-string(SUBSTRING "${NX_GAME_ABI}" 0 12 NX_GAME_ABI)
 
 if(ANDROID)
     # NativeActivity app: lib<game>.so, entry android_main (android_native_app_glue).

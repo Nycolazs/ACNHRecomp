@@ -177,6 +177,11 @@ bool init() {
     auto gipa = reinterpret_cast<PFN_vkGetInstanceProcAddr>(plat::vulkan_get_instance_proc_addr());
     if (!gipa) {
         log("nvn/vk: no Vulkan loader");
+        // Nothing would ever be drawn: the game ran on unseen, its sound playing (Discord: a driver updated without a
+        // restart). Said and ended instead.
+        if (!plat::headless())
+            fatal("Vulkan, which the game draws with, could not be loaded on this computer (vulkan-1.dll / libvulkan "
+                  "not found). Update or reinstall your graphics card's driver, restart the computer, then try again.");
         return false;
     }
     for (size_t k = 0; k < g_entry_count; k++) *g_entries[k].pfn = gipa(nullptr, g_entries[k].name);
@@ -553,8 +558,15 @@ bool make_surface() {
         for (VkFormat f : {VK_FORMAT_A2B10G10R10_UNORM_PACK32, VK_FORMAT_A2R10G10B10_UNORM_PACK32})
             if (want == HdrOutput::Hdr10 && g_hdr == HdrOutput::Off && pair(f, VK_COLOR_SPACE_HDR10_ST2084_EXT))
                 g_sc_format = f, g_sc_color_space = VK_COLOR_SPACE_HDR10_ST2084_EXT, g_hdr = want;
-        if (g_hdr == HdrOutput::Off) log("nvn/vk: HDR asked, but the surface offers no %s format: SDR",
-                                         want == HdrOutput::ScRgb ? "scRGB" : "HDR10");
+        // Decided on the first surface: before the game's textures are made (they need the device); shaders read
+        // earlier keep the SPIR-V they were read with (shader_spirv)
+        static bool first = true;
+        if (g_hdr == HdrOutput::Off) {
+            log("nvn/vk: HDR asked, but the surface offers no %s format: SDR%s", want == HdrOutput::ScRgb ? "scRGB" : "HDR10",
+                first ? ", and HDR off until the game restarts" : "");
+            if (first) hdr_unavailable();
+        }
+        first = false;
     }
     log("nvn/vk: surface: %u formats offered, swapchain format %d, colour space %d%s", n, int(g_sc_format),
         int(g_sc_color_space), g_hdr == HdrOutput::ScRgb ? " (HDR scRGB)" : g_hdr == HdrOutput::Hdr10 ? " (HDR10)" : "");

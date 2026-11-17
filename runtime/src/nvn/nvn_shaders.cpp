@@ -122,7 +122,9 @@ SupportBuffer support_buffer_defaults() {
     SupportBuffer sb;
     std::memset(&sb, 0, sizeof sb);
     for (auto& s : sb.render_scale) s[0] = 1.0f;  // Ryujinx's SupportBufferUpdater: (1, 0, 0, 0) for all 73
+#ifndef NX_SHADERS_STANDALONE  // the HDR settings are the runtime's; the cache test has none
     if (hdr_requested() != HdrOutput::Off) hdr_shader_settings(sb.hdr);
+#endif
     return sb;
 }
 
@@ -289,8 +291,10 @@ bool builtin_hdr_spirv(const std::string& hash, std::string& out) {
     return false;
 }
 
-bool read_spirv(const std::string& hash, std::string& out) {
-    if (hdr_requested() != HdrOutput::Off) {
+// hdr: -1 as the setting says now; 0/1 as decided when the shader was first read (shader_spirv: the pipeline's SPIR-V
+// is the one its reflection came from, even if HDR turned off between, nvn_vk.cpp hdr_unavailable)
+bool read_spirv(const std::string& hash, std::string& out, int hdr = -1) {
+    if (hdr < 0 ? hdr_requested() != HdrOutput::Off : hdr != 0) {
         const bool file = read_whole(plat::data_root() + "/spirv_hdr/" + hash + ".spv", out);  // a newer one, while working on it
         if (file || builtin_hdr_spirv(hash, out)) {
             if (std::lock_guard lk(g_hdr_lock); g_hdr_replaced.insert(hash).second)
@@ -407,7 +411,7 @@ std::vector<uint32_t> shader_spirv(const ShaderInfo* s) {
     if (!s->spirv.empty()) return s->spirv;
     std::string bytes;
     std::vector<uint32_t> words;
-    if (read_spirv(s->hash, bytes) && bytes.size() % 4 == 0) {
+    if (read_spirv(s->hash, bytes, s->hdr_replacement ? 1 : 0) && bytes.size() % 4 == 0) {
         words.resize(bytes.size() / 4);
         std::memcpy(words.data(), bytes.data(), bytes.size());
     } else {
