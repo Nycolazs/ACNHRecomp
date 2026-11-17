@@ -14,6 +14,7 @@
 #endif
 
 #include <algorithm>
+#include <cfloat>
 #include <atomic>
 #include <cmath>
 #include <cstdio>
@@ -63,11 +64,12 @@ struct Page {
     ImU32 color;
     int icon;
 };
+// Each page's colour (its badge, tinted) and icon: the Importer's palette.
 const Page kPages[] = {
-    {"tab.game", rgb(124, 194, 103), 0},  {"tab.video", rgb(79, 179, 217), 1},   {"tab.audio", rgb(245, 166, 35), 2},
-    {"tab.controls", rgb(155, 125, 212), 3}, {"tab.saves", rgb(232, 115, 122), 4}, {"tab.online", rgb(72, 190, 170), kIconBox},
-    {"tab.amiibo", rgb(255, 180, 80), kIconKey}, {"tab.discord", rgb(88, 101, 242), kIconGlobe},
-    {"tab.about", rgb(176, 140, 100), 5},
+    {"tab.game", kThemeLeaf, kIconLeaf},  {"tab.video", rgb(92, 172, 222), kIconScreen},   {"tab.audio", kThemeBell, kIconNote},
+    {"tab.controls", rgb(166, 138, 214), kIconController}, {"tab.saves", kThemeCoral, kIconHouse},
+    {"tab.online", kThemeLagoon, kIconGlobe}, {"tab.amiibo", rgb(246, 190, 80), kIconKey},
+    {"tab.discord", rgb(110, 122, 240), kIconText}, {"tab.about", rgb(176, 140, 100), kIconInfo},
 };
 constexpr int kPageCount = int(sizeof(kPages) / sizeof(kPages[0]));
 
@@ -75,6 +77,24 @@ int g_page = 0;
 constexpr int kOnlinePage = 5;
 std::atomic<bool> g_show_online{false};  // the game asked for local play with the setting off (hle_ldn.cpp)
 float g_scale = 1;
+ImFont* g_title_font = nullptr;  // settings_draw's title font (the section headings)
+
+// The Importer's divider: a row of dashes across the content width, as the rows' separator.
+void dashes() {
+    ImGui::Dummy(ImVec2(0, 2.0f * g_scale));
+    theme_dashes(ImGui::GetWindowDrawList(), ImGui::GetCursorScreenPos(), ImGui::GetContentRegionAvail().x, g_scale);
+    ImGui::Dummy(ImVec2(ImGui::GetContentRegionAvail().x, 2.5f * g_scale));
+}
+
+// A dropdown's or slider's frame: the pointing hand on hover and a lagoon edge fading in with it.
+void frame_hover() {
+    if (ImGui::GetCurrentContext()->LastItemData.ItemFlags & ImGuiItemFlags_Disabled) return;
+    const float t = theme_hover();
+    if (t > 0 && !ImGui::IsItemFocused())
+        ImGui::GetWindowDrawList()->AddRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(),
+                                            theme_mix(kThemeSandDeep, kThemeLagoon, t), ImGui::GetStyle().FrameRounding,
+                                            0, 2.0f * g_scale);
+}
 int g_nav_index = 0, g_nav_target = -1, g_nav_count = 0;
 bool g_page_navigation = false;
 bool g_nav_sidebar = false, g_sidebar_focus = false;
@@ -230,8 +250,8 @@ void row(const char* label, const char* desc, const std::function<void(float wid
         ImVec2 next = ImGui::GetCursorScreenPos();
         next.y = ImGui::GetItemRectMax().y + 4.0f * g_scale;
         ImGui::SetCursorScreenPos(next);
-        // A darker brown than TextDisabled: the descriptions were hard to read on the cream background.
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.47f, 0.39f, 0.31f, 1.0f));
+        // The Importer's soft bark: darker than TextDisabled, readable on the sand.
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(theme_shade(kThemeInkSoft, 0.9f)));
         ImGui::SetWindowFontScale(0.86f);
         ImGui::TextWrapped("%s", tr(desc));
         ImGui::SetWindowFontScale(1.0f);
@@ -250,18 +270,15 @@ void row(const char* label, const char* desc, const std::function<void(float wid
     if (!g_row_key.empty() && needs_restart(g_row_key)) {
         const float y = std::max(text_max.y, ImGui::GetItemRectMax().y) + 3.0f * g_scale;
         ImGui::SetCursorScreenPos(ImVec2(text_min.x, y));
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.66f, 0.42f, 0.18f, 1));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(theme_shade(kThemeBell, 0.78f)));
         ImGui::SetWindowFontScale(0.86f);
         ImGui::TextUnformatted(tr("common.on_restart"));
         ImGui::SetWindowFontScale(1.0f);
         ImGui::PopStyleColor();
     }
     ImGui::PopID();
-    ImGui::Dummy(ImVec2(0, 4.0f * g_scale));
-    ImGui::PushStyleColor(ImGuiCol_Separator, ImGui::GetStyle().Colors[ImGuiCol_Border]);
-    ImGui::Separator();
-    ImGui::PopStyleColor();
     ImGui::Dummy(ImVec2(0, 2.0f * g_scale));
+    dashes();
 }
 
 using Choices = std::vector<std::pair<std::string, std::string>>;  // value, shown text (already translated)
@@ -323,12 +340,13 @@ void combo(const std::string& key, const std::string& fallback, const Choices& c
     }
     if (full != shown && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", full.c_str());
     page_nav_item();
+    frame_hover();
     bool focused = ImGui::IsItemFocused();
     if (focused) {
         ImDrawList* dl = ImGui::GetWindowDrawList();
         ImVec2 rmin = ImGui::GetItemRectMin();
         ImVec2 rmax = ImGui::GetItemRectMax();
-        dl->AddRect(rmin, rmax, rgb(246, 170, 40), ImGui::GetStyle().FrameRounding, 0, 2.5f * g_scale);
+        dl->AddRect(rmin, rmax, kThemeLagoonDeep, ImGui::GetStyle().FrameRounding, 0, 2.5f * g_scale);
         if (cur_idx >= 0 && choices.size() > 1) {
             if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow, true)) {
                 int next_idx = (cur_idx - 1 + int(choices.size())) % int(choices.size());
@@ -341,20 +359,24 @@ void combo(const std::string& key, const std::string& fallback, const Choices& c
     }
 }
 
-// An on/off pill like the game's. Returns whether the value flipped this frame.
+// On/off as the Importer's toggle chip: pale leaf with a leaf edge and a filled check when on, paper with a sand edge
+// and an empty ring when off, the change fading over 0.16 s; "On" / "Off" in it. Left / right set it from the keyboard
+// or a controller. Returns whether the value flipped this frame.
 bool draw_toggle_pill(bool& on, float width = 0) {
-    float h = ImGui::GetFrameHeight(), pill_w = h * 1.9f;
+    float h = ImGui::GetFrameHeight(), ir = h * 0.24f;
     const char* label = tr(on ? "common.on" : "common.off");
     ImVec2 ts = ImGui::CalcTextSize(label);
-    float natural_w = pill_w + 10.0f * g_scale + ts.x;
-    float hit_w = width > 0 ? width : natural_w;
+    float chip_w = 10.0f * g_scale + 2 * ir + 7.0f * g_scale + std::max(ts.x, std::max(ImGui::CalcTextSize(tr("common.on")).x,
+                                                                         ImGui::CalcTextSize(tr("common.off")).x)) +
+                   16.0f * g_scale;
+    float hit_w = width > 0 ? std::max(width, chip_w) : chip_w;
     ImVec2 p = ImGui::GetCursorScreenPos();
     ImGui::PushStyleColor(ImGuiCol_NavCursor, ImVec4(0, 0, 0, 0));
     bool clicked = ImGui::InvisibleButton("##t", ImVec2(hit_w, h), ImGuiButtonFlags_EnableNav);
     ImGui::PopStyleColor();
     page_nav_item();
     bool focused = ImGui::IsItemFocused();
-    bool hov = ImGui::IsItemHovered();
+    const float hover = theme_hover();
     bool changed = false;
 
     if (clicked) {
@@ -373,17 +395,21 @@ bool draw_toggle_pill(bool& on, float width = 0) {
             }
         }
     }
+    float* anim = ImGui::GetStateStorage()->GetFloatRef(ImGui::GetItemID() ^ 0x70661eu, on ? 1.0f : 0.0f);
+    *anim += ((on ? 1.0f : 0.0f) - *anim) * std::min(1.0f, ImGui::GetIO().DeltaTime / 0.16f * 3);
+    if (std::fabs((on ? 1.0f : 0.0f) - *anim) < 0.01f) *anim = on ? 1.0f : 0.0f;
+    const float t = *anim;
 
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    ImU32 bg = on ? rgb(118, 200, 170) : rgb(214, 200, 168);
-    dl->AddRectFilled(p, ImVec2(p.x + pill_w, p.y + h), bg, h * 0.5f);
-    if (hov || focused) {
-        dl->AddRect(p, ImVec2(p.x + pill_w, p.y + h), rgb(246, 170, 40), h * 0.5f, 0, 2.5f * g_scale);
-    }
-    float r = h * 0.5f - 3.0f * g_scale;
-    ImVec2 knob(on ? p.x + pill_w - h * 0.5f : p.x + h * 0.5f, p.y + h * 0.5f);
-    dl->AddCircleFilled(knob, r, rgb(255, 255, 255));
-    dl->AddText(ImVec2(p.x + pill_w + 10.0f * g_scale, p.y + (h - ts.y) * 0.5f), rgb(107, 79, 54), label);
+    ImVec2 q(p.x + chip_w, p.y + h);
+    dl->AddRectFilled(p, q, theme_mix(kThemeBoard, kThemeLeafPale, t), h * 0.5f);
+    ImU32 edge = theme_mix(theme_mix(kThemeSandDeep, kThemeLeaf, t), kThemeLagoon, hover * (1 - t));
+    dl->AddRect(p, q, focused ? kThemeLagoonDeep : edge, h * 0.5f, 0, (focused ? 3.0f : 1.5f) * g_scale);
+    ImVec2 c(p.x + 10.0f * g_scale + ir, p.y + h * 0.5f);
+    if (t > 0) dl->AddCircleFilled(c, ir * t, kThemeLeafDeep);
+    if (t < 1) dl->AddCircle(c, ir - 1.0f * g_scale, theme_mix(kThemeInkSoft, kThemeLeafDeep, t), 0, 1.8f * g_scale);
+    if (t > 0.5f) theme_icon(dl, kIconCheck, c, ir * 0.75f, IM_COL32(255, 255, 255, 255));
+    dl->AddText(ImVec2(c.x + ir + 7.0f * g_scale, p.y + (h - ts.y) * 0.5f), kThemeInk, label);
     return changed;
 }
 
@@ -411,6 +437,7 @@ void slider(const std::string& key, int lo, int hi, int fallback, const char* fm
     const bool changed = ImGui::SliderInt("##s", &v, lo, hi, fmt);
     ImGui::PopStyleColor();
     page_nav_item();
+    frame_hover();
     g_slider_held |= ImGui::IsItemActive();
     if (changed) {
         config_set(key, std::to_string(v));
@@ -420,22 +447,14 @@ void slider(const std::string& key, int lo, int hi, int fallback, const char* fm
         ImDrawList* dl = ImGui::GetWindowDrawList();
         ImVec2 rmin = ImGui::GetItemRectMin();
         ImVec2 rmax = ImGui::GetItemRectMax();
-        dl->AddRect(rmin, rmax, rgb(246, 170, 40), ImGui::GetStyle().FrameRounding, 0, 2.5f * g_scale);
+        dl->AddRect(rmin, rmax, kThemeLagoonDeep, ImGui::GetStyle().FrameRounding, 0, 2.5f * g_scale);
     }
     if (ImGui::IsItemDeactivatedAfterEdit()) save_settings();
 }
 
 bool button(const char* text, float width = 0) {
-    ImGui::PushStyleColor(ImGuiCol_NavCursor, ImVec4(0, 0, 0, 0));
-    bool res = ImGui::Button(text, ImVec2(width, 0));
-    ImGui::PopStyleColor();
+    bool res = theme_button(text, ImVec2(width, 0));
     page_nav_item();
-    if (ImGui::IsItemFocused()) {
-        ImDrawList* dl = ImGui::GetWindowDrawList();
-        ImVec2 rmin = ImGui::GetItemRectMin();
-        ImVec2 rmax = ImGui::GetItemRectMax();
-        dl->AddRect(rmin, rmax, rgb(246, 170, 40), ImGui::GetStyle().FrameRounding, 0, 2.5f * g_scale);
-    }
     return res;
 }
 
@@ -551,7 +570,7 @@ bool int_dropdown(const char* id, int& value, int lo, int hi, const char* fmt, f
     page_nav_item();
     if (ImGui::IsItemFocused()) {
         ImDrawList* dl = ImGui::GetWindowDrawList();
-        dl->AddRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), rgb(246, 170, 40), ImGui::GetStyle().FrameRounding, 0,
+        dl->AddRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), kThemeLagoonDeep, ImGui::GetStyle().FrameRounding, 0,
                     2.5f * g_scale);
         if (hi > lo) {
             if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow, true)) {
@@ -672,14 +691,18 @@ bool lsfg_available() {
 // A heading over a group of rows.
 void section(const char* key) {
     ImGui::Dummy(ImVec2(0, 8 * g_scale));
-    ImGui::SetWindowFontScale(1.18f);
-    ImGui::TextColored(ImVec4(0.24f, 0.55f, 0.36f, 1), "%s", tr(key));
-    ImGui::SetWindowFontScale(1.0f);
+    // A leaf, then the heading in the title font.
+    ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2 p = ImGui::GetCursorScreenPos();
-    ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(p.x, p.y + 2 * g_scale),
-                                              ImVec2(p.x + ImGui::GetContentRegionAvail().x, p.y + 5 * g_scale),
-                                              ImGui::GetColorU32(ImVec4(0.49f, 0.76f, 0.42f, 1)), 2 * g_scale);
-    ImGui::Dummy(ImVec2(0, 12 * g_scale));
+    ImFont* f = g_title_font ? g_title_font : ImGui::GetFont();
+    const float fs = (g_title_font ? f->FontSize * ImGui::GetIO().FontGlobalScale * 0.78f : ImGui::GetFontSize() * 1.18f);
+    const ImVec2 ts = f->CalcTextSizeA(fs, FLT_MAX, 0, tr(key));
+    const float leaf = fs * 0.95f;
+    theme_leaf(dl, ImVec2(p.x + leaf * 0.5f, p.y + ts.y * 0.5f), leaf, -0.5f);
+    dl->AddText(f, fs, ImVec2(p.x + leaf + 8 * g_scale, p.y), kThemeInk, tr(key));
+    ImGui::Dummy(ImVec2(ImGui::GetContentRegionAvail().x, ts.y));
+    dashes();
+    ImGui::Dummy(ImVec2(0, 4 * g_scale));
 }
 
 // The choice that matches the console, tagged as such ("1080p (TV mode) · console original").
@@ -778,17 +801,17 @@ void friend_line(const nxo::Friend& f, const std::string& state, const std::vect
     float x = avail - float(buttons.size()) * (bw + gap) + gap;
     for (const auto& [label, act] : buttons) {
         ImGui::SameLine(x);
-        if (ImGui::Button(tr(label), ImVec2(bw, 0)) && !g_friend_action.busy) act();
+        if (theme_button(tr(label), ImVec2(bw, 0)) && !g_friend_action.busy) act();
         page_nav_item();
         x += bw + gap;
     }
     ImGui::PopID();
-    ImGui::Separator();
+    dashes();
 }
 
 void page_friends() {
     row("online.friends.back", nullptr, [&](float w) {
-        if (ImGui::Button(tr("online.friends.back"), ImVec2(w, 0))) g_friends_view = false;
+        if (theme_button(tr("online.friends.back"), ImVec2(w, 0))) g_friends_view = false;
         page_nav_item();
     });
     const nxo::Account acc = nxo::account();
@@ -806,7 +829,7 @@ void page_friends() {
             ctx.NavActivateFlags |= ImGuiActivateFlags_PreferInput;
         ImGui::InputTextWithHint("##friend_code", "SW-0000-0000-0000", code, sizeof code);
         page_nav_item();
-        if (ImGui::Button(tr("online.friends.send"), ImVec2(w, 0)) && code[0] && !g_friend_action.busy) {
+        if (theme_button(tr("online.friends.send"), ImVec2(w, 0)) && code[0] && !g_friend_action.busy) {
             const std::string c = code;
             friend_action([c](std::string& m) { return nxo::send_friend_request(c, m); }, "online.friends.sent");
             code[0] = 0;
@@ -850,22 +873,14 @@ void page_friends() {
 
 bool g_fix_link_view = false;  // the Online page shows the "Fix Save Linked Account" page instead of its rows
 
-bool red_button(const char* text, float width) {
-    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.70f, 0.16f, 0.16f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.82f, 0.22f, 0.22f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.58f, 0.12f, 0.12f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
-    const bool pressed = ImGui::Button(text, ImVec2(width, 0));
-    ImGui::PopStyleColor(4);
-    return pressed;
-}
+bool red_button(const char* text, float width) { return theme_button(text, ImVec2(width, 0), kThemeCoral); }
 
 #if !defined(__ANDROID__)
 // Everything the player should know before the fix, then the fix itself (save_unlink.h): the game restarts, the save
 // is copied unaltered to backups/save-link-fix, and the online account link is cleared from every resident.
 void page_fix_link() {
     row("online.friends.back", nullptr, [&](float w) {
-        if (ImGui::Button(tr("online.friends.back"), ImVec2(w, 0))) g_fix_link_view = false;
+        if (theme_button(tr("online.friends.back"), ImVec2(w, 0))) g_fix_link_view = false;
         page_nav_item();
     });
     section("online.fix_link");
@@ -922,7 +937,7 @@ void page_online() {
             desc += std::string("\n") + tr("online.nextendo.requirements");  // the game's only sign is a generic error
             if (!nxo::last_error().empty()) desc += "\n" + nxo::last_error();  // a refused game token says why
             row("online.nextendo.account", desc.c_str(), [&](float w) {
-                if (ImGui::Button(tr("online.nextendo.sign_out"), ImVec2(w, 0))) nxo::sign_out();
+                if (theme_button(tr("online.nextendo.sign_out"), ImVec2(w, 0))) nxo::sign_out();
                 page_nav_item();
             });
             const nxo::FriendLists lists = nxo::friend_lists_cached();
@@ -931,7 +946,7 @@ void page_online() {
             std::string fdesc = trf("online.friends.desc", std::to_string(online));
             if (!lists.incoming.empty()) fdesc += "\n" + trf("online.friends.desc.requests", std::to_string(lists.incoming.size()));
             row("online.friends", fdesc.c_str(), [&](float w) {
-                if (ImGui::Button(tr("online.friends.open"), ImVec2(w, 0))) g_friends_view = true;
+                if (theme_button(tr("online.friends.open"), ImVec2(w, 0))) g_friends_view = true;
                 page_nav_item();
             });
         } else {
@@ -940,7 +955,7 @@ void page_online() {
             if (!nxo::last_error().empty()) desc += "\n" + nxo::last_error();
             row("online.nextendo.account", desc.c_str(), [&](float w) {
                 const bool busy = nxo::sign_in_busy();
-                if (ImGui::Button(tr(busy ? "online.nextendo.signing_in" : "online.nextendo.sign_in"), ImVec2(w, 0)) &&
+                if (theme_button(tr(busy ? "online.nextendo.signing_in" : "online.nextendo.sign_in"), ImVec2(w, 0)) &&
                     !busy)
                     nxo::sign_in_start();
                 page_nav_item();
@@ -948,7 +963,7 @@ void page_online() {
         }
         const std::string sdesc = status_text();
         row("online.server", sdesc.c_str(), [&](float w) {
-            if (ImGui::Button(tr(g_status.running ? "online.server.checking_button" : "online.server.check"),
+            if (theme_button(tr(g_status.running ? "online.server.checking_button" : "online.server.check"),
                               ImVec2(w, 0)))
                 status_check_start();
             page_nav_item();
@@ -974,10 +989,10 @@ void page_online() {
         row("online.address", tr("online.address.desc"), [&](float w) {
             ImGui::TextUnformatted(shown ? address.c_str() : "\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2");
             const float half = (w - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
-            if (ImGui::Button(tr(shown ? "online.hide" : "online.show"), ImVec2(half, 0))) shown = !shown;
+            if (theme_button(tr(shown ? "online.hide" : "online.show"), ImVec2(half, 0))) shown = !shown;
             page_nav_item();
             ImGui::SameLine();
-            if (ImGui::Button(tr("online.copy"), ImVec2(half, 0))) {
+            if (theme_button(tr("online.copy"), ImVec2(half, 0))) {
                 ImGui::SetClipboardText(address.c_str());
                 toast(tr("online.copied"));
             }
@@ -1008,7 +1023,7 @@ void page_online() {
         page_nav_item();
         if (ImGui::IsItemDeactivatedAfterEdit()) address_check_start(join);
         if (join[0]) {
-            if (ImGui::Button(tr("online.join.test"), ImVec2(w, 0))) address_check_start(join);
+            if (theme_button(tr("online.join.test"), ImVec2(w, 0))) address_check_start(join);
             page_nav_item();
         }
     });
@@ -1230,7 +1245,7 @@ void page_video() {
     static bool s_driver_pick = false;
     row("video.gpu_driver.import", "video.gpu_driver.import.desc", [&](float w) {
         ImGui::BeginDisabled(s_driver_pick);
-        if (ImGui::Button(tr("video.gpu_driver.import.button"), ImVec2(w, 0))) s_driver_pick = true, plat::import_gpu_driver();
+        if (theme_button(tr("video.gpu_driver.import.button"), ImVec2(w, 0))) s_driver_pick = true, plat::import_gpu_driver();
         ImGui::EndDisabled();
         page_nav_item();
     });
@@ -1350,7 +1365,7 @@ void page_controls() {
                 if (cur.empty()) cur = "-";
                 const bool capturing = g_capturing == k && g_capturing_alt == bool(alt);
                 std::string text = capturing ? std::string(tr(alt ? "controls.press_key_alt" : "controls.press_key")) : cur;
-                if (ImGui::Button(text.c_str(), ImVec2(-1, 0))) {
+                if (theme_button(text.c_str(), ImVec2(-1, 0))) {
                     g_capturing = k;
                     g_capturing_alt = alt;
                     ui_begin_key_capture();
@@ -1525,7 +1540,7 @@ std::string g_report_path;  // the .zip (or folder) written, or the error
 void report_section() {
     static const bool failed_before = previous_session_failed();
     ImGui::Dummy(ImVec2(0, 10 * g_scale));
-    ImGui::Separator();
+    dashes();
     ImGui::Dummy(ImVec2(0, 4 * g_scale));
     ImGui::TextColored(ImVec4(0.42f, 0.31f, 0.21f, 1), "%s", tr("report.title"));
     if (failed_before) ImGui::TextColored(ImVec4(0.80f, 0.33f, 0.30f, 1), "%s", tr("report.prev_failed"));
@@ -1674,19 +1689,14 @@ bool g_quit_confirm = false;
 
 }  // namespace
 
-void settings_nav_item() {
-    page_nav_item();
-    if (!ImGui::IsItemFocused()) return;
-    ImGui::GetWindowDrawList()->AddRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), rgb(246, 170, 40),
-                                        ImGui::GetStyle().FrameRounding, 0, 2.5f * g_scale);
-}
+void settings_nav_item() { page_nav_item(); }  // theme_button draws its own focus
 
 void settings_show_online() { g_show_online = true; }
 void settings_must_quit() { g_must_quit = true; }
 bool settings_quit_pending() { return g_must_quit; }
 
 bool settings_draw(float scale, ImFont* title, float opening) {
-    g_scale = scale;
+    g_scale = scale, g_title_font = title;
     if (g_show_online.exchange(false)) g_page = kOnlinePage;
     static const bool cycle = std::getenv("NX_UI_CYCLE") != nullptr;  // tests: every page in turn, 10 s each
     if (cycle) g_page = int(double(plat::monotonic_ns()) / 1e10) % kPageCount;
@@ -1775,43 +1785,47 @@ bool settings_draw(float scale, ImFont* title, float opening) {
     }
     bool portrait = ds.x < ds.y * 1.2f;
     g_slider_held = false;  // set again by a slider still held (slider)
-    // Dim the game.
-    ImGui::GetBackgroundDrawList()->AddRectFilled(ImVec2(0, 0), ds, rgb(40, 28, 12, 120));
+    // Dim the game, in bark.
+    ImGui::GetBackgroundDrawList()->AddRectFilled(ImVec2(0, 0), ds, rgb(60, 45, 30, 130));
     ImVec2 size = portrait ? ImVec2(ds.x * 0.96f, ds.y * 0.94f)
                            : ImVec2(std::min(ds.x * 0.92f, 1180.0f * scale), std::min(ds.y * 0.9f, 680.0f * scale));
     const float remaining = 1.0f - opening;
     const float slide = 18.0f * scale * remaining * remaining * remaining;
     ImGui::SetNextWindowPos(ImVec2(ds.x * 0.5f, ds.y * 0.5f + slide), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(size, ImGuiCond_Always);
+    {  // the board's soft, flat drop under it
+        const ImVec2 at(std::floor(ds.x * 0.5f - size.x * 0.5f), std::floor(ds.y * 0.5f + slide - size.y * 0.5f));
+        ImGui::GetBackgroundDrawList()->AddRectFilled(ImVec2(at.x, at.y + 6 * scale),
+                                                      ImVec2(at.x + size.x, at.y + size.y + 6 * scale),
+                                                      rgb(138, 106, 58, 60), ImGui::GetStyle().WindowRounding);
+    }
     bool open = true;
     ImGui::Begin("##settings", nullptr,
                  ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
                      ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollbar);
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    // Header: title on a green ribbon, close at the right.
+    {  // the board's stitched edge
+        const ImVec2 wp = ImGui::GetWindowPos(), ws = ImGui::GetWindowSize();
+        theme_stitch(dl, ImVec2(wp.x + 8 * scale, wp.y + 8 * scale), ImVec2(wp.x + ws.x - 8 * scale, wp.y + ws.y - 8 * scale),
+                     std::max(0.0f, ImGui::GetStyle().WindowRounding - 7 * scale), scale);
+    }
+    // Header: the Importer's leaf and the title in bark, Resume at the right, the dashes under them.
     {
         ImVec2 p = ImGui::GetCursorScreenPos();
         float h = 56.0f * scale, w = ImGui::GetContentRegionAvail().x;
-        dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), rgb(124, 194, 103), h * 0.5f);
-        theme_icon(dl, 0, ImVec2(p.x + h * 0.55f, p.y + h * 0.5f), h * 0.36f, rgb(255, 255, 255));
+        theme_leaf(dl, ImVec2(p.x + 22 * scale, p.y + h * 0.5f), 42 * scale, -0.5f);
         ImGui::PushFont(title);
         ImVec2 ts = ImGui::CalcTextSize(tr("app.title"));
-        dl->AddText(ImVec2(p.x + h * 1.1f, p.y + (h - ts.y) * 0.5f), rgb(255, 255, 255), tr("app.title"));
+        dl->AddText(ImVec2(p.x + 52 * scale, p.y + (h - ts.y) * 0.5f), kThemeInk, tr("app.title"));
         ImGui::PopFont();
         std::string resume_text = touch_only() ? std::string(tr("common.resume"))
                                                : std::string(tr("common.resume")) + " (" + nav_names().back + ")";
         float bw = std::max(130.0f * scale, ImGui::CalcTextSize(resume_text.c_str()).x + 36 * scale);
-        ImGui::SetCursorScreenPos(ImVec2(p.x + w - bw - 10 * scale, p.y + (h - ImGui::GetFrameHeight()) * 0.5f));
-        ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(255, 255, 255, 230));
-        ImGui::PushStyleColor(ImGuiCol_NavCursor, ImVec4(0, 0, 0, 0));
-        if (ImGui::Button(resume_text.c_str(), ImVec2(bw, 0))) open = false;
-        ImGui::PopStyleColor();
+        ImGui::SetCursorScreenPos(ImVec2(p.x + w - bw - 4 * scale, p.y + (h - ImGui::GetFrameHeight()) * 0.5f - 2 * scale));
+        if (theme_button(resume_text.c_str(), ImVec2(bw, 0), kThemeSun)) open = false;
         action_nav_item(kResumeFocus);
-        if (ImGui::IsItemFocused()) {
-            dl->AddRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), rgb(246, 170, 40), ImGui::GetStyle().FrameRounding, 0, 2.5f * scale);
-        }
-        ImGui::PopStyleColor();
-        ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + h + 14 * scale));
+        theme_dashes(dl, ImVec2(p.x, p.y + h + 8 * scale), w, scale);
+        ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + h + 20 * scale));
     }
     // Gamepad shoulder buttons (L/R/ZL/ZR) & PageUp/PageDown to switch tabs from anywhere
     if (g_capturing < 0 && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId)) {
@@ -1829,11 +1843,13 @@ bool settings_draw(float scale, ImFont* title, float opening) {
         }
     }
     // Page buttons: a column on the left, or a row on top when narrow. The footer keeps its line below both.
-    float footer = ImGui::GetFrameHeightWithSpacing() + 10.0f * scale;
+    float footer = ImGui::GetFrameHeightWithSpacing() + 14.0f * scale;  // + the buttons' lip (theme_button)
     float tab_w = portrait ? ImGui::GetContentRegionAvail().x : 210.0f * scale;
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f * scale, portrait ? 0.0f : 8.0f * scale));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0, 0, 0, 0));
     ImGui::BeginChild("##tabs", ImVec2(tab_w, portrait ? 64.0f * scale : -footer), ImGuiChildFlags_AlwaysUseWindowPadding,
                       ImGuiWindowFlags_NavFlattened | (portrait ? ImGuiWindowFlags_HorizontalScrollbar : 0));
+    ImGui::PopStyleColor();
     ImGui::PopStyleVar();
 
     std::string glyph_style = config_get("controls.glyphs", "auto");
@@ -1869,11 +1885,10 @@ bool settings_draw(float scale, ImFont* title, float opening) {
         ImVec2 p_l = ImGui::GetCursorScreenPos();
         ImGui::PushID("bumper_l");
         if (ImGui::InvisibleButton("##l", ImVec2(bw, bh))) g_page = (g_page - 1 + kPageCount) % kPageCount;
-        bool l_hov = ImGui::IsItemHovered();
-        bool l_active = l_down || l_hov;
-        ImU32 l_bg = l_active ? rgb(246, 170, 40) : rgb(242, 233, 210);
-        ImU32 l_border = l_active ? rgb(230, 140, 20) : rgb(216, 202, 174);
-        ImU32 l_text_col = l_active ? rgb(255, 255, 255) : rgb(107, 79, 54);
+        const float l_t = std::max(theme_hover(), l_down ? 1.0f : 0.0f);
+        ImU32 l_bg = theme_mix(kThemeBoard, kThemeSun, l_t);
+        ImU32 l_border = theme_mix(kThemeSandDeep, kThemeSunDeep, l_t);
+        ImU32 l_text_col = kThemeInk;
         dl->AddRectFilled(p_l, ImVec2(p_l.x + bw, p_l.y + bh), l_bg, bh * 0.5f);
         dl->AddRect(p_l, ImVec2(p_l.x + bw, p_l.y + bh), l_border, bh * 0.5f, 0, 1.5f * scale);
         bumper_label(dl, p_l, ImVec2(bw, bh), l_text, true, l_text_col);
@@ -1884,11 +1899,10 @@ bool settings_draw(float scale, ImFont* title, float opening) {
         ImVec2 p_r = ImGui::GetCursorScreenPos();
         ImGui::PushID("bumper_r");
         if (ImGui::InvisibleButton("##r", ImVec2(bw, bh))) g_page = (g_page + 1) % kPageCount;
-        bool r_hov = ImGui::IsItemHovered();
-        bool r_active = r_down || r_hov;
-        ImU32 r_bg = r_active ? rgb(246, 170, 40) : rgb(242, 233, 210);
-        ImU32 r_border = r_active ? rgb(230, 140, 20) : rgb(216, 202, 174);
-        ImU32 r_text_col = r_active ? rgb(255, 255, 255) : rgb(107, 79, 54);
+        const float r_t = std::max(theme_hover(), r_down ? 1.0f : 0.0f);
+        ImU32 r_bg = theme_mix(kThemeBoard, kThemeSun, r_t);
+        ImU32 r_border = theme_mix(kThemeSandDeep, kThemeSunDeep, r_t);
+        ImU32 r_text_col = kThemeInk;
         dl->AddRectFilled(p_r, ImVec2(p_r.x + bw, p_r.y + bh), r_bg, bh * 0.5f);
         dl->AddRect(p_r, ImVec2(p_r.x + bw, p_r.y + bh), r_border, bh * 0.5f, 0, 1.5f * scale);
         bumper_label(dl, p_r, ImVec2(bw, bh), r_text, false, r_text_col);
@@ -1903,11 +1917,10 @@ bool settings_draw(float scale, ImFont* title, float opening) {
         ImVec2 p_l = ImGui::GetCursorScreenPos();
         ImGui::PushID("bumper_l");
         if (ImGui::InvisibleButton("##l", ImVec2(bw, bh))) g_page = (g_page - 1 + kPageCount) % kPageCount;
-        bool l_hov = ImGui::IsItemHovered();
-        bool l_active = l_down || l_hov;
-        ImU32 l_bg = l_active ? rgb(246, 170, 40) : rgb(242, 233, 210);
-        ImU32 l_border = l_active ? rgb(230, 140, 20) : rgb(216, 202, 174);
-        ImU32 l_text_col = l_active ? rgb(255, 255, 255) : rgb(107, 79, 54);
+        const float l_t = std::max(theme_hover(), l_down ? 1.0f : 0.0f);
+        ImU32 l_bg = theme_mix(kThemeBoard, kThemeSun, l_t);
+        ImU32 l_border = theme_mix(kThemeSandDeep, kThemeSunDeep, l_t);
+        ImU32 l_text_col = kThemeInk;
         dl->AddRectFilled(p_l, ImVec2(p_l.x + bw, p_l.y + bh), l_bg, bh * 0.5f);
         dl->AddRect(p_l, ImVec2(p_l.x + bw, p_l.y + bh), l_border, bh * 0.5f, 0, 1.5f * scale);
         bumper_label(dl, p_l, ImVec2(bw, bh), l_text, true, l_text_col);
@@ -1948,18 +1961,24 @@ bool settings_draw(float scale, ImFont* title, float opening) {
             g_nav_index = 0;
             g_nav_target = 0;
         }
+        // The Importer's rows: the chosen page sun yellow on its lip, the others on the board, sand when hovered; a
+        // tinted badge with the page's icon; a lagoon edge under keyboard or controller focus.
         bool sel = g_page == k;
-        bool hov = ImGui::IsItemHovered() || ImGui::IsItemFocused();
+        const float t = theme_hover();
+        const bool focus = ImGui::IsItemFocused();
         ImVec2 q = ImGui::GetItemRectMax();
         ImDrawList* cl = ImGui::GetWindowDrawList();
-        cl->AddRectFilled(p, q, sel ? kPages[k].color : (hov ? rgb(255, 232, 160) : rgb(248, 239, 214)), bh * 0.5f);
-        if (hov) cl->AddRect(p, q, rgb(246, 170, 40), bh * 0.5f, 0, 3.0f * scale);
-        cl->AddCircleFilled(ImVec2(p.x + bh * 0.5f, p.y + bh * 0.5f), bh * 0.36f,
-                            sel ? rgb(255, 255, 255, 70) : kPages[k].color);
-        theme_icon(cl, kPages[k].icon, ImVec2(p.x + bh * 0.5f, p.y + bh * 0.5f), bh * 0.3f, rgb(255, 255, 255));
+        const float lip = 4.0f * scale;
+        if (sel) theme_lip(cl, p, ImVec2(q.x - p.x, bh - lip), lip, (bh - lip) * 0.5f, kThemeSun, kThemeSunDeep, kThemeSunDeep, 1.5f * scale, false);
+        else if (t > 0) cl->AddRectFilled(p, ImVec2(q.x, q.y - lip), theme_mix(kThemeBoard, kThemeSand, t), (bh - lip) * 0.5f);
+        if (focus) cl->AddRect(p, ImVec2(q.x, q.y - lip), kThemeLagoonDeep, (bh - lip) * 0.5f, 0, 3.0f * scale);
+        const ImVec2 c(p.x + (bh - lip) * 0.5f, p.y + (bh - lip) * 0.5f);
+        const float r = (bh - lip) * 0.36f;
+        cl->AddCircleFilled(c, r, theme_shade(kPages[k].color, 1.62f));
+        cl->AddCircle(c, r - 1.0f * scale, theme_shade(kPages[k].color, 1.25f), 0, 2.0f * scale);
+        theme_icon(cl, kPages[k].icon, c, r * 0.62f, theme_shade(kPages[k].color, 0.68f));
         ImVec2 ts = ImGui::CalcTextSize(label);
-        cl->AddText(ImVec2(p.x + bh + 6 * scale, p.y + (bh - ts.y) * 0.5f), sel ? rgb(255, 255, 255) : rgb(107, 79, 54),
-                    label);
+        cl->AddText(ImVec2(p.x + bh + 2 * scale, p.y + (bh - lip - ts.y) * 0.5f), kThemeInk, label);
         ImGui::PopID();
     }
 
@@ -1972,11 +1991,10 @@ bool settings_draw(float scale, ImFont* title, float opening) {
         ImVec2 p_r = ImGui::GetCursorScreenPos();
         ImGui::PushID("bumper_r");
         if (ImGui::InvisibleButton("##r", ImVec2(bw, bh))) g_page = (g_page + 1) % kPageCount;
-        bool r_hov = ImGui::IsItemHovered();
-        bool r_active = r_down || r_hov;
-        ImU32 r_bg = r_active ? rgb(246, 170, 40) : rgb(242, 233, 210);
-        ImU32 r_border = r_active ? rgb(230, 140, 20) : rgb(216, 202, 174);
-        ImU32 r_text_col = r_active ? rgb(255, 255, 255) : rgb(107, 79, 54);
+        const float r_t = std::max(theme_hover(), r_down ? 1.0f : 0.0f);
+        ImU32 r_bg = theme_mix(kThemeBoard, kThemeSun, r_t);
+        ImU32 r_border = theme_mix(kThemeSandDeep, kThemeSunDeep, r_t);
+        ImU32 r_text_col = kThemeInk;
         dl->AddRectFilled(p_r, ImVec2(p_r.x + bw, p_r.y + bh), r_bg, bh * 0.5f);
         dl->AddRect(p_r, ImVec2(p_r.x + bw, p_r.y + bh), r_border, bh * 0.5f, 0, 1.5f * scale);
         bumper_label(dl, p_r, ImVec2(bw, bh), r_text, false, r_text_col);
@@ -1984,11 +2002,24 @@ bool settings_draw(float scale, ImFont* title, float opening) {
     }
     ImGui::EndChild();
     if (!portrait) ImGui::SameLine();
-    // The page.
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f * scale, 12.0f * scale));
-    ImGui::BeginChild("##page", ImVec2(0, -footer), ImGuiChildFlags_AlwaysUseWindowPadding,
-                      ImGuiWindowFlags_NavFlattened);
-    ImGui::PopStyleVar();
+    // The page: a sand panel with a stitched edge that stays put, the rows scrolling inside the stitch (an inner
+    // child: a child's own padding is not a clip, so rows scrolled under the panel's edge showed past the stitch).
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14.0f * scale, 14.0f * scale));
+    ImGui::BeginChild("##page_panel", ImVec2(0, -footer), ImGuiChildFlags_AlwaysUseWindowPadding,
+                      ImGuiWindowFlags_NavFlattened | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    {
+        const ImVec2 wp = ImGui::GetWindowPos(), ws = ImGui::GetWindowSize();
+        ImDrawList* pl = ImGui::GetWindowDrawList();
+        pl->PushClipRect(wp, ImVec2(wp.x + ws.x, wp.y + ws.y), false);
+        theme_stitch(pl, ImVec2(wp.x + 6 * scale, wp.y + 6 * scale), ImVec2(wp.x + ws.x - 6 * scale, wp.y + ws.y - 6 * scale),
+                     std::max(0.0f, ImGui::GetStyle().ChildRounding - 5 * scale), scale);
+        pl->PopClipRect();
+    }
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(4.0f * scale, 0.0f));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0, 0, 0, 0));
+    ImGui::BeginChild("##page", ImVec2(0, 0), ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NavFlattened);
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(2);
     ImGui::Dummy(ImVec2(0, 4 * scale));
     if (last_page != g_page) {
         g_nav_target = g_nav_sidebar ? -1 : 0;
@@ -2015,7 +2046,8 @@ bool settings_draw(float scale, ImFont* title, float opening) {
     if (static const char* sc = std::getenv("NX_UI_SCROLL"); sc && ImGui::GetScrollMaxY() > 0)
         ImGui::SetScrollY(float(std::atof(sc)) * ImGui::GetScrollMaxY());
     drag_scroll();
-    ImGui::EndChild();
+    ImGui::EndChild();  // ##page
+    ImGui::EndChild();  // ##page_panel
     // Footer: restart note or toast, controller prompt bar, and quit.
     {
         const char* msg = nullptr;
@@ -2025,39 +2057,30 @@ bool settings_draw(float scale, ImFont* title, float opening) {
             msg = tr("common.restart_needed");
         if (msg) {
             ImGui::AlignTextToFramePadding();
-            ImGui::TextColored(ImVec4(0.30f, 0.55f, 0.45f, 1), "%s", msg);
+            ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(kThemeLeafDeep), "%s", msg);
             ImGui::SameLine();
 #if defined(__ANDROID__)
             // A phone app is not quit and started again by hand easily: the game starts again from here.
             if (g_restart_note && msg == tr("common.restart_needed")) {
-                ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(124, 194, 103, 255));
-                if (ImGui::Button(tr("common.restart_now"))) {
+                if (theme_button(tr("common.restart_now"), ImVec2(0, 0), kThemeSun)) {
                     game_clock_save();  // a faster or stopped clock's last seconds (saved every 10 s otherwise)
                     save_settings();
                     plat::restart_app();
                 }
-                ImGui::PopStyleColor();
                 ImGui::SameLine();
             }
 #endif
         } else {
             ImGui::AlignTextToFramePadding();
             if (!touch_only()) {
-                ImGui::TextColored(ImVec4(0.50f, 0.45f, 0.38f, 1.0f), "%s", nav_hint(nav_names()).c_str());
+                ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(kThemeInkSoft), "%s", nav_hint(nav_names()).c_str());
                 ImGui::SameLine();
             }
         }
         float qw = ImGui::CalcTextSize(tr("common.quit_game")).x + 30 * scale;
         ImGui::SetCursorPosX(ImGui::GetWindowContentRegionMax().x - qw);
-        ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(232, 115, 122, 255));
-        ImGui::PushStyleColor(ImGuiCol_NavCursor, ImVec4(0, 0, 0, 0));
-        if (ImGui::Button(tr("common.quit_game"), ImVec2(qw, 0))) g_quit_confirm = true;
-        ImGui::PopStyleColor();
+        if (theme_button(tr("common.quit_game"), ImVec2(qw, 0), kThemeCoral)) g_quit_confirm = true;
         action_nav_item(kQuitFocus);
-        if (ImGui::IsItemFocused()) {
-            dl->AddRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), rgb(246, 170, 40), ImGui::GetStyle().FrameRounding, 0, 2.5f * scale);
-        }
-        ImGui::PopStyleColor();
     }
     if (g_quit_confirm) ImGui::OpenPopup("quit");
     if (g_quit_confirm) {
@@ -2072,13 +2095,13 @@ bool settings_draw(float scale, ImFont* title, float opening) {
         const float no_w = std::max(90.0f * scale, ImGui::CalcTextSize(tr("common.no")).x + 24.0f * scale);
         const float gap = 12.0f * scale;
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (ImGui::GetContentRegionAvail().x - yes_w - no_w - gap) * 0.5f));
-        if (ImGui::Button(tr("common.yes"), ImVec2(yes_w, 0))) {
+        if (theme_button(tr("common.yes"), ImVec2(yes_w, 0), kThemeCoral)) {
             game_clock_save();
             save_settings();
             plat::exit_process(0);
         }
         ImGui::SameLine(0, gap);
-        bool cancel = ImGui::Button(tr("common.no"), ImVec2(no_w, 0));
+        bool cancel = theme_button(tr("common.no"), ImVec2(no_w, 0));
         ImGui::SetItemDefaultFocus();
         if (cancel || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false))
             g_quit_confirm = false, ImGui::CloseCurrentPopup();
@@ -2087,7 +2110,7 @@ bool settings_draw(float scale, ImFont* title, float opening) {
     if (g_must_quit) ImGui::OpenPopup("must_quit");
     if (ImGui::BeginPopupModal("must_quit", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar)) {
         ImGui::TextWrapped("%s", tr("saves.import.ok"));
-        if (ImGui::Button(tr("common.quit_game"))) game_clock_save(), plat::exit_process(0);
+        if (theme_button(tr("common.quit_game"))) game_clock_save(), plat::exit_process(0);
         ImGui::EndPopup();
     }
     // Cancel (B / Escape) closes the screen when nothing else wants it (never after an import: see g_must_quit).
@@ -2129,12 +2152,12 @@ void settings_hint(float scale, float t) {
         dl->AddRectFilled(ImVec2(p.x - s * 0.5f, p.y + s), ImVec2(q.x + s * 0.5f, q.y + s * 1.2f), fade(40, 30, 20, 18),
                           h * 0.5f + s);
     }
-    dl->AddRectFilled(p, q, fade(255, 249, 232, 245), h * 0.5f);
-    dl->AddRect(p, q, fade(255, 255, 255, 160), h * 0.5f, 0, 1.0f * scale);
+    dl->AddRectFilled(p, q, fade(255, 252, 240, 248), h * 0.5f);
+    dl->AddRect(p, q, fade(241, 230, 194, 255), h * 0.5f, 0, 1.5f * scale);
     ImVec2 c(p.x + 5.0f * scale + ir, p.y + h * 0.5f);
-    dl->AddCircleFilled(c, ir, fade(118, 200, 170, 255));
+    dl->AddCircleFilled(c, ir, fade(78, 195, 179, 255));
     theme_icon(dl, kIconGear, c, ir * 0.62f, fade(255, 255, 255, 255));
-    dl->AddText(ImVec2(c.x + ir + gap, p.y + (h - ts.y) * 0.5f), fade(107, 79, 54, 255), text);
+    dl->AddText(ImVec2(c.x + ir + gap, p.y + (h - ts.y) * 0.5f), fade(107, 84, 68, 255), text);
 }
 
 void hdr_panel_draw(float scale) {
@@ -2182,17 +2205,17 @@ void hdr_panel_draw(float scale) {
         }
         if (ImGui::IsItemDeactivatedAfterEdit()) save_settings();
     });
-    ImGui::Separator();
+    dashes();
     line("hi", tr("video.hdr_highlights"), [&] { slider("video.hdr_highlights", 0, 100, 50, "%d", w); });
     line("sh", tr("video.hdr_shadows"), [&] { slider("video.hdr_shadows", 0, 100, 50, "%d", w); });
     line("co", tr("video.hdr_contrast"), [&] { slider("video.hdr_contrast", 0, 100, 50, "%d", w); });
     line("sa", tr("video.hdr_saturation"), [&] { slider("video.hdr_saturation", 0, 100, 50, "%d", w); });
     line("te", tr("video.hdr_temperature"), [&] { slider("video.hdr_temperature", -100, 100, 0, "%d", w); });
     line("ti", tr("video.hdr_tint"), [&] { slider("video.hdr_tint", -100, 100, 0, "%d", w); });
-    ImGui::Separator();
+    dashes();
     // The defaults: the game's own picture (tonemap HDR, scene and UI at 203 nits, gamma 2.2, no grading). The
     // display's peak stays: it describes the display, not the look.
-    if (ImGui::Button(tr("video.hdr_reset"))) {
+    if (theme_button(tr("video.hdr_reset"))) {
         static const std::pair<const char*, const char*> kDefaults[] = {
             {"video.hdr_tonemap", "hdr"},     {"video.hdr_game_nits", "203"},   {"video.hdr_ui_nits", "203"},
             {"video.hdr_gamma", "2.2"},       {"video.hdr_exposure", "0.00"},   {"video.hdr_highlights", "50"},

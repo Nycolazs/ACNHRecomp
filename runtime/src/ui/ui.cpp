@@ -21,6 +21,7 @@
 #include <cstdio>
 #include <cstring>
 #include <deque>
+#include <filesystem>
 #include <map>
 #include <mutex>
 #include <string>
@@ -38,6 +39,10 @@
 #include "ui/settings.h"
 #include "ui/theme.h"
 #include "ui/ui_internal.h"
+
+#include "Fredoka-600.inc"  // CMakeLists.txt: assets/fonts compiled in
+#include "Nunito-700.inc"
+#include "Lucide-launcher.inc"
 
 namespace nx::nvn {
 std::mutex& vk_queue_mutex();  // nvn_vk.cpp: held around every use of the game's queue
@@ -316,7 +321,15 @@ ImFont* g_font_body = nullptr;
 ImFont* g_font_title = nullptr;
 
 void build_fonts(float scale) {
-    ThemeFonts f = theme_build_fonts(scale, plat::data_root() + "/fonts/ui.ttf");  // a font of the player's choice
+    // The Importer's fonts and Lucide's icons, compiled in; a font of the player's choice (fonts/ui.ttf) still takes
+    // the text's place.
+    const std::string user_font = plat::data_root() + "/fonts/ui.ttf";
+    std::error_code ec;
+    const bool own = std::filesystem::is_regular_file(std::filesystem::u8path(user_font), ec);
+    theme_set_embedded_fonts(own ? nullptr : kNunito_700, own ? 0 : int(sizeof kNunito_700), kFredoka_600,
+                             int(sizeof kFredoka_600));
+    theme_set_embedded_icons(kLucide_launcher, int(sizeof kLucide_launcher));
+    ThemeFonts f = theme_build_fonts(scale, user_font);
     g_font_body = f.body, g_font_title = f.title;
     g_font_scale = scale, g_font_lang = ui_language();
     unsigned char* px = nullptr;
@@ -593,8 +606,9 @@ void ui_record(VkCommandBuffer cb, VkImage image, VkFormat format, VkExtent2D ex
         const ImVec2 ts = ImGui::CalcTextSize(text.c_str());
         const float pad = 14.0f * scale, h = ts.y + 16.0f * scale, w = ts.x + pad * 2;
         const ImVec2 p(std::floor((io.DisplaySize.x - w) * 0.5f), 24.0f * scale);
-        dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), IM_COL32(255, 249, 232, int(235 * a)), h * 0.5f);
-        dl->AddText(ImVec2(p.x + pad, p.y + (h - ts.y) * 0.5f), IM_COL32(107, 79, 54, int(255 * a)), text.c_str());
+        dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), IM_COL32(255, 252, 240, int(240 * a)), h * 0.5f);  // the Importer's paper
+        dl->AddRect(p, ImVec2(p.x + w, p.y + h), IM_COL32(241, 230, 194, int(255 * a)), h * 0.5f, 0, 1.5f * scale);
+        dl->AddText(ImVec2(p.x + pad, p.y + (h - ts.y) * 0.5f), IM_COL32(107, 84, 68, int(255 * a)), text.c_str());
     }
     if (show_fps) {
         draw_fps_overlay(scale);

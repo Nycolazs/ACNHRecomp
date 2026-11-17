@@ -7,6 +7,7 @@
 #include "nfp_host.h"
 #include "platform.h"
 #include "ui/i18n.h"
+#include "ui/theme.h"
 #include "ui/settings.h"
 
 namespace nx::ui {
@@ -51,7 +52,7 @@ void settings_page_amiibo(float scale) {
     ImGui::Spacing();
 
     ImGui::PushStyleColor(ImGuiCol_NavCursor, ImVec4(0, 0, 0, 0));
-    if (ImGui::Button(tr("amiibo.choose"), ImVec2(bw, 0))) {
+    if (theme_button(tr("amiibo.choose"), ImVec2(bw, 0))) {
         g_tag_pick_pending = true;
         plat::pick_file(tr("amiibo.pick_title"), "bin");
     }
@@ -60,7 +61,7 @@ void settings_page_amiibo(float scale) {
     ImGui::SameLine();
     ImGui::BeginDisabled(!nfp_host::has_tag());
     ImGui::PushStyleColor(ImGuiCol_NavCursor, ImVec4(0, 0, 0, 0));
-    if (ImGui::Button(tr("amiibo.clear"), ImVec2(bw, 0))) {
+    if (theme_button(tr("amiibo.clear"), ImVec2(bw, 0))) {
         nfp_host::clear_tag();
         g_status = tr("amiibo.cleared");
     }
