@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cfloat>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
@@ -24,6 +25,8 @@
 #endif
 
 #include "ui/i18n.h"
+#include "imgui_internal.h"  // the last item's flags and focus (theme_button, theme_nav_focused)
+#include "ui/IconsLucide.h"  // IconFontCppHeaders: the codepoints of assets/fonts/Lucide-launcher.ttf
 
 namespace nx::ui {
 
@@ -189,7 +192,21 @@ std::string find_cjk_font(const std::string& lang, const std::string& user_font,
     return "";
 }
 
+struct Embedded {
+    const void* data = nullptr;
+    int size = 0;
+};
+Embedded g_embedded_body, g_embedded_title, g_embedded_icons;
+ImFont* g_icon_font = nullptr;  // the last theme_build_fonts' ThemeFonts::icons (theme_icon)
+
 }  // namespace
+
+void theme_set_embedded_fonts(const void* body, int body_size, const void* title, int title_size) {
+    g_embedded_body = {body, body_size};
+    g_embedded_title = {title, title_size};
+}
+
+void theme_set_embedded_icons(const void* data, int size) { g_embedded_icons = {data, size}; }
 
 float theme_scale(float width, float height) {
     if (height > width) return std::clamp(width / 720.0f, 0.6f, 4.0f);
@@ -243,20 +260,28 @@ ThemeFonts theme_build_fonts(float scale, const std::string& user_font) {
     for (const UiLanguage& l : ui_languages()) cb.AddText(l.native_name);
     cb.AddText("简体中文繁體中文日本語한국어");  // the game's language list (settings.cpp)
     cb.BuildRanges(&cjk_ranges);
-    auto add = [&](float px) -> ImFont* {
+    auto add = [&](float px, const Embedded& own) -> ImFont* {
         ImFontConfig cfg;
         cfg.OversampleH = 2;
-        ImFont* f = latin.empty() ? nullptr : io.Fonts->AddFontFromFileTTF(latin.c_str(), px, &cfg, ranges.Data);
+        ImFont* f = nullptr;
+        if (own.data) {
+            cfg.FontDataOwnedByAtlas = false;  // static data: the atlas only reads it
+            f = io.Fonts->AddFontFromMemoryTTF(const_cast<void*>(own.data), own.size, px, &cfg, ranges.Data);
+        } else if (!latin.empty()) {
+            f = io.Fonts->AddFontFromFileTTF(latin.c_str(), px, &cfg, ranges.Data);
+        }
         if (!f) {
             ImFontConfig d;
             d.SizePixels = px;
             f = io.Fonts->AddFontDefault(&d);
         }
-        if (f && !latin.empty() && !cover.empty()) {
+        // Under an embedded font the system's covers what it lacks (Fredoka has no Cyrillic).
+        std::string under = own.data && !latin.empty() ? latin : cover;
+        if (f && (own.data || !latin.empty()) && !under.empty()) {
             ImFontConfig m;
             m.MergeMode = true;
             m.OversampleH = 2;
-            io.Fonts->AddFontFromFileTTF(cover.c_str(), px, &m, ranges.Data);
+            io.Fonts->AddFontFromFileTTF(under.c_str(), px, &m, ranges.Data);
         }
         auto merge_embedded = [&] {
             ImFontConfig m;
@@ -286,9 +311,20 @@ ThemeFonts theme_build_fonts(float scale, const std::string& user_font) {
         merge_embedded();
         return f;
     };
+    // The icons: their own font, so each is drawn at the size it needs.
+    auto add_icons = [&]() -> ImFont* {
+        if (!g_embedded_icons.data) return nullptr;
+        static const ImWchar pua[] = {0xe000, 0xf8ff, 0};
+        ImFontConfig cfg;
+        cfg.FontDataOwnedByAtlas = false;
+        cfg.OversampleH = 2;
+        return io.Fonts->AddFontFromMemoryTTF(const_cast<void*>(g_embedded_icons.data), g_embedded_icons.size,
+                                              std::round(56.0f * scale), &cfg, pua);
+    };
     ThemeFonts fonts;
-    fonts.body = add(std::round(20.0f * scale));
-    fonts.title = add(std::round(30.0f * scale));
+    fonts.body = add(std::round(20.0f * scale), g_embedded_body);
+    fonts.title = add(std::round(30.0f * scale), g_embedded_title);
+    fonts.icons = add_icons();
     // A font file the atlas cannot use makes the whole build fail and leaves it empty (0x0): on Android the backend then
     // made a zero-sized texture and the driver crashed. Then: the built-in font alone.
     unsigned char* px = nullptr;
@@ -299,8 +335,9 @@ ThemeFonts theme_build_fonts(float scale, const std::string& user_font) {
         io.Fonts->Clear();
         extra.clear();
         embed = true;
-        fonts.body = add(std::round(20.0f * scale));
-        fonts.title = add(std::round(30.0f * scale));
+        fonts.body = add(std::round(20.0f * scale), g_embedded_body);
+        fonts.title = add(std::round(30.0f * scale), g_embedded_title);
+        fonts.icons = add_icons();
     } else if (embed) {
         THEME_LOG("ui: no system CJK font stb can draw: the embedded Noto subset (%d bytes)", kUiCjkTtfSize);
     }
@@ -313,9 +350,11 @@ ThemeFonts theme_build_fonts(float scale, const std::string& user_font) {
         fonts.body = io.Fonts->AddFontDefault(&d);
         ImFontConfig t;
         t.SizePixels = std::round(30.0f * scale);
+        fonts.icons = nullptr;
         fonts.title = io.Fonts->AddFontDefault(&t);
         io.Fonts->Build();
     }
+    g_icon_font = fonts.icons;
     return fonts;
 }
 
@@ -337,46 +376,191 @@ void theme_apply_style(float scale) {
     s.GrabMinSize = 22.0f;
     s.WindowBorderSize = 0;
     s.ChildBorderSize = 0;
-    s.FrameBorderSize = 0;
+    s.FrameBorderSize = 1.5f;  // dropdowns, sliders and fields: paper edged in deep sand, apart from the sand
     s.PopupBorderSize = 0;
     s.ScaleAllSizes(scale);
-    // Cream paper, brown ink, mint and yellow accents: the game's menus and NookPhone.
+    s.FrameRounding *= 2;  // pills (clamped to half the height)
+    s.PopupRounding *= 1.4f;
+    s.WindowRounding *= 30.0f / 28.0f;
+    // ACNHRecomp-Importer's island notice board: sand, a paper board, bark ink, lagoon for focus and sliders, sun
+    // yellow for the chosen.
     auto rgb = [](int r, int g, int b, float a = 1.0f) { return ImVec4(r / 255.0f, g / 255.0f, b / 255.0f, a); };
+    auto u = [](ImU32 c) { return ImGui::ColorConvertU32ToFloat4(c); };
     ImVec4* c = s.Colors;
-    c[ImGuiCol_Text] = rgb(107, 79, 54);
-    c[ImGuiCol_TextDisabled] = rgb(170, 150, 120);
-    c[ImGuiCol_WindowBg] = rgb(255, 249, 232);
-    c[ImGuiCol_ChildBg] = rgb(248, 239, 214);
-    c[ImGuiCol_PopupBg] = rgb(255, 251, 240);
-    c[ImGuiCol_Border] = rgb(230, 214, 178);
-    c[ImGuiCol_FrameBg] = rgb(240, 228, 196);
-    c[ImGuiCol_FrameBgHovered] = rgb(248, 226, 150);
-    c[ImGuiCol_FrameBgActive] = rgb(255, 217, 102);
-    c[ImGuiCol_TitleBg] = rgb(124, 194, 103);
-    c[ImGuiCol_TitleBgActive] = rgb(124, 194, 103);
+    c[ImGuiCol_Text] = u(kThemeInk);
+    c[ImGuiCol_TextDisabled] = rgb(176, 158, 136);
+    c[ImGuiCol_WindowBg] = u(kThemeBoard);
+    c[ImGuiCol_ChildBg] = u(kThemeSand);
+    c[ImGuiCol_PopupBg] = u(kThemeBoard);
+    c[ImGuiCol_Border] = u(kThemeSandDeep);
+    c[ImGuiCol_FrameBg] = u(kThemeBoard);
+    c[ImGuiCol_FrameBgHovered] = rgb(255, 250, 230);
+    c[ImGuiCol_FrameBgActive] = u(kThemeSun);
+    c[ImGuiCol_TitleBg] = u(kThemeLeaf);
+    c[ImGuiCol_TitleBgActive] = u(kThemeLeaf);
     c[ImGuiCol_ScrollbarBg] = rgb(0, 0, 0, 0);
-    c[ImGuiCol_ScrollbarGrab] = rgb(214, 196, 158);
-    c[ImGuiCol_ScrollbarGrabHovered] = rgb(196, 176, 136);
-    c[ImGuiCol_ScrollbarGrabActive] = rgb(170, 150, 110);
-    c[ImGuiCol_CheckMark] = rgb(255, 255, 255);
-    c[ImGuiCol_SliderGrab] = rgb(78, 186, 160);
-    c[ImGuiCol_SliderGrabActive] = rgb(56, 160, 136);
-    c[ImGuiCol_Button] = rgb(118, 200, 170);
-    c[ImGuiCol_ButtonHovered] = rgb(255, 217, 102);
-    c[ImGuiCol_ButtonActive] = rgb(246, 196, 64);
-    c[ImGuiCol_Header] = rgb(255, 232, 160);
-    c[ImGuiCol_HeaderHovered] = rgb(255, 222, 128);
-    c[ImGuiCol_HeaderActive] = rgb(255, 210, 90);
-    c[ImGuiCol_Separator] = rgb(230, 214, 178);
-    c[ImGuiCol_Tab] = rgb(240, 228, 196);
-    c[ImGuiCol_TabHovered] = rgb(255, 222, 128);
-    c[ImGuiCol_TabSelected] = rgb(124, 194, 103);
-    c[ImGuiCol_PlotHistogram] = rgb(124, 194, 103);
-    c[ImGuiCol_NavCursor] = rgb(246, 170, 40);
-    c[ImGuiCol_ModalWindowDimBg] = rgb(60, 40, 20, 0.45f);
+    c[ImGuiCol_ScrollbarGrab] = rgb(226, 212, 174);
+    c[ImGuiCol_ScrollbarGrabHovered] = rgb(208, 192, 150);
+    c[ImGuiCol_ScrollbarGrabActive] = rgb(190, 172, 128);
+    c[ImGuiCol_CheckMark] = u(kThemeLeafDeep);
+    c[ImGuiCol_SliderGrab] = u(kThemeLagoon);
+    c[ImGuiCol_SliderGrabActive] = u(kThemeLagoonDeep);
+    c[ImGuiCol_Button] = u(kThemeBoard);  // also a dropdown's arrow box: the same as its frame
+    c[ImGuiCol_ButtonHovered] = rgb(255, 250, 230);
+    c[ImGuiCol_ButtonActive] = u(kThemeSandDeep);
+    c[ImGuiCol_Header] = rgb(250, 236, 168);
+    c[ImGuiCol_HeaderHovered] = rgb(249, 226, 128);
+    c[ImGuiCol_HeaderActive] = u(kThemeSun);
+    c[ImGuiCol_Separator] = u(kThemeSandDeep);
+    c[ImGuiCol_Tab] = u(kThemeSand);
+    c[ImGuiCol_TabHovered] = rgb(249, 226, 128);
+    c[ImGuiCol_TabSelected] = u(kThemeLeaf);
+    c[ImGuiCol_PlotHistogram] = u(kThemeLeaf);
+    c[ImGuiCol_NavCursor] = u(kThemeLagoonDeep);
+    c[ImGuiCol_ModalWindowDimBg] = rgb(107, 84, 68, 0.4f);
+}
+
+ImU32 theme_shade(ImU32 c, float k) {
+    auto ch = [&](int s) {
+        float v = float((c >> s) & 0xFF);
+        v = k < 1 ? v * k : v + (255 - v) * (k - 1);
+        return int(std::clamp(v, 0.0f, 255.0f));
+    };
+    return IM_COL32(ch(IM_COL32_R_SHIFT), ch(IM_COL32_G_SHIFT), ch(IM_COL32_B_SHIFT), (c >> IM_COL32_A_SHIFT) & 0xFF);
+}
+
+ImU32 theme_mix(ImU32 a, ImU32 b, float t) {
+    t = std::clamp(t, 0.0f, 1.0f);
+    ImVec4 x = ImGui::ColorConvertU32ToFloat4(a), y = ImGui::ColorConvertU32ToFloat4(b);
+    return ImGui::ColorConvertFloat4ToU32(ImVec4(x.x + (y.x - x.x) * t, x.y + (y.y - x.y) * t, x.z + (y.z - x.z) * t,
+                                                 x.w + (y.w - x.w) * t));
+}
+
+ImU32 theme_ink_on(ImU32 c) {
+    float l = (0.299f * float(c & 0xFF) + 0.587f * float((c >> 8) & 0xFF) + 0.114f * float((c >> 16) & 0xFF)) / 255;
+    return l > 0.62f ? kThemeInk : kThemeBoard;
+}
+
+void theme_leaf(ImDrawList* dl, ImVec2 c, float size, float turn) {
+    float cs = std::cos(turn), sn = std::sin(turn), w = size * 0.42f, h = size * 0.5f;
+    auto P = [&](float x, float y) { return ImVec2(c.x + x * cs - y * sn, c.y + x * sn + y * cs); };
+    dl->PathLineTo(P(0, h));
+    dl->PathBezierCubicCurveTo(P(-w * 1.25f, h * 0.35f), P(-w * 0.9f, -h * 0.75f), P(0, -h));
+    dl->PathBezierCubicCurveTo(P(w * 0.9f, -h * 0.75f), P(w * 1.25f, h * 0.35f), P(0, h));
+    dl->PathFillConvex(kThemeLeaf);
+    dl->AddLine(P(0, h * 1.12f), P(0, -h * 0.62f), kThemeLeafDeep, size * 0.055f);
+    for (float t : {0.35f, -0.1f}) {
+        dl->AddLine(P(0, h * t), P(-w * 0.5f, h * (t - 0.32f)), kThemeLeafDeep, size * 0.04f);
+        dl->AddLine(P(0, h * t), P(w * 0.5f, h * (t - 0.32f)), kThemeLeafDeep, size * 0.04f);
+    }
+}
+
+void theme_stitch(ImDrawList* dl, ImVec2 a, ImVec2 b, float rounding, float scale) {
+    dl->PathRect(a, b, rounding);
+    ImVector<ImVec2> pts;
+    pts.swap(dl->_Path);
+    dl->PathClear();
+    if (pts.Size < 2) return;
+    pts.push_back(pts[0]);
+    const float on = 6 * scale, period = 12 * scale, thick = 2 * scale;
+    float d = 0;
+    for (int k = 1; k < pts.Size; k++) {
+        ImVec2 p = pts[k - 1], q = pts[k];
+        float len = std::sqrt((q.x - p.x) * (q.x - p.x) + (q.y - p.y) * (q.y - p.y));
+        for (float s = 0; s < len;) {
+            float phase = std::fmod(d + s, period), step = std::min(len - s, phase < on ? on - phase : period - phase);
+            if (phase < on) {
+                float t0 = s / len, t1 = (s + step) / len;
+                dl->AddLine(ImVec2(p.x + (q.x - p.x) * t0, p.y + (q.y - p.y) * t0),
+                            ImVec2(p.x + (q.x - p.x) * t1, p.y + (q.y - p.y) * t1), kThemeSandDeep, thick);
+            }
+            s += std::max(step, 0.01f);
+        }
+        d += len;
+    }
+}
+
+void theme_dashes(ImDrawList* dl, ImVec2 p, float w, float scale) {
+    const float h = 1.25f * scale;
+    for (float x = p.x; x + 7 * scale <= p.x + w; x += 14 * scale)
+        dl->AddRectFilled(ImVec2(x, p.y), ImVec2(x + 7 * scale, p.y + 2 * h), kThemeSandDeep, h);
+}
+
+void theme_lip(ImDrawList* dl, ImVec2 p, ImVec2 size, float lip, float rounding, ImU32 face, ImU32 lip_col, ImU32 border,
+               float border_w, bool down, float lift) {
+    if (down) lift = 0;
+    if (!down)
+        dl->AddRectFilled(ImVec2(p.x, p.y + lip - lift), ImVec2(p.x + size.x, p.y + size.y + lip), lip_col, rounding);
+    ImVec2 a(p.x, p.y + (down ? lip : -lift)), b(a.x + size.x, a.y + size.y);
+    dl->AddRectFilled(a, b, face, rounding);
+    if (border_w > 0) dl->AddRect(a, b, border, rounding, 0, border_w);
+}
+
+float theme_hover(bool clickable) {
+    bool hov = clickable && ImGui::IsItemHovered();
+    if (hov) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    float* v = ImGui::GetStateStorage()->GetFloatRef(ImGui::GetItemID() ^ 0x5eedu, 0.0f);
+    float target = hov ? 1.0f : 0.0f;
+    *v += (target - *v) * std::min(1.0f, ImGui::GetIO().DeltaTime * 18.0f);
+    if (std::fabs(target - *v) < 0.01f) *v = target;
+    return *v;
+}
+
+bool theme_nav_focused() { return ImGui::IsItemFocused() && ImGui::GetCurrentContext()->NavCursorVisible; }
+
+bool theme_button(const char* label, ImVec2 size, ImU32 face) {
+    const float h = ImGui::GetFrameHeight(), lip = h * 0.1f;
+    const char* end = ImGui::FindRenderedTextEnd(label);
+    const ImVec2 ts = ImGui::CalcTextSize(label, end);
+    float w = size.x > 0 ? size.x : size.x < 0 ? ImGui::GetContentRegionAvail().x : ts.x + ImGui::GetStyle().FramePadding.x * 2;
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    ImGui::PushStyleColor(ImGuiCol_NavCursor, ImVec4(0, 0, 0, 0));
+    const bool pressed = ImGui::InvisibleButton(label, ImVec2(w, h + lip), ImGuiButtonFlags_EnableNav);
+    ImGui::PopStyleColor();
+    const bool enabled = !(ImGui::GetCurrentContext()->LastItemData.ItemFlags & ImGuiItemFlags_Disabled);
+    const bool quiet = face == kThemeBoard;
+    ImU32 lip_col = face == kThemeSun ? kThemeSunDeep : quiet ? kThemeSandDeep : theme_shade(face, 0.8f);
+    ImU32 ink = theme_ink_on(face), border = lip_col;
+    const float t = enabled ? theme_hover() : 0.0f;
+    const bool down = enabled && ImGui::IsItemActive(), focus = enabled && theme_nav_focused();
+    if (!enabled) face = kThemeSandDeep, lip_col = IM_COL32(224, 211, 172, 255), border = lip_col, ink = kThemeInkSoft;
+    else face = theme_mix(face, quiet ? kThemeBoard : theme_shade(face, 1.15f), t), border = quiet ? theme_mix(lip_col, kThemeLagoon, t) : lip_col;
+    const float lift = down ? 0 : t * lip * 0.6f;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const float bw = ImGui::GetStyle().FrameBorderSize;
+    theme_lip(dl, p, ImVec2(w, h), lip, h * 0.5f, face, lip_col, focus ? kThemeLagoonDeep : border, focus ? bw * 2 : bw,
+              down, lift);
+    dl->AddText(ImVec2(p.x + (w - ts.x) * 0.5f, p.y + (down ? lip : -lift) + (h - ts.y) * 0.5f), ink, label, end);
+    return pressed && enabled;
 }
 
 void theme_icon(ImDrawList* dl, int icon, ImVec2 c, float r, ImU32 col) {
+    // Lucide's glyph, about the line icons' 1.4 r wide.
+    if (g_icon_font && icon != kIconPlay) {
+        const char* g = nullptr;
+        switch (icon) {
+            case kIconLeaf: g = ICON_LC_LEAF; break;
+            case kIconScreen: g = ICON_LC_MONITOR; break;
+            case kIconNote: g = ICON_LC_MUSIC; break;
+            case kIconController: g = ICON_LC_GAMEPAD_2; break;
+            case kIconHouse: g = ICON_LC_HOUSE; break;
+            case kIconFolder: g = ICON_LC_FOLDER_OPEN; break;
+            case kIconKey: g = ICON_LC_KEY; break;
+            case kIconBox: g = ICON_LC_PACKAGE; break;
+            case kIconPlus: g = ICON_LC_PLUS; break;
+            case kIconCheck: g = ICON_LC_CHECK; break;
+            case kIconCross: g = ICON_LC_X; break;
+            case kIconGear: g = ICON_LC_SETTINGS; break;
+            case kIconGlobe: g = ICON_LC_GLOBE; break;
+            case kIconWarning: g = ICON_LC_TRIANGLE_ALERT; break;
+            case kIconText: g = ICON_LC_FILE_TEXT; break;
+            default: g = ICON_LC_INFO; break;
+        }
+        const float fs = r * 1.7f;
+        const ImVec2 ts = g_icon_font->CalcTextSizeA(fs, FLT_MAX, 0, g);
+        dl->AddText(g_icon_font, fs, ImVec2(std::round(c.x - ts.x * 0.5f), std::round(c.y - ts.y * 0.5f)), col, g);
+        return;
+    }
     float t = std::max(1.5f, r * 0.14f);
     auto P = [&](float x, float y) { return ImVec2(c.x + r * x, c.y + r * y); };
     switch (icon) {

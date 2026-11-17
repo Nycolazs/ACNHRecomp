@@ -727,7 +727,7 @@ Join our [Discord Community](https://discord.gg/VJW9Dtdu7a) with your hardware d
 | `tools/acnh_version.py`, `games/acnh/versions.txt` | The game version a folder holds, by main's build id, and its hooks |
 | `tools/check_no_game_data.sh` | Pre-commit hook that blocks game data |
 | `tests/` | Recompiler differential test (Unicorn) and runtime unit tests |
-| `docs/` | `STATUS.md` (progress), `ACNH.md` (the game), `REFERENCES.md` (reference projects), `upstream/` (framework docs) |
+| `docs/` | `STATUS.md` (progress), `ACNH.md` (the game), `REFERENCES.md` (reference projects), `UI_DESIGN.md` (the design every menu follows), `upstream/` (framework docs) |
 | `private/` | Your dump, generated code and build (git-ignored, never committed) |
 
 ## How it works
@@ -813,6 +813,10 @@ More detail: [docs/ACNH.md](docs/ACNH.md) (the game's modules, RomFS and shader 
   (`prepare/recomp/acnh/SPEEDFIX.md`).
 - [SDL3](https://github.com/libsdl-org/SDL), [Capstone](https://www.capstone-engine.org/),
   [Unicorn](https://www.unicorn-engine.org/), libvpx, libvorbis, AMD FidelityFX FSR 1.
+- The menus' look (the launcher and the settings screen, [docs/UI_DESIGN.md](docs/UI_DESIGN.md)):
+  [Fredoka](https://github.com/hafontia/Fredoka-One) and [Nunito](https://github.com/googlefonts/nunito) (SIL OFL 1.1)
+  for their text, [Lucide](https://lucide.dev) (ISC) for their icons, through
+  [IconFontCppHeaders](https://github.com/juliettef/IconFontCppHeaders) by Juliette Foucaut and Doug Binks (zlib).
 - Projects studied before starting (summary in [docs/REFERENCES.md](docs/REFERENCES.md)):
   [LASRecomp](https://github.com/peiikai/LASRecomp) (clock, saves, shared fonts, keyboard),
   [SwitchRecomp](https://github.com/bgyss/SwitchRecomp) (HIPC/CMIF/TIPC specifications, validation) and
@@ -825,7 +829,10 @@ More detail: [docs/ACNH.md](docs/ACNH.md) (the game's modules, RomFS and shader 
 ACNHRecomp is released under the [MIT License](LICENSE). Code inherited from SuperMarioWonderRecomp keeps its
 original copyright notice. Third-party code and data in the repository keep their own licenses: Capstone
 (`third_party/capstone/`) is BSD-3-Clause (`LICENSE.TXT`; its LLVM-derived tables: `LICENSE_LLVM.TXT`), and tmouh's
-SpeedFix (`prepare/recomp/acnh/speedfix-*.pchtxt`) is CC BY-NC 4.0 (`prepare/recomp/acnh/SPEEDFIX.md`).
+SpeedFix (`prepare/recomp/acnh/speedfix-*.pchtxt`) is CC BY-NC 4.0 (`prepare/recomp/acnh/SPEEDFIX.md`). The
+menus' fonts in `assets/fonts/` keep theirs: Fredoka and Nunito are SIL OFL 1.1 (`OFL-Fredoka.txt`,
+`OFL-Nunito.txt`), Lucide's icons ISC (`LICENSE-Lucide.txt`); `runtime/src/ui/IconsLucide.h` is zlib
+(`runtime/src/ui/IconsLucide-LICENSE.txt`).
 
 This license covers the project's own source code only. It grants no rights to *Animal Crossing: New Horizons*,
 which is the property of Nintendo.
