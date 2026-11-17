@@ -31,6 +31,9 @@
 #include "ui/i18n.h"
 #include "ui/theme.h"
 
+#include "Fredoka-600.inc"  // launcher.cmake: assets/fonts compiled in
+#include "Nunito-700.inc"
+
 using namespace launcher;
 
 int main(int argc, char** argv) {
@@ -84,6 +87,7 @@ int main(int argc, char** argv) {
     ImGui_ImplSDL3_InitForSDLRenderer(window, renderer);
     ImGui_ImplSDLRenderer3_Init(renderer);
     pages_init(window);
+    nx::ui::theme_set_embedded_fonts(kNunito_700, int(sizeof kNunito_700), kFredoka_600, int(sizeof kFredoka_600));
 
     float font_scale = 0;
     std::string font_lang;
@@ -116,6 +120,7 @@ int main(int argc, char** argv) {
             fonts = nx::ui::theme_build_fonts(scale * density, "");
             io.FontGlobalScale = 1.0f / density;
             nx::ui::theme_apply_style(scale);
+            pages_style(scale);
             font_scale = scale * density, font_lang = nx::ui::ui_language();
         }
         ImGui_ImplSDLRenderer3_NewFrame();
@@ -126,7 +131,7 @@ int main(int argc, char** argv) {
         ImGui::PopFont();
         ImGui::Render();
         SDL_SetRenderScale(renderer, io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y);
-        SDL_SetRenderDrawColor(renderer, 255, 249, 232, 255);
+        SDL_SetRenderDrawColor(renderer, 251, 244, 220, 255);
         SDL_RenderClear(renderer);
         ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), renderer);
         if (shot && std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() > shot_after) {

@@ -53,13 +53,35 @@ using nx::ui::tr;
 using nx::ui::trf;
 
 ImU32 rgb(int r, int g, int b, int a = 255) { return IM_COL32(r, g, b, a); }
-const ImU32 kInk = rgb(107, 79, 54), kInkSoft = rgb(150, 128, 100), kPaper = rgb(248, 239, 214);
-const ImU32 kGreen = rgb(124, 194, 103), kMint = rgb(118, 200, 170), kYellow = rgb(255, 217, 102);
-const ImU32 kOrange = rgb(245, 166, 35), kRed = rgb(232, 115, 122), kBlue = rgb(79, 179, 217);
+// ACNHRecomp-Importer's island notice board: warm sand, a paper board, bark-brown ink (never black), leaf green for
+// what is done, lagoon teal for water and focus, sun yellow for the one action that matters, bell orange and coral for
+// warnings and errors.
+const ImU32 kInk = rgb(107, 84, 68), kInkSoft = rgb(154, 133, 113);                    // bark, bark soft
+const ImU32 kSand = rgb(251, 244, 220), kSandDeep = rgb(241, 230, 194), kBoard = rgb(255, 252, 240);
+const ImU32 kPaper = kSand;  // cards and panels on the board
+const ImU32 kGreen = rgb(120, 195, 106), kLeafDeep = rgb(78, 154, 69), kLeafPale = rgb(227, 243, 220);
+const ImU32 kMint = rgb(78, 195, 179), kLagoonDeep = rgb(46, 156, 144);               // lagoon
+const ImU32 kYellow = rgb(246, 211, 74), kSunDeep = rgb(217, 174, 34);                // sun
+const ImU32 kOrange = rgb(240, 164, 58), kRed = rgb(236, 122, 107), kBlue = rgb(92, 172, 222);
 // The project's Discord: help, news
 const char* const kDiscordUrl = "https://discord.gg/VJW9Dtdu7a";
-const ImU32 kPurple = rgb(155, 125, 212), kBrown = rgb(176, 140, 100), kGrey = rgb(214, 200, 168);
+const ImU32 kPurple = rgb(166, 138, 214), kBrown = rgb(176, 140, 100), kGrey = rgb(218, 204, 168);
 const ImU32 kWhite = rgb(255, 255, 255);
+
+// `c` darkened (the lip under a button) or lightened (hovered), alpha kept.
+ImU32 shade(ImU32 c, float k) {
+    auto ch = [&](int s) {
+        float v = float((c >> s) & 0xFF);
+        v = k < 1 ? v * k : v + (255 - v) * (k - 1);
+        return int(std::clamp(v, 0.0f, 255.0f));
+    };
+    return IM_COL32(ch(IM_COL32_R_SHIFT), ch(IM_COL32_G_SHIFT), ch(IM_COL32_B_SHIFT), (c >> IM_COL32_A_SHIFT) & 0xFF);
+}
+// Bark on light faces, paper on dark ones.
+ImU32 ink_on(ImU32 c) {
+    float l = (0.299f * float(c & 0xFF) + 0.587f * float((c >> 8) & 0xFF) + 0.114f * float((c >> 16) & 0xFF)) / 255;
+    return l > 0.62f ? kInk : kBoard;
+}
 
 ImVec4 col4(ImU32 c) { return ImGui::ColorConvertU32ToFloat4(c); }
 
@@ -128,14 +150,18 @@ void nav_move(int dx, int dy, int only_section = -1) {
         }
         return;
     }
-    // On the home screen Play leads to the first action; every action leads back to Play.
-    if (g_page == Page::Home && dy && (current->primary || current->home_action)) {
+    // On the home screen Play leads to the first action; the actions are a list, and the top one (or left, from the
+    // list beside the island panel) leads back to Play.
+    if (g_page == Page::Home && (current->primary || current->home_action)) {
         if (current->primary && dy > 0) {
             auto first = std::find_if(g_nav_items.begin(), g_nav_items.end(), [](const NavItem& item) { return item.home_action; });
             if (first != g_nav_items.end()) nav_focus(*first);
             return;
         }
-        if (current->home_action && dy < 0) {
+        const bool top = std::none_of(g_nav_items.begin(), g_nav_items.end(), [&](const NavItem& item) {
+            return item.home_action && item.rect.Max.y <= current->rect.Min.y;
+        });
+        if (current->home_action && ((dy < 0 && top) || dx < 0)) {
             auto play = std::find_if(g_nav_items.begin(), g_nav_items.end(), [](const NavItem& item) { return item.primary; });
             if (play != g_nav_items.end()) nav_focus(*play);
             return;
@@ -577,17 +603,148 @@ std::string fit_wrapped_lines(const char* text, float wrap_w, int max_lines) {
     return src.substr(0, cut) + "...";
 }
 
-// The background: mint to leaf green with a soft dot pattern, as the game's menus.
+// The sand: a sparse, fixed scatter of small dots, like the paths on the island.
 void draw_background(ImVec2 ds) {
     ImDrawList* dl = ImGui::GetBackgroundDrawList();
-    dl->AddRectFilledMultiColor(ImVec2(0, 0), ds, rgb(160, 222, 200), rgb(160, 222, 200), rgb(196, 230, 160),
-                                rgb(196, 230, 160));
-    float step = S(46), r = S(5);
-    int row = 0;
-    for (float y = step * 0.5f; y < ds.y + step; y += step * 0.866f, row++)
-        for (float x = (row & 1) ? step * 0.5f : 0; x < ds.x + step; x += step)
-            dl->AddCircleFilled(ImVec2(x, y), r, rgb(255, 255, 255, 46));
+    dl->AddRectFilled(ImVec2(0, 0), ds, kSand);
+    uint32_t seed = 7;
+    auto rnd = [&] { return float((seed = seed * 1664525u + 1013904223u) >> 8) / float(1u << 24); };
+    const float cell = S(46);
+    for (float y = 0; y < ds.y + cell; y += cell)
+        for (float x = 0; x < ds.x + cell; x += cell) {
+            float dx = rnd() * cell, dy = rnd() * cell;
+            dl->AddCircleFilled(ImVec2(x + dx, y + dy), S(1.6f + rnd() * 1.8f), kSandDeep, 10);
+        }
 }
+
+// The two-lobed leaf, the Importer's emblem, centred at c and `size` tall, turned by `turn` radians.
+void draw_leaf(ImDrawList* dl, ImVec2 c, float size, float turn, ImU32 color = kGreen, ImU32 vein = kLeafDeep) {
+    float cs = std::cos(turn), sn = std::sin(turn), w = size * 0.42f, h = size * 0.5f;
+    auto P = [&](float x, float y) { return ImVec2(c.x + x * cs - y * sn, c.y + x * sn + y * cs); };
+    dl->PathLineTo(P(0, h));
+    dl->PathBezierCubicCurveTo(P(-w * 1.25f, h * 0.35f), P(-w * 0.9f, -h * 0.75f), P(0, -h));
+    dl->PathBezierCubicCurveTo(P(w * 0.9f, -h * 0.75f), P(w * 1.25f, h * 0.35f), P(0, h));
+    dl->PathFillConvex(color);
+    dl->AddLine(P(0, h * 1.12f), P(0, -h * 0.62f), vein, size * 0.055f);
+    for (float t : {0.35f, -0.1f}) {
+        dl->AddLine(P(0, h * t), P(-w * 0.5f, h * (t - 0.32f)), vein, size * 0.04f);
+        dl->AddLine(P(0, h * t), P(w * 0.5f, h * (t - 0.32f)), vein, size * 0.04f);
+    }
+}
+
+// The board's stitched edge: a dashed rounded rectangle.
+void draw_stitch(ImDrawList* dl, ImVec2 a, ImVec2 b, float rounding, ImU32 color, float thick) {
+    dl->PathRect(a, b, rounding);
+    ImVector<ImVec2> pts;
+    pts.swap(dl->_Path);
+    dl->PathClear();
+    if (pts.Size < 2) return;
+    pts.push_back(pts[0]);
+    const float on = S(6), period = S(12);
+    float d = 0;
+    for (int k = 1; k < pts.Size; k++) {
+        ImVec2 p = pts[k - 1], q = pts[k];
+        float len = std::sqrt((q.x - p.x) * (q.x - p.x) + (q.y - p.y) * (q.y - p.y));
+        for (float s = 0; s < len;) {
+            float phase = std::fmod(d + s, period), step = std::min(len - s, phase < on ? on - phase : period - phase);
+            if (phase < on) {
+                float t0 = s / len, t1 = (s + step) / len;
+                dl->AddLine(ImVec2(p.x + (q.x - p.x) * t0, p.y + (q.y - p.y) * t0),
+                            ImVec2(p.x + (q.x - p.x) * t1, p.y + (q.y - p.y) * t1), color, thick);
+            }
+            s += std::max(step, 0.01f);
+        }
+        d += len;
+    }
+}
+
+// A row of short dashes `w` wide (0: the content width): the Importer's divider between steps.
+void dashes(float w = 0) {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    if (w <= 0) w = ImGui::GetContentRegionAvail().x;
+    float y = p.y + S(1.25f);
+    for (float x = p.x; x + S(7) <= p.x + w; x += S(14))
+        dl->AddRectFilled(ImVec2(x, y - S(1.25f)), ImVec2(x + S(7), y + S(1.25f)), kSandDeep, S(1.25f));
+    ImGui::Dummy(ImVec2(w, S(2.5f)));
+}
+
+// A face with a lip under it (the Importer's buttons); pressed, it sinks onto the lip.
+// `lift` (hovered) raises the face off its lip, which stays where it is.
+void lip_shape(ImDrawList* dl, ImVec2 p, ImVec2 size, float lip, float rounding, ImU32 face, ImU32 lip_col,
+               ImU32 border, float border_w, bool down, float lift = 0) {
+    if (down) lift = 0;
+    if (!down)
+        dl->AddRectFilled(ImVec2(p.x, p.y + lip - lift), ImVec2(p.x + size.x, p.y + size.y + lip), lip_col, rounding);
+    ImVec2 a(p.x, p.y + (down ? lip : -lift)), b(a.x + size.x, a.y + size.y);
+    dl->AddRectFilled(a, b, face, rounding);
+    if (border_w > 0) dl->AddRect(a, b, border, rounding, 0, border_w);
+}
+
+ImU32 mix(ImU32 a, ImU32 b, float t) {
+    return ImGui::ColorConvertFloat4ToU32(ImLerp(col4(a), col4(b), std::clamp(t, 0.0f, 1.0f)));
+}
+
+// The last item's hover, eased in and out (about 0.1 s) and kept per item in the window's storage; a hovered
+// clickable item shows the pointing hand. Frames are drawn at full rate while one is on its way (pages_busy).
+bool g_animating = false;
+float hover_anim(bool clickable = true) {
+    bool hov = clickable && ImGui::IsItemHovered();
+    if (hov) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    float* v = ImGui::GetStateStorage()->GetFloatRef(ImGui::GetItemID() ^ 0x5eedu, 0.0f);
+    float target = hov ? 1.0f : 0.0f;
+    *v += (target - *v) * std::min(1.0f, ImGui::GetIO().DeltaTime * 18.0f);
+    if (std::fabs(target - *v) < 0.01f) *v = target;
+    else g_animating = true;
+    return *v;
+}
+
+// A dropdown or text field: the pointing hand and a lagoon edge fading in on hover (`edge`).
+void frame_hover(bool edge) {
+    if (ImGui::GetCurrentContext()->LastItemData.ItemFlags & ImGuiItemFlags_Disabled) return;
+    float t = hover_anim();
+    if (edge && t > 0)
+        ImGui::GetWindowDrawList()->AddRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(),
+                                            mix(kSandDeep, kMint, t), ImGui::GetStyle().FrameRounding, 0, S(2));
+}
+
+bool nav_focused();
+
+// An on/off choice as the Importer's platform chips: a pill, pale leaf with a leaf edge and a filled check when on,
+// paper with a sand edge and an empty ring when off, the change fading over 0.16 s. True when clicked (`*v` flipped).
+float toggle_width(const char* label) {
+    return S(10) + 2 * S(8.5f) + S(6) + measure(g_body, font_size(g_body) * 0.87f, label, -1).x + S(14);
+}
+
+bool toggle(const char* label, bool* v) {
+    float fs = font_size(g_body) * 0.87f, ir = S(8.5f);
+    ImVec2 ts = measure(g_body, fs, label, -1);
+    ImVec2 size(toggle_width(label), std::max(ts.y, 2 * ir) + S(14));
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    bool clicked = nav_card(label, size);
+    if (clicked) *v = !*v;
+    hover_anim();
+    float* on = ImGui::GetStateStorage()->GetFloatRef(ImGui::GetItemID() ^ 0x70661eu, *v ? 1.0f : 0.0f);
+    float target = *v ? 1.0f : 0.0f;
+    *on += (target - *on) * std::min(1.0f, ImGui::GetIO().DeltaTime / 0.16f * 3);
+    if (std::fabs(target - *on) < 0.01f) *on = target;
+    else g_animating = true;
+    float t = *on;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImVec2 q(p.x + size.x, p.y + size.y);
+    bool focus = nav_focused();
+    dl->AddRectFilled(p, q, mix(kBoard, kLeafPale, t), size.y * 0.5f);
+    dl->AddRect(p, q, focus ? kLagoonDeep : mix(kSandDeep, kGreen, t), size.y * 0.5f, 0, focus ? S(3) : S(1.5f));
+    ImVec2 c(p.x + S(10) + ir, p.y + size.y * 0.5f);
+    if (t > 0) dl->AddCircleFilled(c, ir * t, kLeafDeep);
+    if (t < 1) dl->AddCircle(c, ir - S(1), mix(kInkSoft, kLeafDeep, t), 0, S(1.8f));
+    if (t > 0.5f) theme_icon(dl, nx::ui::kIconCheck, c, ir * 0.75f, kWhite);
+    dl->AddText(g_body, fs, ImVec2(c.x + ir + S(6), p.y + (size.y - ts.y) * 0.5f), kInk, label);
+    return clicked;
+}
+
+// Keyboard or controller focus (not a mouse click's): the Importer's lagoon outline.
+bool nav_focused() { return ImGui::IsItemFocused() && ImGui::GetCurrentContext()->NavCursorVisible; }
 
 ImU32 status_color(Status s) {
     switch (s) {
@@ -608,24 +765,36 @@ void status_mark(ImDrawList* dl, ImVec2 c, float r, Status s) {
 
 float button_width(const char* label) { return std::max(S(120), ImGui::CalcTextSize(label).x + S(40)); }
 
+// A pill with a lip: kGreen is the one action that matters (sun yellow), kWhite and kMint the quiet paper ones, any
+// other colour its own face.
 bool button(const char* label, ImU32 color = kMint, bool enabled = true, float w = 0) {
+    const float lip = S(3.5f);
+    ImVec2 size(w > 0 ? w : button_width(label), ImGui::GetFrameHeight());
+    ImVec2 p = ImGui::GetCursorScreenPos();
     ImGui::BeginDisabled(!enabled);
-    const bool light = color == kMint || color == kWhite;
-    ImGuiWindow* window = ImGui::GetCurrentWindow();
-    const ImGuiID id = window->GetID(label);
-    ImGuiContext& g = *ImGui::GetCurrentContext();
-    const bool hot = enabled && (g.HoveredIdPreviousFrame == id || g.ActiveId == id ||
-                                 (g.NavId == id && g.NavIdIsAlive && g.NavHighlightItemUnderNav));
-    ImGui::PushStyleColor(ImGuiCol_Button, col4(color));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, col4(enabled ? kYellow : color));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, col4(enabled ? rgb(246, 196, 64) : color));
-    ImGui::PushStyleColor(ImGuiCol_Text, col4(hot || light ? kInk : kWhite));
-    bool r = ImGui::Button(label, ImVec2(w > 0 ? w : button_width(label), 0));
-    if (enabled && ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    ImGui::PushStyleColor(ImGuiCol_NavCursor, ImVec4(0, 0, 0, 0));
+    bool r = ImGui::InvisibleButton(label, ImVec2(size.x, size.y + lip), ImGuiButtonFlags_EnableNav);
+    ImGui::PopStyleColor();
     nav_item();
-    ImGui::PopStyleColor(4);
     ImGui::EndDisabled();
-    return r;
+    const bool quiet = color == kWhite || color == kMint;
+    ImU32 face = color == kGreen ? kYellow : quiet ? kBoard : color;
+    ImU32 lip_col = color == kGreen ? kSunDeep : quiet ? kSandDeep : shade(face, 0.8f);
+    ImU32 ink = ink_on(face);
+    const float t = enabled ? hover_anim() : 0.0f;
+    ImU32 border = lip_col;
+    if (!enabled) face = kSandDeep, lip_col = rgb(224, 211, 172), border = lip_col, ink = kInkSoft;
+    else face = mix(face, quiet ? kBoard : shade(face, 1.15f), t), border = quiet ? mix(lip_col, kMint, t) : lip_col;
+    const bool focus = enabled && nav_focused(), down = enabled && ImGui::IsItemActive();
+    const float lift = down ? 0 : t * S(2);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    lip_shape(dl, p, size, lip, size.y * 0.5f, face, lip_col, focus ? kLagoonDeep : border, focus ? S(3) : S(1.5f), down,
+              lift);
+    const char* end = ImGui::FindRenderedTextEnd(label);
+    ImVec2 ts = ImGui::CalcTextSize(label, end);
+    float y = p.y + (down ? lip : -lift) + (size.y - ts.y) * 0.5f;
+    dl->AddText(ImVec2(p.x + (size.x - ts.x) * 0.5f, y), ink, label, end);
+    return r && enabled;
 }
 
 // Puts the next `count` buttons at the right of the current line.
@@ -691,11 +860,18 @@ void language_combo(float width) {
     std::string cur = settings().get("launcher.language", "auto");
     std::string shown = language_shown();
     ImGui::SetNextItemWidth(width);
-    ImGui::PushStyleColor(ImGuiCol_FrameBg, col4(rgb(255, 255, 255, 235)));
-    ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, col4(kYellow));
-    ImGui::PushStyleColor(ImGuiCol_Button, col4(rgb(255, 255, 255, 235)));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, col4(kYellow));
-    if (ImGui::BeginCombo("##lang", shown.c_str(), ImGuiComboFlags_HeightLarge)) {
+    // A paper pill with a sand edge, room at its left for the globe (ribbon)
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, col4(kBoard));
+    ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, col4(kSand));
+    ImGui::PushStyleColor(ImGuiCol_Button, col4(kBoard));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, col4(kSand));
+    ImGui::PushStyleColor(ImGuiCol_Border, col4(kSandDeep));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, S(1.5f));
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(S(40), ImGui::GetStyle().FramePadding.y));
+    const bool open = ImGui::BeginCombo("##lang", shown.c_str(), ImGuiComboFlags_HeightLarge);
+    ImGui::PopStyleVar(2);
+    ImGui::PopStyleColor();
+    if (open) {
         auto choose = [&](const char* code, const char* name) {
             bool sel = cur == code;
             if (ImGui::Selectable(name, sel)) {
@@ -712,36 +888,110 @@ void language_combo(float width) {
         ImGui::EndCombo();
     }
     nav_item();
+    frame_hover(true);
     ImGui::PopStyleColor(4);
 }
 
+// A newer release (desktop.cpp): what to say and the button's label, from where its install stands (in place when it
+// can be, update_can_install, else the release page; then the restart into it). False when there is none.
+bool update_text(std::string& msg, const char*& get, bool& busy) {
+    const UpdateInfo u = update_info();
+    if (!u.available) return false;
+    const UpdateProgress pr = update_progress();
+    busy = pr.stage != UpdateStage::Idle && pr.stage != UpdateStage::Done && pr.stage != UpdateStage::Failed;
+    const bool in_place = update_can_install() || pr.stage != UpdateStage::Idle;
+    msg = trf("launcher.update.available", u.version);
+    get = tr(in_place ? "launcher.update.install" : "launcher.update.get");
+    switch (pr.stage) {
+        case UpdateStage::Downloading: msg = tr("launcher.update.downloading"); break;
+        case UpdateStage::Checking: msg = tr("launcher.update.checking"); break;
+        case UpdateStage::Unpacking:
+        case UpdateStage::Installing: msg = tr("launcher.update.installing"); break;
+        case UpdateStage::Done: msg = trf("launcher.update.installed", u.version), get = tr("launcher.update.restart"); break;
+        case UpdateStage::Failed: msg = trf("launcher.update.failed", pr.error), get = tr("launcher.update.get"); break;
+        default: break;
+    }
+    return true;
+}
+
+// The update's button: install, restart into it, or the release page.
+bool update_button(const char* get, bool busy) {
+    if (!button(get, kGreen, !busy)) return false;
+    const UpdateInfo u = update_info();
+    const UpdateProgress pr = update_progress();
+    const bool in_place = update_can_install() || pr.stage != UpdateStage::Idle;
+    if (pr.stage == UpdateStage::Done) update_restart();
+    else if (pr.stage != UpdateStage::Failed && in_place) update_install_start();
+    else SDL_OpenURL(u.url.c_str());
+    return true;
+}
+
+bool g_update_in_header = false;  // ribbon() shows the new release, so the home page does not
+
+// The Importer's header: the leaf, the name in bark ink and the tagline under it; the language as a pill at the right.
 void ribbon() {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2 p = ImGui::GetCursorScreenPos();
     float h = S(64), w = ImGui::GetContentRegionAvail().x;
-    dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), kGreen, h * 0.5f);
-    dl->AddCircleFilled(ImVec2(p.x + h * 0.5f, p.y + h * 0.5f), h * 0.36f, rgb(255, 255, 255, 60));
-    theme_icon(dl, nx::ui::kIconLeaf, ImVec2(p.x + h * 0.5f, p.y + h * 0.5f), h * 0.3f, kWhite);
-    // Measured in the combo's own font, with room for the frame padding and the arrow.
+    draw_leaf(dl, ImVec2(p.x + S(24), p.y + h * 0.5f), S(46), -0.5f);
+    // Measured in the combo's own font, with room for the frame padding, the arrow and the globe.
     float combo_w = measure(g_body, font_size(g_body), language_shown().c_str(), -1).x + ImGui::GetFrameHeight() +
-                    ImGui::GetStyle().FramePadding.x * 2 + S(24);
+                    ImGui::GetStyle().FramePadding.x * 2 + S(48);
     combo_w = std::clamp(combo_w, S(150), g_portrait ? w * 0.5f : S(420));
-    float tsz = font_size(g_title);
+    float tsz = font_size(g_title) * 1.05f;
     ImVec2 ts = measure(g_title, tsz, "ACNHRecomp", -1);
-    float x = p.x + h * 1.0f;
-    dl->AddText(g_title, tsz, ImVec2(x, p.y + (h - ts.y) * 0.5f), kWhite, "ACNHRecomp");
+    float x = p.x + S(58);
     const char* sub = tr("launcher.subtitle");
     float ssz = font_size(g_body) * 0.82f;
     ImVec2 ss = measure(g_body, ssz, sub, -1);
-    float room = w - (x - p.x) - ts.x - combo_w - h * 0.9f;
-    if (ss.x < room)
-        dl->AddText(g_body, ssz, ImVec2(x + ts.x + S(16), p.y + (h - ss.y) * 0.5f + S(2)), rgb(255, 255, 255, 215), sub);
+    bool show_sub = ss.x < w - (x - p.x) - combo_w - S(16);
+    // A newer release (desktop.cpp): a sand pill between the name and the language, its text and Download. The
+    // tagline gives way to it, then the text (the version alone); where even that does not fit, the home page says it.
+    g_update_in_header = false;
+    std::string full, shortv;
+    const char* get = "";
+    bool busy = false;
+    float nfs = font_size(g_body) * 0.82f, bw = 0, gap = S(16), right = p.x + w - combo_w - gap;
+    std::string* note = nullptr;
+    if (update_text(full, get, busy)) {
+        const UpdateInfo u = update_info();
+        shortv = update_progress().stage == UpdateStage::Idle ? u.version : full;
+        bw = button_width(get);
+        auto need = [&](const std::string& t) { return S(14) + S(20) + S(8) + measure(g_body, nfs, t.c_str(), -1).x + S(12) + bw + S(8); };
+        for (int pass = 0; pass < 4 && !note; pass++) {
+            bool sub_on = show_sub && pass % 2 == 0;
+            std::string& t = pass < 2 ? full : shortv;
+            float left = x + std::max(ts.x, sub_on ? ss.x : 0.0f) + gap;
+            if (right - left >= need(t)) note = &t, show_sub = sub_on;
+        }
+    }
+    float ty = show_sub ? p.y + (h - ts.y - ss.y) * 0.5f : p.y + (h - ts.y) * 0.5f;
+    dl->AddText(g_title, tsz, ImVec2(x, ty), kInk, "ACNHRecomp");
+    if (show_sub) dl->AddText(g_body, ssz, ImVec2(x + S(1), ty + ts.y - S(2)), kInkSoft, sub);
+    if (note) {
+        g_update_in_header = true;
+        float fh = ImGui::GetFrameHeight(), ph = fh + S(14);
+        ImVec2 ns = measure(g_body, nfs, note->c_str(), -1);
+        float pw = S(14) + S(20) + S(8) + ns.x + S(12) + bw + S(8);
+        ImVec2 a(right - pw, p.y + (h - ph) * 0.5f), b(right, a.y + ph);
+        dl->AddRectFilled(a, b, kSand, ph * 0.5f);
+        dl->AddRect(a, b, kSandDeep, ph * 0.5f, 0, S(1.5f));
+        ImVec2 c(a.x + S(14) + S(10), a.y + ph * 0.5f);
+        dl->AddCircleFilled(c, S(10), kOrange);
+        theme_icon(dl, nx::ui::kIconPlus, c, S(6), kWhite);
+        dl->AddText(g_body, nfs, ImVec2(c.x + S(18), a.y + (ph - ns.y) * 0.5f), kInk, note->c_str());
+        if (note == &shortv && ImGui::IsMouseHoveringRect(a, b)) ImGui::SetTooltip("%s", full.c_str());
+        ImGui::SetCursorScreenPos(ImVec2(b.x - S(8) - bw, a.y + (ph - fh) * 0.5f - S(1.5f)));
+        update_button(get, busy);
+    }
     // The language, always reachable.
-    float gx = p.x + w - combo_w - h * 0.35f - S(30);
-    theme_icon(dl, nx::ui::kIconGlobe, ImVec2(gx, p.y + h * 0.5f), S(14), kWhite);
-    ImGui::SetCursorScreenPos(ImVec2(p.x + w - combo_w - h * 0.25f, p.y + (h - ImGui::GetFrameHeight()) * 0.5f));
+    ImVec2 cp(p.x + w - combo_w, p.y + (h - ImGui::GetFrameHeight()) * 0.5f);
+    ImGui::SetCursorScreenPos(cp);
     language_combo(combo_w);
-    ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + h + S(12)));
+    theme_icon(dl, nx::ui::kIconGlobe, ImVec2(cp.x + S(22), cp.y + ImGui::GetFrameHeight() * 0.5f), S(11), kInk);
+    ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + h + S(8)));
+    dashes();
+    ImGui::Dummy(ImVec2(0, S(4)));
 }
 
 // The steps of the setup (1..4) or, in the preparation's flow (g_prep_flow), of the preparation (1..3), the current
@@ -763,16 +1013,18 @@ void steps(int current) {
         float lw = label ? measure(g_body, fs, labels[k], -1).x + S(16) : 0;
         float x0 = cx + r + S(6) + lw, x1 = p.x + seg * (k + 1) - S(6);
         if (k < n - 1 && x1 > x0)
-            dl->AddRectFilled(ImVec2(x0, cy - S(1.5f)), ImVec2(x1, cy + S(1.5f)), k < current ? kGreen : kGrey, S(1.5f));
-        ImU32 c = k < current ? kGreen : k == current ? kYellow : kGrey;
-        dl->AddCircleFilled(ImVec2(cx, cy), r, c);
+            dl->AddRectFilled(ImVec2(x0, cy - S(1.5f)), ImVec2(x1, cy + S(1.5f)), k < current ? kGreen : kSandDeep, S(1.5f));
+        // The Importer's step badges: a number on sand, the current one on sun yellow, a leaf once done.
         if (k < current) {
-            theme_icon(dl, nx::ui::kIconCheck, ImVec2(cx, cy), r * 0.75f, kWhite);
+            dl->AddCircleFilled(ImVec2(cx, cy), r, kLeafPale);
+            draw_leaf(dl, ImVec2(cx, cy), r * 1.4f, 0.35f);
         } else {
+            dl->AddCircleFilled(ImVec2(cx, cy), r, k == current ? kYellow : kSand);
+            dl->AddCircle(ImVec2(cx, cy), r - S(1), k == current ? kSunDeep : kSandDeep, 0, S(2));
             char n[4];
             std::snprintf(n, sizeof n, "%d", k + 1);
-            ImVec2 ns = measure(g_body, fs, n, -1);
-            dl->AddText(g_body, fs, ImVec2(cx - ns.x * 0.5f, cy - ns.y * 0.5f), k == current ? kInk : kWhite, n);
+            ImVec2 ns = measure(g_title, fs, n, -1);
+            dl->AddText(g_title, fs, ImVec2(cx - ns.x * 0.5f, cy - ns.y * 0.5f), k == current ? kInk : kInkSoft, n);
         }
         if (label) {
             ImVec2 ls = measure(g_body, fs, labels[k], -1);
@@ -783,6 +1035,12 @@ void steps(int current) {
 }
 
 // ---- welcome --------------------------------------------------------------------------------------------------
+
+// A card on the board: sand with a lip under it, paper when hovered, a lagoon edge under keyboard or controller focus.
+void card_face(ImDrawList* dl, ImVec2 p, ImVec2 size, float rounding, bool hov, bool focus) {
+    lip_shape(dl, p, ImVec2(size.x, size.y - S(4)), S(4), rounding, hov ? kBoard : kSand, kSandDeep,
+              focus ? kLagoonDeep : kSandDeep, focus ? S(3) : S(1.5f), false);
+}
 
 struct Card {
     int icon;
@@ -806,12 +1064,11 @@ bool card(const char* id, const Card& c, ImVec2 size) {
     ImGui::BeginDisabled(!c.enabled);
     bool clicked = nav_card(id, size);
     ImGui::EndDisabled();
+    if (c.enabled) hover_anim();
     bool hov = c.enabled && (ImGui::IsItemHovered() || ImGui::IsItemFocused());
-    if (c.enabled && ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2 q(p.x + size.x, p.y + size.y);
-    dl->AddRectFilled(p, q, hov ? rgb(255, 240, 196) : kPaper, S(26));
-    if (hov) dl->AddRect(p, q, rgb(246, 170, 40), S(26), 0, S(3));
+    card_face(dl, p, size, S(26), hov, c.enabled && nav_focused());
     float pad = S(24), r = S(34), inner = size.x - 2 * pad;
     ImU32 icol = c.enabled ? c.color : kGrey;
     dl->AddCircleFilled(ImVec2(p.x + pad + r, p.y + pad + r), r, icol);
@@ -826,7 +1083,7 @@ bool card(const char* id, const Card& c, ImVec2 size) {
     // An arrow in a circle, bottom right: the card leads somewhere.
     if (c.enabled) {
         ImVec2 a(q.x - pad - S(16), p.y + pad + r);
-        dl->AddCircleFilled(a, S(16), hov ? kYellow : rgb(240, 228, 196));
+        dl->AddCircleFilled(a, S(16), hov ? kYellow : kSandDeep);
         theme_icon(dl, nx::ui::kIconPlay, a, S(11), kInk);
     }
     return clicked && c.enabled;
@@ -928,10 +1185,11 @@ void badge(const char* text, ImU32 bg, ImU32 fg, float line_h, float room) {
 
 // A small square button at the right of a row.
 bool row_button(const char* label, float size) {
-    ImGui::PushStyleColor(ImGuiCol_Button, col4(rgb(240, 228, 196)));
+    ImGui::PushStyleColor(ImGuiCol_Button, col4(kSandDeep));
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, 0));
     bool r = ImGui::Button(label, ImVec2(size, size));
     nav_item();
+    frame_hover(false);
     ImGui::PopStyleVar();
     ImGui::PopStyleColor();
     return r;
@@ -985,7 +1243,7 @@ bool chosen(const std::string& path) {
 void found_list(int slot, float w) {
     SlotState& s = g_slot[slot];
     if (!s.open) return;
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, col4(rgb(240, 228, 196)));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, col4(kSandDeep));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(14), S(10)));
     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, S(14));
     ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0), ImVec2(FLT_MAX, S(290)));
@@ -1336,13 +1594,13 @@ void progress_bar(float fraction, bool failed) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2 p = ImGui::GetCursorScreenPos();
     float w = ImGui::GetContentRegionAvail().x, h = S(30);
-    dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), rgb(240, 228, 196), h * 0.5f);
+    dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), kSandDeep, h * 0.5f);
     float fw = std::max(h, w * fraction);
-    if (fraction > 0) dl->AddRectFilled(p, ImVec2(p.x + fw, p.y + h), failed ? kRed : kGreen, h * 0.5f);
+    if (fraction > 0) dl->AddRectFilled(p, ImVec2(p.x + fw, p.y + h), failed ? kRed : kMint, h * 0.5f);
     char pct[16];
     std::snprintf(pct, sizeof pct, "%d%%", int(fraction * 100 + 0.5f));
     ImVec2 ts = ImGui::CalcTextSize(pct);
-    dl->AddText(ImVec2(p.x + (w - ts.x) * 0.5f, p.y + (h - ts.y) * 0.5f), fraction > 0.52f ? kWhite : kInk, pct);
+    dl->AddText(ImVec2(p.x + (w - ts.x) * 0.5f, p.y + (h - ts.y) * 0.5f), kInk, pct);
     ImGui::Dummy(ImVec2(w, h));
 }
 
@@ -1754,14 +2012,14 @@ void prep_options_card() {
         bool on = own || std::find(g_prep.extra.begin(), g_prep.extra.end(), p) != g_prep.extra.end();
         std::string label = platform_label(p);
         if (own) label += std::string(" · ") + tr("launcher.prep.platform.this");
-        const float w = ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize(label.c_str()).x;
+        const float w = toggle_width(label.c_str());
         if (x > 0 && x + S(24) + w <= room)
             ImGui::SameLine(0, S(24));
         else
             x = 0;
         x += (x > 0 ? S(24) : 0) + w;
         ImGui::BeginDisabled(own);  // Play needs it: always built
-        if (ImGui::Checkbox(label.c_str(), &on) && !own) {
+        if (toggle(label.c_str(), &on) && !own) {
             auto it = std::find(g_prep.extra.begin(), g_prep.extra.end(), p);
             if (on && it == g_prep.extra.end()) g_prep.extra.push_back(p);
             if (!on && it != g_prep.extra.end()) g_prep.extra.erase(it);
@@ -1771,8 +2029,7 @@ void prep_options_card() {
     }
     ImGui::Dummy(ImVec2(0, S(4)));
     bool fps = g_prep.fps60;
-    if (ImGui::Checkbox(tr("launcher.prep.fps60"), &fps)) g_prep.fps60 = fps;
-    nav_item();
+    if (toggle(tr("launcher.prep.fps60"), &fps)) g_prep.fps60 = fps;
     text_small(tr("launcher.prep.fps60.desc"));
     ImGui::PopTextWrapPos();
     ImGui::EndGroup();
@@ -1890,8 +2147,7 @@ void page_prepare() {
         if (!home.empty() && !same_path(g_prep.out, home)) {
             ImGui::Dummy(ImVec2(0, S(2)));
             bool v = g_prep.in_place;
-            if (ImGui::Checkbox(tr("launcher.prep.in_place"), &v)) g_prep.in_place = v;
-            nav_item();
+            if (toggle(tr("launcher.prep.in_place"), &v)) g_prep.in_place = v;
             ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + w);
             text_small(trf("launcher.prep.in_place.desc", home).c_str());
             ImGui::PopTextWrapPos();
@@ -2138,31 +2394,35 @@ void opening_overlay() {
     dl->AddText(g_body, fs, ImVec2(c.x - r - S(14) - ts.x, c.y - ts.y * 0.5f), IM_COL32(255, 249, 232, int(170 * a)), text);
 }
 
+// The Importer's big button: sun yellow on a deeper lip, bark ink in the title font; hovered it lifts off the lip,
+// pressed it sinks onto it. During the countdown (`sub`, its second line) it stays lifted; after the countdown was
+// cancelled it stays calm until the pointer leaves. `color` is unused: Play is the one action that matters.
 bool big_button(const char* label, int icon, ImU32 color, float w, float h, const char* sub = nullptr) {
+    (void)color;
+    const float lip = S(5);
     ImVec2 p = ImGui::GetCursorScreenPos();
-    bool clicked = nav_card("##play", ImVec2(w, h), true);
+    bool clicked = nav_card("##play", ImVec2(w, h + lip), true);
     if (g_play_calm && !ImGui::IsItemHovered()) g_play_calm = false;
-    // Countdown: yellow. After cancel: green until the pointer leaves. Otherwise: normal hover/focus.
-    bool hov = sub ? true
-                   : (!g_autostart_ui && !g_play_calm && (ImGui::IsItemHovered() || ImGui::IsItemFocused()));
-    if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-    if (!sub && !g_autostart_ui && !g_play_calm && ImGui::IsItemActive()) {  // pressed: the button gives a little under the finger (3 %, from its centre)
-        float dx = w * 0.015f, dy = h * 0.015f;
-        p = ImVec2(p.x + dx, p.y + dy * 2), w -= dx * 2, h -= dy * 2;
-    }
+    const bool live = !sub && !g_autostart_ui && !g_play_calm;
+    float t = hover_anim();
+    if (sub) t = 1;
+    else if (!live) t = 0;
+    const bool down = live && ImGui::IsItemActive(), focus = nav_focused();
+    const float lift = down ? 0 : t * S(3);
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    const float round = std::min(S(22), h * 0.18f);
-    dl->AddRectFilled(ImVec2(p.x, p.y + S(4)), ImVec2(p.x + w, p.y + h + S(4)), rgb(80, 140, 60, 120), round);
-    dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), hov ? kYellow : color, round);
-    float ir = h * 0.22f, pad = S(12), avail = w - ir * 2 - pad - S(24);
-    ImU32 ink = hov ? kInk : kWhite;
-    float fs = font_size(g_title);
+    const float round = std::min(h * 0.5f, S(40));
+    lip_shape(dl, p, ImVec2(w, h), lip, round, mix(kYellow, shade(kYellow, 1.15f), t), kSunDeep,
+              focus ? kLagoonDeep : kSunDeep, focus ? S(3) : S(1.5f), down, lift);
+    p.y += down ? lip : -lift;
+    float ir = h * 0.2f, pad = S(12), avail = w - ir * 2 - pad - S(24);
+    if (ir > S(16)) ir = S(16);
+    float fs = font_size(g_title) * 0.9f;
     ImVec2 ts = measure(g_title, fs, label, -1);
     if (ts.x > avail && avail > 0) fs *= avail / ts.x, ts = measure(g_title, fs, label, -1);
     float sub_fs = 0, gap = 0;
     ImVec2 ss(0, 0);
     if (sub && *sub) {
-        sub_fs = fs * 0.62f;
+        sub_fs = font_size(g_body) * 0.8f;
         ss = measure(g_body, sub_fs, sub, -1);
         if (ss.x > avail && avail > 0) sub_fs *= avail / ss.x, ss = measure(g_body, sub_fs, sub, -1);
         gap = S(2);
@@ -2171,11 +2431,11 @@ bool big_button(const char* label, int icon, ImU32 color, float w, float h, cons
     float total = std::max(ts.x, ss.x) + ir * 2 + pad;
     float x = p.x + (w - total) * 0.5f;
     float ty = p.y + (h - text_h) * 0.5f;
-    theme_icon(dl, icon, ImVec2(x + ir, p.y + h * 0.5f), ir, ink);
+    theme_icon(dl, icon, ImVec2(x + ir, p.y + h * 0.5f), ir, kInk);
     float tx = x + ir * 2 + pad;
-    dl->AddText(g_title, fs, ImVec2(tx + (std::max(ts.x, ss.x) - ts.x) * 0.5f, ty), ink, label);
+    dl->AddText(g_title, fs, ImVec2(tx + (std::max(ts.x, ss.x) - ts.x) * 0.5f, ty), kInk, label);
     if (sub && *sub)
-        dl->AddText(g_body, sub_fs, ImVec2(tx + (std::max(ts.x, ss.x) - ss.x) * 0.5f, ty + ts.y + gap), ink, sub);
+        dl->AddText(g_body, sub_fs, ImVec2(tx + (std::max(ts.x, ss.x) - ss.x) * 0.5f, ty + ts.y + gap), kInkSoft, sub);
     return clicked;
 }
 
@@ -2205,7 +2465,7 @@ void hero(int icon, ImU32 color, float r) {
     ImVec2 p = ImGui::GetCursorScreenPos();
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2 c(p.x + w * 0.5f, p.y + r);
-    dl->AddCircleFilled(c, r + S(10), rgb(255, 255, 255, 140));
+    dl->AddCircleFilled(c, r + S(10), kSandDeep);
     dl->AddCircleFilled(c, r, color);
     theme_icon(dl, icon, c, r * 0.6f, kWhite);
     ImGui::Dummy(ImVec2(w, 2 * r + S(14)));
@@ -2262,33 +2522,45 @@ void footer_done() {
     if (button(tr("launcher.home"), kWhite)) g_page = Page::Home;
 }
 
-// A secondary action as a small card: icon, title, one line.
+// A secondary action as a row of the home page's list: a tinted badge with its icon, the title in the title font and
+// one line under it, an arrow at the right. Hovered it gets a sand back, focused a lagoon edge.
 bool action_card(const char* id, int icon, ImU32 color, const char* title, const char* desc, ImVec2 size, bool enabled) {
     ImVec2 p = ImGui::GetCursorScreenPos();
     ImGui::BeginDisabled(!enabled);
     bool clicked = nav_card(id, size, false, true);
     ImGui::EndDisabled();
-    bool hov = enabled && (ImGui::IsItemHovered() || ImGui::IsItemFocused());
-    if (enabled && ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    const float t = enabled ? hover_anim() : 0.0f;
+    bool hov = enabled && ImGui::IsItemHovered(), focus = enabled && nav_focused();
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2 q(p.x + size.x, p.y + size.y);
-    dl->AddRectFilled(p, q, hov ? rgb(255, 240, 196) : kPaper, S(22));
-    if (hov) dl->AddRect(p, q, rgb(246, 170, 40), S(22), 0, S(3));
-    float pad = S(16), r = S(22);
-    dl->AddCircleFilled(ImVec2(p.x + pad + r, p.y + pad + r), r, enabled ? color : kGrey);
-    theme_icon(dl, icon, ImVec2(p.x + pad + r, p.y + pad + r), r * 0.6f, kWhite);
-    float x = p.x + pad + 2 * r + S(12), inner = q.x - pad - x;
-    float fs = font_size(g_body);
-    dl->AddText(g_body, fs, ImVec2(x, p.y + pad + S(2)), enabled ? kInk : kInkSoft, title, nullptr, inner);
-    float ty = measure(g_body, fs, title, inner).y;
-    dl->AddText(g_body, fs * 0.82f, ImVec2(x, p.y + pad + S(6) + ty), kInkSoft, desc, nullptr, inner);
+    if (t > 0 || focus) dl->AddRectFilled(p, q, mix(kBoard, kSand, focus ? 1.0f : t), S(18));
+    if (focus) dl->AddRect(p, q, kLagoonDeep, S(18), 0, S(3));
+    float pad = S(12), r = S(22);
+    ImVec2 c(p.x + pad + r, p.y + size.y * 0.5f);
+    ImU32 col = enabled ? color : kGrey;
+    dl->AddCircleFilled(c, r, shade(col, 1.62f));
+    dl->AddCircle(c, r - S(1), shade(col, 1.25f), 0, S(2));
+    theme_icon(dl, icon, c, r * 0.6f, shade(col, 0.72f));
+    float x = c.x + r + S(14), arrow = S(30), inner = q.x - pad - arrow - x;
+    float tfs = font_size(g_title) * 0.72f, dfs = font_size(g_body) * 0.82f;
+    float th = measure(g_title, tfs, title, inner).y, dh = measure(g_body, dfs, desc, inner).y;
+    float y = p.y + (size.y - th - S(2) - dh) * 0.5f;
+    dl->AddText(g_title, tfs, ImVec2(x, y), enabled ? kInk : kInkSoft, title, nullptr, inner);
+    dl->AddText(g_body, dfs, ImVec2(x, y + th + S(2)), kInkSoft, desc, nullptr, inner);
+    if (enabled) {
+        ImVec2 a(q.x - pad - S(12), c.y);
+        a.x += t * S(3);  // the arrow leans the way it leads
+        dl->AddCircleFilled(a, S(13), focus ? kYellow : mix(kSand, kYellow, t));
+        theme_icon(dl, nx::ui::kIconPlay, ImVec2(a.x + S(1), a.y), S(8), hov || focus ? kInk : kInkSoft);
+    }
     return clicked && enabled;
 }
 
 float action_height(const char* title, const char* desc, float w) {
-    float pad = S(16), r = S(22), inner = w - 2 * pad - 2 * r - S(12);
-    float fs = font_size(g_body);
-    return std::max(2 * r, S(8) + measure(g_body, fs, title, inner).y + measure(g_body, fs * 0.82f, desc, inner).y) + 2 * pad;
+    float pad = S(12), r = S(22), inner = w - 2 * pad - 2 * r - S(14) - S(30);
+    float h = measure(g_title, font_size(g_title) * 0.72f, title, inner).y + S(2) +
+              measure(g_body, font_size(g_body) * 0.82f, desc, inner).y;
+    return std::max(2 * r, h) + 2 * S(12);
 }
 
 // ---- what the build holds: its version and its add-on content ---------------------------------------------------
@@ -2312,40 +2584,39 @@ std::string size_text(uint64_t bytes) {
 
 float out_cubic(double x) { return float(1 - std::pow(1 - std::clamp(x, 0.0, 1.0), 3.0)); }
 
-// A pill: an icon in a coloured disc, then the text. A clickable one answers the pointer like the action cards and
-// gives a little under it; `dot` marks it live (a green dot on the disc).
+// A chip (the Importer's): paper with a sand edge, an icon in a coloured disc, then the text. A clickable one answers
+// the pointer with a lagoon edge and gives a little under it; `dot` marks it live (a green dot on the disc).
 bool pill(const char* id, int icon, ImU32 color, const char* text, bool clickable, bool dot, float x) {
-    float h = S(38), r = S(13), pad = S(6), fs = font_size(g_body) * 0.9f;
+    float h = S(38), r = S(12), pad = S(7), fs = font_size(g_body) * 0.86f;
     ImVec2 ts = measure(g_body, fs, text, -1);
-    float w = pad + 2 * r + S(10) + ts.x + S(16);
+    float w = pad + 2 * r + S(9) + ts.x + S(14);
     ImGui::SetCursorScreenPos(ImVec2(x, ImGui::GetCursorScreenPos().y));
     ImVec2 p = ImGui::GetCursorScreenPos();
     ImGui::BeginDisabled(!clickable);
     bool clicked = nav_card(id, ImVec2(w, h));
     ImGui::EndDisabled();
-    bool hov = clickable && (ImGui::IsItemHovered() || ImGui::IsItemFocused());
-    if (clickable && ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-    if (clickable && ImGui::IsItemActive()) p = ImVec2(p.x + w * 0.015f, p.y + h * 0.03f), w *= 0.97f, h *= 0.94f;
+    const float t = clickable ? hover_anim() : 0.0f;
+    bool focus = clickable && nav_focused();
+    if (clickable && ImGui::IsItemActive()) p.y += S(1.5f);
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2 q(p.x + w, p.y + h);
-    dl->AddRectFilled(ImVec2(p.x, p.y + S(2)), ImVec2(q.x, q.y + S(2)), rgb(120, 90, 50, 22), h * 0.5f);
-    dl->AddRectFilled(p, q, hov ? rgb(255, 240, 196) : rgb(255, 252, 242), h * 0.5f);
-    dl->AddRect(p, q, hov ? rgb(246, 170, 40) : rgb(232, 220, 190), h * 0.5f, 0, hov ? S(2) : S(1));
+    dl->AddRectFilled(p, q, kBoard, S(12));
+    dl->AddRect(p, q, focus ? kLagoonDeep : mix(kSandDeep, kMint, t), S(12), 0, focus ? S(3) : S(1.5f));
     ImVec2 c(p.x + pad + r, p.y + h * 0.5f);
     dl->AddCircleFilled(c, r, color);
     theme_icon(dl, icon, c, r * 0.62f, kWhite);
     if (dot) {
         ImVec2 d(c.x + r * 0.72f, c.y - r * 0.72f);
-        dl->AddCircleFilled(d, S(5), rgb(255, 252, 242));
+        dl->AddCircleFilled(d, S(5), kBoard);
         dl->AddCircleFilled(d, S(3.5f), kGreen);
     }
-    dl->AddText(g_body, fs, ImVec2(c.x + r + S(10), p.y + (h - ts.y) * 0.5f), kInk, text);
+    dl->AddText(g_body, fs, ImVec2(c.x + r + S(9), p.y + (h - ts.y) * 0.5f), kInk, text);
     return clicked && clickable;
 }
 
 float pill_width(const char* text) {
-    float r = S(13), fs = font_size(g_body) * 0.9f;
-    return S(6) + 2 * r + S(10) + measure(g_body, fs, text, -1).x + S(16);
+    float r = S(12), fs = font_size(g_body) * 0.86f;
+    return S(7) + 2 * r + S(9) + measure(g_body, fs, text, -1).x + S(14);
 }
 
 std::string profile_save_folder(const std::string& id) {
@@ -2363,7 +2634,7 @@ std::string active_island_pill_text() {
     return trf("launcher.home.save_file", tr("launcher.profiles.empty"));
 }
 
-// Version + add-ons on the left; save file + mods on the right — flush to the center line.
+// Version, add-ons, save file and mods under the title: as many chips on a line as fit, each line centred.
 void contents_row() {
     const BuildContents& c = contents();
     std::string ver = c.version.empty() ? tr("launcher.home.version_unknown") : trf("launcher.home.version", c.version);
@@ -2371,47 +2642,53 @@ void contents_row() {
     std::string add = c.addons.empty() ? tr("launcher.addons.none")
                                        : trf("launcher.addons.count", std::to_string(c.addons.size()));
     size_t mods_on = 0;
-    for (const nx::mod_manager::ModInfo& m : g_mods)
-        if (m.enabled) ++mods_on;
+    for (const nx::mod_manager::ModInfo& mod : g_mods)
+        if (mod.enabled) ++mods_on;
     std::string mods_arg = std::to_string(mods_on) + "/" + std::to_string(g_mods.size());
     std::string mods = g_mods.empty() ? tr("launcher.mods.none") : trf("launcher.mods.count", mods_arg);
-    float avail = ImGui::GetContentRegionAvail().x, gap = S(10), x0 = ImGui::GetCursorScreenPos().x;
-    float y0 = ImGui::GetCursorScreenPos().y;
-    float center = x0 + std::floor(avail * 0.5f);
-    float row_h = S(38) + gap;
-    // Left pills right-align to the center; right pills left-align from it.
-    float x_ver = center - gap * 0.5f - pill_width(ver.c_str());
-    float x_add = center - gap * 0.5f - pill_width(add.c_str());
-    float x_right = center + gap * 0.5f;
-
-    auto place = [&](const char* id, int icon, ImU32 color, const char* text, bool clickable, bool dot, float x,
-                     float y) {
-        ImGui::SetCursorScreenPos(ImVec2(x, y));
-        return pill(id, icon, color, text, clickable, dot, x);
-    };
-
-    place("##version", nx::ui::kIconLeaf, kMint, ver.c_str(), false, false, x_ver, y0);
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", g_build.data.c_str());
-    if (place("##addons", nx::ui::kIconBox, c.addons.empty() ? kGrey : kPurple, add.c_str(), true, !c.addons.empty(),
-              x_add, y0 + row_h)) {
-        contents(true);
-        g_addons_open = true, g_addons_since = ImGui::GetTime();
-    }
     bool has_save = false;
     for (const nx::save_profiles::ProfileInfo& p : g_save_profiles)
         if (p.id == g_save_profile_active && p.has_save) has_save = true;
-    if (place("##savefile", nx::ui::kIconHouse, has_save ? kRed : kGrey, save.c_str(), true, has_save, x_right, y0)) {
-        refresh_save_profiles();
-        g_saves_open = true;
-        g_saves_since = ImGui::GetTime();
+    const std::string* texts[4] = {&ver, &add, &save, &mods};
+    float avail = ImGui::GetContentRegionAvail().x, gap = S(8), x0 = ImGui::GetCursorScreenPos().x;
+    float y = ImGui::GetCursorScreenPos().y, row_h = S(38);
+    for (int k = 0; k < 4;) {
+        int n = 0;
+        float row_w = 0;
+        while (k + n < 4) {
+            float w = pill_width(texts[k + n]->c_str()) + (n ? gap : 0);
+            if (n && row_w + w > avail) break;
+            row_w += w, n++;
+        }
+        float x = x0 + std::floor((avail - row_w) * 0.5f);
+        for (int i = k; i < k + n; i++) {
+            ImGui::SetCursorScreenPos(ImVec2(x, y));
+            if (i == 0) {
+                pill("##version", nx::ui::kIconLeaf, kGreen, ver.c_str(), false, false, x);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", g_build.data.c_str());
+            } else if (i == 1) {
+                if (pill("##addons", nx::ui::kIconBox, c.addons.empty() ? kGrey : kPurple, add.c_str(), true,
+                         !c.addons.empty(), x)) {
+                    contents(true);
+                    g_addons_open = true, g_addons_since = ImGui::GetTime();
+                }
+            } else if (i == 2) {
+                if (pill("##savefile", nx::ui::kIconHouse, has_save ? kRed : kGrey, save.c_str(), true, has_save, x)) {
+                    refresh_save_profiles();
+                    g_saves_open = true;
+                    g_saves_since = ImGui::GetTime();
+                }
+            } else if (pill("##mods", nx::ui::kIconText, g_mods.empty() ? kGrey : kOrange, mods.c_str(), true, mods_on > 0,
+                            x)) {
+                refresh_mods();
+                g_mods_open = true;
+                g_mods_since = ImGui::GetTime();
+            }
+            x += pill_width(texts[i]->c_str()) + gap;
+        }
+        k += n, y += row_h + gap;
     }
-    if (place("##mods", nx::ui::kIconText, g_mods.empty() ? kGrey : kOrange, mods.c_str(), true, mods_on > 0, x_right,
-              y0 + row_h)) {
-        refresh_mods();
-        g_mods_open = true;
-        g_mods_since = ImGui::GetTime();
-    }
-    ImGui::SetCursorScreenPos(ImVec2(x0, y0 + 2 * row_h - gap + S(4)));
+    ImGui::SetCursorScreenPos(ImVec2(x0, y - gap + S(4)));
 }
 
 // The add-on content, one card each: its number, size and files, and that the game loads it.
@@ -2942,7 +3219,7 @@ void mods_popup() {
 // button to its page.
 void update_notice() {
     const UpdateInfo u = update_info();
-    if (!u.available) return;
+    if (!u.available || g_update_in_header) return;
     // In place when it can be (update_can_install), else the release page; then the restart into it.
     const UpdateProgress pr = update_progress();
     const bool busy = pr.stage != UpdateStage::Idle && pr.stage != UpdateStage::Done && pr.stage != UpdateStage::Failed;
@@ -2964,7 +3241,8 @@ void update_notice() {
     const ImVec2 at = ImGui::GetCursorScreenPos();
     const ImVec2 p(at.x + std::max(0.0f, (ImGui::GetContentRegionAvail().x - w) * 0.5f), at.y);
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), kPaper, h * 0.5f);
+    dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), kSand, h * 0.5f);
+    dl->AddRect(p, ImVec2(p.x + w, p.y + h), kSandDeep, h * 0.5f, 0, S(1.5f));
     status_mark(dl, ImVec2(p.x + pad + r, p.y + h * 0.5f), r, Status::Warning);
     ImGui::SetCursorScreenPos(ImVec2(p.x + pad + 2 * r + gap, p.y + vpad));
     ImGui::AlignTextToFramePadding();
@@ -2983,6 +3261,8 @@ void update_notice() {
     ImGui::Dummy(ImVec2(0, S(6)));
 }
 
+// The main menu. In landscape: the island panel at the left (the leaf, the welcome, what the build holds and Play) and
+// the list of the other actions at the right, divided by the Importer's dashes; stacked when narrow.
 void page_home() {
     const bool valid = *g_build_problem == 0;
     if (!valid) {
@@ -2991,17 +3271,9 @@ void page_home() {
     } else if (!g_banner.empty()) {
         heading("", "");
     }
-    ImGui::Dummy(ImVec2(0, S(6)));
-    if (valid) {
-        contents_row();
-        ImGui::Dummy(ImVec2(0, S(10)));
-        centered(tr("launcher.home.title"), g_title, 1.1f, kInk);
-        ImGui::Dummy(ImVec2(0, S(4)));
-    }
-    // Left: Settings / Online. Center: Play. Right: Rebuild / Change folder.
+    // Settings, Online, Rebuild (or Prepare again), Desktop, Change build folder, Credits.
     const bool can_rebuild = valid && setup_supported() &&
                              g_build.exe.rfind(g_build.data, 0) == 0 && g_build.exe.find("build") != std::string::npos;
-    const bool player = !player_beside().empty();  // a release: the folder is played as it is, nothing to rebuild
     struct A {
         const char* id;
         int icon;
@@ -3011,126 +3283,110 @@ void page_home() {
         bool enabled;
         int action;
     };
-    std::vector<A> left, right;
-    if (valid) {
-        left.push_back({"##online", nx::ui::kIconBox, kBlue, tr("tab.online"), tr("online.home.desc"), true, 4});
-        left.push_back({"##settings", nx::ui::kIconGear, kPurple, tr("launcher.home.settings"),
-                        tr("launcher.home.settings.desc"), true, 0});
-    }
+    std::vector<A> acts;
+    if (valid) acts.push_back({"##settings", nx::ui::kIconGear, kPurple, tr("launcher.home.settings"),
+                               tr("launcher.home.settings.desc"), true, 0});
+    if (valid) acts.push_back({"##online", nx::ui::kIconGlobe, kMint, tr("tab.online"), tr("online.home.desc"), true, 4});
+    const bool player = !player_beside().empty();  // a release: the folder is played as it is, nothing to rebuild
     if (setup_supported() && !player)
-        right.push_back({"##rebuild", nx::ui::kIconLeaf, kOrange, tr("launcher.home.rebuild"),
-                         tr(can_rebuild ? "launcher.home.rebuild.desc" : "launcher.home.rebuild.unavailable"),
-                         can_rebuild, 1});
+        acts.push_back({"##rebuild", nx::ui::kIconLeaf, kOrange, tr("launcher.home.rebuild"),
+                        tr(can_rebuild ? "launcher.home.rebuild.desc" : "launcher.home.rebuild.unavailable"), can_rebuild, 1});
     // The game folder's code built for another ACNHRecomp, or not for this computer: prepared again here, keeping the
     // rest (prepare/README.md: run again on the same folder).
     const std::string folder = settings().get("launcher.build");
     const bool again = player && prepare_built() && is_prepared_folder(folder) &&
                        ((valid && g_build_stale) || std::strcmp(g_build_problem, "launcher.reason.no_game_lib") == 0);
     if (again)
-        right.push_back({"##again", nx::ui::kIconLeaf, kGreen, tr("launcher.home.prepare_again"),
-                         tr(valid ? "launcher.home.prepare_again.stale" : "launcher.home.prepare_again.desc"), true, 5});
-    right.push_back({"##change", nx::ui::kIconFolder, kBlue,
-                     tr(player ? "launcher.home.change_game" : "launcher.home.change"),
-                     tr(player ? "launcher.home.change_game.desc" : "launcher.home.change.desc"), true, 2});
+        acts.push_back({"##again", nx::ui::kIconLeaf, kGreen, tr("launcher.home.prepare_again"),
+                        tr(valid ? "launcher.home.prepare_again.stale" : "launcher.home.prepare_again.desc"), true, 5});
+#if defined(__APPLE__)
+    acts.push_back({"##desktop", nx::ui::kIconPlus, kGreen, tr("launcher.home.install_app"),
+                    tr("launcher.home.install_app.desc"), true, 3});
+#else
+    acts.push_back({"##desktop", nx::ui::kIconPlus, kGreen, tr("launcher.home.desktop"), tr("launcher.home.desktop.desc"),
+                    true, 3});
+#endif
+    acts.push_back({"##change", nx::ui::kIconFolder, kBlue, tr(player ? "launcher.home.change_game" : "launcher.home.change"),
+                    tr(player ? "launcher.home.change_game.desc" : "launcher.home.change.desc"), true, 2});
+    acts.push_back({"##credits", nx::ui::kIconInfo, kOrange, tr("launcher.credits"), tr("launcher.credits.text"), true, 6});
 
-    auto run_action = [&](int action) {
-        if (action == 0) load_game_ini(), g_page = Page::Settings;
-        if (action == 4) load_game_ini(), g_page = Page::Online;
-        if (action == 1) start_setup(true);
-        if (action == 2) pick(kPickBuild);
-        if (action == 5) g_prep_back = Page::Home, prep_open({folder}, folder, false);
-    };
-
-    float avail = ImGui::GetContentRegionAvail().x, gap = S(14);
-    const bool stack = g_portrait || avail < S(700) || left.empty() || right.empty();
-    // Play keeps a fixed-ish middle width; side columns expand into the rest.
-    const float play_h = S(155);
-    const float play_w_cap = S(400);
-    float play_w_target = stack ? std::min(avail, play_w_cap) : std::min(play_w_cap, avail * 0.34f);
-    float col_w = stack ? avail : (avail - play_w_target - 2 * gap) * 0.5f;
-    float mid_w = stack ? avail : play_w_target;
-
-    auto draw_column = [&](const std::vector<A>& col) {
-        if (col.empty()) return 0.f;
-        float card_h = 0;
-        for (const A& a : col) card_h = std::max(card_h, action_height(a.title, a.desc, col_w));
-        const float top = ImGui::GetCursorPosY();
-        for (size_t i = 0; i < col.size(); ++i) {
-            // Exact rows (a Dummy gap also took ItemSpacing twice): the column ends where Play does.
-            ImGui::SetCursorPosY(top + float(i) * (card_h + gap));
-            const A& a = col[i];
-            if (action_card(a.id, a.icon, a.color, a.title, a.desc, ImVec2(col_w, card_h), a.enabled))
-                run_action(a.action);
+    const float avail = ImGui::GetContentRegionAvail().x, gap = S(26);
+    const bool two = valid && !g_portrait && avail >= S(820);
+    // Heights from the last frame: the panel is as tall as the list beside it, its content centred in it.
+    static float list_h = 0, hero_h = 0;
+    if (valid) {
+        const float hero_w = two ? std::floor(avail * 0.47f) : avail;
+        const float pad = S(g_portrait ? 18 : 26);
+        float h = std::max(hero_h > 0 ? hero_h + 2 * pad : S(420), two ? list_h : 0.0f);
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, col4(kSand));
+        ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, S(28));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(pad, pad));
+        ImGui::BeginChild("##island", ImVec2(hero_w, std::floor(h)),
+                          ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_NavFlattened,
+                          ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+        ImGui::PopStyleVar(2);
+        ImGui::PopStyleColor();
+        const float room = ImGui::GetContentRegionAvail().y;
+        if (hero_h > 0 && hero_h < room) ImGui::SetCursorPosY(std::floor(ImGui::GetCursorPosY() + (room - hero_h) * 0.5f));
+        const float y0 = ImGui::GetCursorPosY();
+        {
+            float w = ImGui::GetContentRegionAvail().x, r = S(g_portrait ? 36 : 44);
+            ImVec2 p = ImGui::GetCursorScreenPos();
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            ImVec2 c(p.x + w * 0.5f, p.y + r);
+            dl->AddCircleFilled(c, r, kLeafPale);
+            draw_leaf(dl, c, r * 1.35f, -0.5f);
+            ImGui::Dummy(ImVec2(w, 2 * r + S(12)));
         }
-        return card_h * float(col.size()) + gap * float(col.size() - 1);
-    };
-
-    if (stack) {
-        if (valid) {
-            float play_w = std::min(mid_w, play_w_cap);
-            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail - play_w) * 0.5f);
-            play_button(play_w, play_h);
-            ImGui::Dummy(ImVec2(0, gap));
+        centered(tr("launcher.home.title"), g_title, 1.1f, kInk);
+        ImGui::Dummy(ImVec2(0, S(8)));
+        contents_row();
+        ImGui::Dummy(ImVec2(0, S(14)));
+        {
+            const float pw = std::min(ImGui::GetContentRegionAvail().x, S(380));
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::floor((ImGui::GetContentRegionAvail().x - pw) * 0.5f));
+            play_button(pw, S(72));
         }
-        draw_column(left);
-        if (!left.empty() && !right.empty()) ImGui::Dummy(ImVec2(0, gap));
-        draw_column(right);
-    } else {
-        float side_h = 0;
-        for (const A& a : left) side_h = std::max(side_h, action_height(a.title, a.desc, col_w));
-        side_h = side_h * float(std::max(left.size(), right.size())) +
-                 gap * float(std::max(size_t(1), std::max(left.size(), right.size())) - 1);
-        float play_w = std::min(mid_w, play_w_cap);
-        // Play spans the side columns exactly: its top and bottom in line with theirs.
-        const float row_play_h = side_h > 0 ? side_h : play_h;
-        float row_h = std::max(side_h, row_play_h);
-        float side_pad = std::max(0.f, (row_h - side_h) * 0.5f);
-        float play_pad = std::max(0.f, (row_h - row_play_h) * 0.5f);
-        float play_inset = std::max(0.f, (mid_w - play_w) * 0.5f);
-
-        ImGui::BeginGroup();
-        if (side_pad > 0) ImGui::Dummy(ImVec2(col_w, side_pad));
-        draw_column(left);
-        ImGui::EndGroup();
-        ImGui::SameLine(0, gap);
-        ImGui::BeginGroup();
-        if (valid) {
-            if (play_pad > 0) ImGui::Dummy(ImVec2(mid_w, play_pad));
-            if (play_inset > 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + play_inset);
-            play_button(play_w, row_play_h);
-            ImGui::Dummy(ImVec2(mid_w, 0));
-        }
-        ImGui::EndGroup();
-        ImGui::SameLine(0, gap);
-        ImGui::BeginGroup();
-        if (side_pad > 0) ImGui::Dummy(ImVec2(col_w, side_pad));
-        draw_column(right);
-        ImGui::EndGroup();
+        hero_h = ImGui::GetCursorPosY() - y0;
+        ImVec2 wp = ImGui::GetWindowPos(), ws = ImGui::GetWindowSize();
+        draw_stitch(ImGui::GetWindowDrawList(), ImVec2(wp.x + S(8), wp.y + S(8)),
+                    ImVec2(wp.x + ws.x - S(8), wp.y + ws.y - S(8)), S(21), kSandDeep, S(2));
+        ImGui::EndChild();
+        if (two) ImGui::SameLine(0, gap);
+        else ImGui::Dummy(ImVec2(0, S(10)));
     }
+    ImGui::BeginGroup();
+    const float y0 = ImGui::GetCursorPosY();
+    float w = ImGui::GetContentRegionAvail().x;
+    if (!valid) w = std::min(w, S(720)), ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (ImGui::GetContentRegionAvail().x - w) * 0.5f);
+    const float x = ImGui::GetCursorPosX();
+    for (size_t k = 0; k < acts.size(); k++) {
+        const A& a = acts[k];
+        if (k) {
+            ImGui::SetCursorPosX(x + S(12));
+            dashes(w - S(24));
+        }
+        ImGui::SetCursorPosX(x);
+        if (action_card(a.id, a.icon, a.color, a.title, a.desc, ImVec2(w, action_height(a.title, a.desc, w)), a.enabled)) {
+            if (a.action == 0) load_game_ini(), g_page = Page::Settings;
+            if (a.action == 4) load_game_ini(), g_page = Page::Online;
+            if (a.action == 1) start_setup(true);
+            if (a.action == 2) pick(kPickBuild);
+            if (a.action == 5) g_prep_back = Page::Home, prep_open({folder}, folder, false);
+            if (a.action == 6) g_page = Page::Credits;
+            if (a.action == 3) {
+                DesktopResult r = add_to_desktop();
+                toast(r.ok ? trf("launcher.desktop.done", r.where) : std::string(tr("launcher.desktop.failed")));
+            }
+        }
+    }
+    list_h = ImGui::GetCursorPosY() - y0 - ImGui::GetStyle().ItemSpacing.y;
+    ImGui::EndGroup();
 }
 
 void footer_home() {
-#if defined(__APPLE__)
-    const char* shortcut_l = tr("launcher.home.install_app");
-#else
-    const char* shortcut_l = tr("launcher.home.desktop");
-#endif
-    if (button(tr("launcher.credits"), kWhite)) g_page = Page::Credits;
-
-    // Same style as the side footer buttons, centered between them.
-    float shortcut_bw = button_width(shortcut_l);
-    float mid = (ImGui::GetWindowContentRegionMin().x + ImGui::GetWindowContentRegionMax().x - shortcut_bw) * 0.5f;
-    ImGui::SameLine(0, 0);
-    ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(), mid));
-    if (button(shortcut_l, kBlue)) {
-        DesktopResult r = add_to_desktop();
-        toast(r.ok ? trf("launcher.desktop.done", r.where) : std::string(tr("launcher.desktop.failed")));
-    }
-
-    if (player_beside().empty()) {  // a release has no setup to start over
-        align_right({tr("launcher.home.start_over")});
-        if (button(tr("launcher.home.start_over"), kRed)) g_banner.clear(), g_page = Page::Welcome;
-    }
+    if (!player_beside().empty()) return;  // a release has no setup to start over
+    if (button(tr("launcher.home.start_over"), kWhite)) g_banner.clear(), g_page = Page::Welcome;
 }
 
 // ---- settings: a few of the game's config.ini keys ------------------------------------------------------------
@@ -3164,6 +3420,7 @@ void setting_row(const char* label, const char* desc, const char* key, const cha
         ImGui::EndCombo();
     }
     nav_item();
+    frame_hover(true);
     ImGui::PopID();
     ImGui::Dummy(ImVec2(0, S(2)));
     ImGui::Separator();
@@ -3201,24 +3458,21 @@ void page_settings() {
     {
         Ini& li = settings();
         bool check = li.get("launcher.update_check", "1") != "0";
-        bool changed = ImGui::Checkbox(tr("launcher.update.check"), &check);
-        nav_item();
+        bool changed = toggle(tr("launcher.update.check"), &check);
         if (changed) {
             li.set("launcher.update_check", check ? "1" : "0");
             li.save();
             if (check) update_check_start();
         }
         bool autostart = li.get("launcher.autostart", "1") != "0";
-        bool autostart_changed = ImGui::Checkbox(tr("launcher.autostart.setting"), &autostart);
-        nav_item();
+        bool autostart_changed = toggle(tr("launcher.autostart.setting"), &autostart);
         if (autostart_changed) {
             li.set("launcher.autostart", autostart ? "1" : "0");
             if (!li.save()) toast(tr("launcher.settings.save_failed"));
             if (!autostart) g_autostart_at = -1, g_autostart_ui = false;
         }
         bool fullscreen = li.get("launcher.fullscreen", "0") == "1";
-        bool fullscreen_changed = ImGui::Checkbox(tr("launcher.fullscreen"), &fullscreen);
-        nav_item();
+        bool fullscreen_changed = toggle(tr("launcher.fullscreen"), &fullscreen);
         if (fullscreen_changed) {
             if (SDL_SetWindowFullscreen(g_window, fullscreen)) {
                 li.set("launcher.fullscreen", fullscreen ? "1" : "0");
@@ -3319,8 +3573,7 @@ void page_online() {
         ImGui::Separator();
     }
     bool on = g_game_ini.get("online.enabled", "0") == "1";
-    bool enabled_changed = ImGui::Checkbox(tr("online.enabled"), &on);
-    nav_item();
+    bool enabled_changed = toggle(tr("online.enabled"), &on);
     if (enabled_changed) {
         g_game_ini.set("online.enabled", on ? "1" : "0");
         if (!g_game_ini.save()) toast(tr("launcher.settings.save_failed"));
@@ -3381,27 +3634,38 @@ void footer_online() {
 
 // ---- credits: contributors and the project's references -------------------------------------------------------
 
+// One credit as a row of the home page's list: the name, what they did under it, and (with a page) an arrow; the
+// row opens the page, hovered with a paper back, focused with a lagoon edge. Rows are divided by the Importer's dashes.
 void credit_entry(const char* name, const char* desc, const char* url = nullptr) {
     ImGui::PushID(name);
-    ImGui::BeginGroup();
-    if (url && *url) {
-        ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0, 0, 0, 0));
-        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, col4(rgb(255, 240, 196)));
-        ImGui::PushStyleColor(ImGuiCol_HeaderActive, col4(rgb(255, 240, 196)));
-        ImGui::PushStyleColor(ImGuiCol_Text, col4(kBlue));
-        if (ImGui::Selectable(name, false)) SDL_OpenURL(url);
-        ImGui::PopStyleColor(4);
-        if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-        nav_item();
+    const float w = ImGui::GetContentRegionAvail().x, pad = S(12), arrow = url && *url ? S(36) : 0;
+    const float inner = w - 2 * pad - arrow;
+    const float nfs = font_size(g_title) * 0.66f, dfs = font_size(g_body) * 0.84f;
+    const float nh = measure(g_title, nfs, name, inner).y, dh = measure(g_body, dfs, desc, inner).y;
+    const float h = pad + nh + S(3) + dh + pad;
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    float t = 0;
+    bool focus = false;
+    if (arrow > 0) {
+        if (nav_card("##link", ImVec2(w, h))) SDL_OpenURL(url);
+        t = hover_anim(), focus = nav_focused();
     } else {
-        ImGui::TextUnformatted(name);
+        ImGui::Dummy(ImVec2(w, h));
     }
-    text_small(desc);
-    ImGui::EndGroup();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec2 q(p.x + w, p.y + h);
+    if (t > 0 || focus) dl->AddRectFilled(p, q, mix(kSand, kBoard, focus ? 1.0f : t), S(16));
+    if (focus) dl->AddRect(p, q, kLagoonDeep, S(16), 0, S(3));
+    dl->AddText(g_title, nfs, ImVec2(p.x + pad, p.y + pad), kInk, name, nullptr, inner);
+    dl->AddText(g_body, dfs, ImVec2(p.x + pad, p.y + pad + nh + S(3)), kInkSoft, desc, nullptr, inner);
+    if (arrow > 0) {
+        ImVec2 c(q.x - pad - S(12) + t * S(3), p.y + h * 0.5f);
+        dl->AddCircleFilled(c, S(13), focus ? kYellow : mix(kBoard, kYellow, t));
+        theme_icon(dl, nx::ui::kIconPlay, ImVec2(c.x + S(1), c.y), S(8), t > 0 || focus ? kInk : kInkSoft);
+    }
     ImGui::PopID();
-    ImGui::Dummy(ImVec2(0, S(2)));
-    ImGui::Separator();
-    ImGui::Dummy(ImVec2(0, S(2)));
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + S(12));
+    dashes(w - S(24));
 }
 
 void page_credits() {
@@ -3605,11 +3869,46 @@ void pages_close_requested() {
 }
 
 bool pages_busy() {
-    return setup_state().running || prepare_running() || probe_busy() || ImGui::GetTime() < g_toast_until ||
+    return g_animating || setup_state().running || prepare_running() || probe_busy() || ImGui::GetTime() < g_toast_until ||
            g_opening_since >= 0;
 }
 
+void pages_style(float scale) {
+    ImGuiStyle& s = ImGui::GetStyle();
+    s.FrameBorderSize = 1.5f * scale;  // dropdowns, checkboxes and fields stand out from the sand
+    s.WindowRounding *= 30.0f / 28.0f;
+    s.FrameRounding *= 2;  // pills (clamped to half the height)
+    s.PopupRounding *= 1.4f;
+    ImVec4* c = s.Colors;
+    c[ImGuiCol_Text] = col4(kInk);
+    c[ImGuiCol_TextDisabled] = col4(rgb(176, 158, 136));
+    c[ImGuiCol_WindowBg] = col4(kBoard);
+    c[ImGuiCol_ChildBg] = col4(kSand);
+    c[ImGuiCol_PopupBg] = col4(kBoard);
+    c[ImGuiCol_Border] = col4(kSandDeep);
+    c[ImGuiCol_FrameBg] = col4(kBoard);  // paper on the sand panels, edged in deep sand
+    c[ImGuiCol_FrameBgHovered] = col4(rgb(255, 250, 230));
+    c[ImGuiCol_FrameBgActive] = col4(kYellow);
+    c[ImGuiCol_ScrollbarGrab] = col4(rgb(226, 212, 174));
+    c[ImGuiCol_ScrollbarGrabHovered] = col4(rgb(208, 192, 150));
+    c[ImGuiCol_ScrollbarGrabActive] = col4(rgb(190, 172, 128));
+    c[ImGuiCol_CheckMark] = col4(kLeafDeep);
+    c[ImGuiCol_SliderGrab] = col4(kMint);
+    c[ImGuiCol_SliderGrabActive] = col4(kLagoonDeep);
+    c[ImGuiCol_Button] = col4(kBoard);  // also a dropdown's arrow box: the same as its frame
+    c[ImGuiCol_ButtonHovered] = col4(rgb(255, 250, 230));
+    c[ImGuiCol_ButtonActive] = col4(kSandDeep);
+    c[ImGuiCol_Header] = col4(rgb(250, 236, 168));
+    c[ImGuiCol_HeaderHovered] = col4(rgb(249, 226, 128));
+    c[ImGuiCol_HeaderActive] = col4(kYellow);
+    c[ImGuiCol_Separator] = col4(kSandDeep);
+    c[ImGuiCol_PlotHistogram] = col4(kGreen);
+    c[ImGuiCol_NavCursor] = col4(kLagoonDeep);
+    c[ImGuiCol_ModalWindowDimBg] = col4(rgb(107, 84, 68, 102));
+}
+
 bool pages_draw(float scale, ImFont* title) {
+    g_animating = false;
     g_scale = scale, g_title = title, g_body = ImGui::GetFont();
     ImGuiIO& io = ImGui::GetIO();
     ImGuiContext& ctx = *ImGui::GetCurrentContext();
@@ -3690,8 +3989,9 @@ bool pages_draw(float scale, ImFont* title) {
     ImVec2 size = g_portrait ? ImVec2(ds.x - S(16), ds.y - S(16))
                              : ImVec2(std::min(ds.x - S(32), S(1180)), std::min(ds.y - S(32), S(700)));
     ImVec2 pos((ds.x - size.x) * 0.5f, (ds.y - size.y) * 0.5f);
+    // The board's soft, flat drop under it; its stitched edge is drawn first thing in the window.
     ImGui::GetBackgroundDrawList()->AddRectFilled(ImVec2(pos.x, pos.y + S(6)), ImVec2(pos.x + size.x, pos.y + size.y + S(6)),
-                                                  rgb(60, 110, 70, 60), S(28));
+                                                  rgb(138, 106, 58, 31), S(30));
     ImGui::SetNextWindowPos(pos, ImGuiCond_Always);
     ImGui::SetNextWindowSize(size, ImGuiCond_Always);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(g_portrait ? 14 : 22), S(g_portrait ? 14 : 20)));
@@ -3700,6 +4000,8 @@ bool pages_draw(float scale, ImFont* title) {
                      ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollbar |
                      ImGuiWindowFlags_NoBringToFrontOnFocus);
     ImGui::PopStyleVar();
+    draw_stitch(ImGui::GetWindowDrawList(), ImVec2(pos.x + S(8), pos.y + S(8)),
+                ImVec2(pos.x + size.x - S(8), pos.y + size.y - S(8)), S(23), kSandDeep, S(2));
     const Page drawn_page = g_page;
     g_nav_items.clear();
     g_nav_section = 0;
