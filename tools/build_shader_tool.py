@@ -14,6 +14,8 @@ Needs the .NET 10 SDK. The translator's sources (Ryubing, at the commit tools/se
 the checkout's private/third_party/ryubing when missing, checked against their SHA-256 (RYUBING_SHA256).
 """
 import hashlib
+import http.client
+import time
 import io
 import os
 import re
@@ -43,7 +45,15 @@ def fetch_ryubing(repo):
         sys.exit(f"Ryubing {commit} (tools/setup_acnh.py) has no SHA-256 in RYUBING_SHA256 (tools/build_shader_tool.py)")
     url = f"https://codeberg.org/Software_arch/Ryubing/archive/{commit}.tar.gz"
     print("downloading", url, flush=True)
-    data = urllib.request.urlopen(url, timeout=120).read()
+    for attempt in range(3):  # Codeberg times out now and then (a release job failed on it once)
+        try:
+            data = urllib.request.urlopen(url, timeout=120).read()
+            break
+        except (OSError, http.client.HTTPException) as e:  # a timeout, an HTTP error, a download cut short
+            if attempt == 2:
+                raise
+            print(f"{url}: {e}, trying again", flush=True)
+            time.sleep(10 * (attempt + 1))
     got = hashlib.sha256(data).hexdigest()
     if got != want:
         sys.exit(f"{url}: SHA-256 {got}, not the expected {want}: not extracted")
