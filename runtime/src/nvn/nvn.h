@@ -260,6 +260,9 @@ struct Texture : Object {
     // What of the memory the CPU wrote, as bytes from `memory` ([lo, hi); UINT64_MAX / 0: nothing known yet). Merged by
     // mark_dirty, taken with `dirty`; a pitch-linear texture then uploads only the rows it touches (glyph cache).
     std::atomic<uint64_t> dirty_lo{UINT64_MAX}, dirty_hi{0};
+    // Something outside the GPU wrote it after the GPU did (textures_written: a JPEG decoded into a target the game
+    // cleared first): the replay takes it as no longer rendered, so the dirty bytes are uploaded.
+    std::atomic<bool> written_behind{false};
     void mark_dirty(uint64_t lo, uint64_t hi) {  // [lo, hi) of the texture's bytes; (0, UINT64_MAX): all of it
         for (uint64_t c = dirty_lo; lo < c && !dirty_lo.compare_exchange_weak(c, lo);) {}
         for (uint64_t c = dirty_hi; hi > c && !dirty_hi.compare_exchange_weak(c, hi);) {}
