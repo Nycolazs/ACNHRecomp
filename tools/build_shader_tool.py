@@ -72,7 +72,12 @@ def main():
     if "bionic" in rid:
         cmd += ["-p:DisableUnsupportedError=true", "-p:PublishAotUsingRuntimePack=true"]
     print(" ".join(cmd), flush=True)
-    subprocess.check_call(cmd, env=dict(os.environ, DOTNET_CLI_TELEMETRY_OPTOUT="1"))
+    # MSBuild takes environment variables as properties, names in any case: the release workflow's VERSION (v0.11.0)
+    # became the packages' Version, which NuGet's restore refused ("not a valid version string")
+    env = {k: v for k, v in os.environ.items() if k.upper() not in ("VERSION", "VERSIONPREFIX", "VERSIONSUFFIX",
+                                                                      "PACKAGEVERSION", "CONFIGURATION", "PLATFORM")}
+    env["DOTNET_CLI_TELEMETRY_OPTOUT"] = "1"
+    subprocess.check_call(cmd, env=env)
     exe = "spirv_harness.exe" if rid.startswith("win") else "spirv_harness"
     os.makedirs(dest, exist_ok=True)
     shutil.copy2(os.path.join(out, exe), os.path.join(dest, exe))
