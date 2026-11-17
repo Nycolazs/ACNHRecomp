@@ -437,6 +437,10 @@ private:
                                    : "another version of the game (" + id + ")") +
                        ", not of " + (version_.empty() ? build_id_ : version_) +
                        ": pick the extracted RomFS folder of this version to prepare the game folder");
+            // a folder from before the record (made_for fell back to game.ini): recorded now, so a later stage cut
+            // short (an add-on added, uncomplete) doesn't leave it refused as "a preparation that did not end"
+            std::error_code rec;
+            if (id == build_id_ && !fs::exists(out_ / ".import" / "romfs.pak.build_id", rec)) made("romfs.pak");
         }
         if (!romfs_pak_ && !here && within(out_, romfs))
             refuse("the game folder " + str(out_) + " cannot be inside the RomFS (" + r_.romfs.path + ")");
