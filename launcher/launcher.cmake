@@ -29,10 +29,12 @@ add_executable(acnhrecomp_launcher WIN32
     ${NX_LAUNCHER_IMGUI}/imgui.cpp ${NX_LAUNCHER_IMGUI}/imgui_draw.cpp ${NX_LAUNCHER_IMGUI}/imgui_tables.cpp
     ${NX_LAUNCHER_IMGUI}/imgui_widgets.cpp ${NX_LAUNCHER_IMGUI}/backends/imgui_impl_sdl3.cpp
     ${NX_LAUNCHER_IMGUI}/backends/imgui_impl_sdlrenderer3.cpp)
-# The launcher's fonts (assets/fonts, SIL OFL), compiled in as byte arrays so no release has to ship them: Fredoka for
-# titles and buttons, Nunito for text, the look of ACNHRecomp-Importer.
+# The launcher's fonts (assets/fonts), compiled in as byte arrays so no release has to ship them: Fredoka for titles
+# and buttons, Nunito for text (SIL OFL), the look of ACNHRecomp-Importer; and Lucide's icons (ISC), the launcher's
+# 24 of them only: Lucide-launcher.ttf is lucide-static 1.74.0's lucide.ttf subset with fontTools to their codepoints
+# (launcher/IconsLucide.h, from IconFontCppHeaders), without its GSUB/GPOS/GDEF tables.
 set(NX_LAUNCHER_GEN "${CMAKE_BINARY_DIR}/launcher_gen")
-foreach(font Fredoka-600 Nunito-700)
+foreach(font Fredoka-600 Nunito-700 Lucide-launcher)
     set(ttf "${CMAKE_SOURCE_DIR}/assets/fonts/${font}.ttf")
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${ttf}")
     string(REPLACE "-" "_" var "k${font}")

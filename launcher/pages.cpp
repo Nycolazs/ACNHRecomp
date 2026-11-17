@@ -44,11 +44,12 @@
 #include "ui/i18n.h"
 #include "ui/theme.h"
 
+#include "IconsLucide.h"  // IconFontCppHeaders: the codepoints of assets/fonts/Lucide-launcher.ttf
+
 namespace launcher {
 
 namespace {
 
-using nx::ui::theme_icon;
 using nx::ui::tr;
 using nx::ui::trf;
 
@@ -84,6 +85,48 @@ ImU32 ink_on(ImU32 c) {
 }
 
 ImVec4 col4(ImU32 c) { return ImGui::ColorConvertU32ToFloat4(c); }
+
+ImFont* g_icons = nullptr;  // Lucide (main.cpp), nullptr when the fonts fell back to the built-in one
+
+// The launcher's own icons past ui/theme.h's.
+enum { kIconHammer = 100, kIconMonitorDown, kIconRefresh, kIconHeart, kIconPuzzle, kIconDownload };
+
+// Every icon is Lucide's glyph, drawn so it fills about the drawn icons' 1.4 r; without the icon font, ui/theme.h's
+// line drawing (the launcher's own icons as the nearest of those).
+void draw_icon(ImDrawList* dl, int icon, ImVec2 c, float r, ImU32 col) {
+    const char* g = nullptr;
+    int drawn = icon;
+    switch (icon) {
+        case nx::ui::kIconLeaf: g = ICON_LC_LEAF; break;
+        case nx::ui::kIconScreen: g = ICON_LC_MONITOR; break;
+        case nx::ui::kIconNote: g = ICON_LC_MUSIC; break;
+        case nx::ui::kIconController: g = ICON_LC_GAMEPAD_2; break;
+        case nx::ui::kIconHouse: g = ICON_LC_HOUSE; break;
+        case nx::ui::kIconInfo: g = ICON_LC_INFO; break;
+        case nx::ui::kIconFolder: g = ICON_LC_FOLDER_OPEN; break;
+        case nx::ui::kIconKey: g = ICON_LC_KEY; break;
+        case nx::ui::kIconBox: g = ICON_LC_PACKAGE; break;
+        case nx::ui::kIconPlus: g = ICON_LC_PLUS; break;
+        case nx::ui::kIconCheck: g = ICON_LC_CHECK; break;
+        case nx::ui::kIconCross: g = ICON_LC_X; break;
+        case nx::ui::kIconPlay: return nx::ui::theme_icon(dl, icon, c, r, col);  // filled, as Lucide's is only outlined
+        case nx::ui::kIconGear: g = ICON_LC_SETTINGS; break;
+        case nx::ui::kIconGlobe: g = ICON_LC_GLOBE; break;
+        case nx::ui::kIconWarning: g = ICON_LC_TRIANGLE_ALERT; break;
+        case nx::ui::kIconText: g = ICON_LC_FILE_TEXT; break;
+        case kIconHammer: g = ICON_LC_HAMMER, drawn = nx::ui::kIconLeaf; break;
+        case kIconMonitorDown: g = ICON_LC_MONITOR_DOWN, drawn = nx::ui::kIconPlus; break;
+        case kIconRefresh: g = ICON_LC_REFRESH_CW, drawn = nx::ui::kIconLeaf; break;
+        case kIconHeart: g = ICON_LC_HEART, drawn = nx::ui::kIconInfo; break;
+        case kIconPuzzle: g = ICON_LC_PUZZLE, drawn = nx::ui::kIconText; break;
+        case kIconDownload: g = ICON_LC_DOWNLOAD, drawn = nx::ui::kIconPlus; break;
+        default: g = ICON_LC_INFO; break;
+    }
+    if (!g_icons) return nx::ui::theme_icon(dl, drawn, c, r, col);
+    const float fs = r * 1.7f;
+    const ImVec2 ts = g_icons->CalcTextSizeA(fs, FLT_MAX, 0, g);
+    dl->AddText(g_icons, fs, ImVec2(std::round(c.x - ts.x * 0.5f), std::round(c.y - ts.y * 0.5f)), col, g);
+}
 
 enum class Page { Welcome, Files, Install, Build, Done, Home, Settings, Online, Credits, Prepare, Preparing, Count };
 
@@ -738,8 +781,30 @@ bool toggle(const char* label, bool* v) {
     ImVec2 c(p.x + S(10) + ir, p.y + size.y * 0.5f);
     if (t > 0) dl->AddCircleFilled(c, ir * t, kLeafDeep);
     if (t < 1) dl->AddCircle(c, ir - S(1), mix(kInkSoft, kLeafDeep, t), 0, S(1.8f));
-    if (t > 0.5f) theme_icon(dl, nx::ui::kIconCheck, c, ir * 0.75f, kWhite);
+    if (t > 0.5f) draw_icon(dl, nx::ui::kIconCheck, c, ir * 0.75f, kWhite);
     dl->AddText(g_body, fs, ImVec2(c.x + ir + S(6), p.y + (size.y - ts.y) * 0.5f), kInk, label);
+    return clicked;
+}
+
+// The toggle chips' mark alone, `size` square: a filled leaf circle with a check when on, an empty ring when off
+// (lagoon as the pointer nears). For on/off inside a card (the save files, the mods). True when clicked (`*v` flipped).
+bool check_mark(const char* id, bool* v, float size) {
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    bool clicked = nav_card(id, ImVec2(size, size));
+    if (clicked) *v = !*v;
+    const bool off = ImGui::GetCurrentContext()->LastItemData.ItemFlags & ImGuiItemFlags_Disabled;
+    float t = off ? 0.0f : hover_anim();
+    bool focus = !off && nav_focused();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImVec2 c(p.x + size * 0.5f, p.y + size * 0.5f);
+    float r = size * 0.36f;
+    if (*v) {
+        dl->AddCircleFilled(c, r, off ? shade(kLeafDeep, 1.4f) : kLeafDeep);
+        draw_icon(dl, nx::ui::kIconCheck, c, r * 0.75f, kWhite);
+    } else {
+        dl->AddCircle(c, r - S(1), mix(kInkSoft, kLagoonDeep, t), 0, S(1.8f));
+    }
+    if (focus) dl->AddCircle(c, r + S(4), kLagoonDeep, 0, S(2.5f));
     return clicked;
 }
 
@@ -760,7 +825,7 @@ void status_mark(ImDrawList* dl, ImVec2 c, float r, Status s) {
     dl->AddCircleFilled(c, r, status_color(s));
     int icon = s == Status::Ok ? nx::ui::kIconCheck : s == Status::Error ? nx::ui::kIconCross
              : s == Status::Warning ? nx::ui::kIconWarning : -1;
-    if (icon >= 0) theme_icon(dl, icon, c, r * 0.8f, kWhite);
+    if (icon >= 0) draw_icon(dl, icon, c, r * 0.8f, kWhite);
 }
 
 float button_width(const char* label) { return std::max(S(120), ImGui::CalcTextSize(label).x + S(40)); }
@@ -978,7 +1043,7 @@ void ribbon() {
         dl->AddRect(a, b, kSandDeep, ph * 0.5f, 0, S(1.5f));
         ImVec2 c(a.x + S(14) + S(10), a.y + ph * 0.5f);
         dl->AddCircleFilled(c, S(10), kOrange);
-        theme_icon(dl, nx::ui::kIconPlus, c, S(6), kWhite);
+        draw_icon(dl, kIconDownload, c, S(6), kWhite);
         dl->AddText(g_body, nfs, ImVec2(c.x + S(18), a.y + (ph - ns.y) * 0.5f), kInk, note->c_str());
         if (note == &shortv && ImGui::IsMouseHoveringRect(a, b)) ImGui::SetTooltip("%s", full.c_str());
         ImGui::SetCursorScreenPos(ImVec2(b.x - S(8) - bw, a.y + (ph - fh) * 0.5f - S(1.5f)));
@@ -988,7 +1053,7 @@ void ribbon() {
     ImVec2 cp(p.x + w - combo_w, p.y + (h - ImGui::GetFrameHeight()) * 0.5f);
     ImGui::SetCursorScreenPos(cp);
     language_combo(combo_w);
-    theme_icon(dl, nx::ui::kIconGlobe, ImVec2(cp.x + S(22), cp.y + ImGui::GetFrameHeight() * 0.5f), S(11), kInk);
+    draw_icon(dl, nx::ui::kIconGlobe, ImVec2(cp.x + S(22), cp.y + ImGui::GetFrameHeight() * 0.5f), S(11), kInk);
     ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + h + S(8)));
     dashes();
     ImGui::Dummy(ImVec2(0, S(4)));
@@ -1072,7 +1137,7 @@ bool card(const char* id, const Card& c, ImVec2 size) {
     float pad = S(24), r = S(34), inner = size.x - 2 * pad;
     ImU32 icol = c.enabled ? c.color : kGrey;
     dl->AddCircleFilled(ImVec2(p.x + pad + r, p.y + pad + r), r, icol);
-    theme_icon(dl, c.icon, ImVec2(p.x + pad + r, p.y + pad + r), r * 0.6f, kWhite);
+    draw_icon(dl, c.icon, ImVec2(p.x + pad + r, p.y + pad + r), r * 0.6f, kWhite);
     float y = p.y + pad + 2 * r + S(14);
     float ts = font_size(g_title) * 0.85f;
     dl->AddText(g_title, ts, ImVec2(p.x + pad, y), c.enabled ? kInk : kInkSoft, c.title, nullptr, inner);
@@ -1084,7 +1149,7 @@ bool card(const char* id, const Card& c, ImVec2 size) {
     if (c.enabled) {
         ImVec2 a(q.x - pad - S(16), p.y + pad + r);
         dl->AddCircleFilled(a, S(16), hov ? kYellow : kSandDeep);
-        theme_icon(dl, nx::ui::kIconPlay, a, S(11), kInk);
+        draw_icon(dl, nx::ui::kIconPlay, a, S(11), kInk);
     }
     return clicked && c.enabled;
 }
@@ -1327,7 +1392,7 @@ void file_card(const FileCard& c, Status st, const std::function<void(float)>& r
     // The icon, coloured by the checks, with their mark.
     ImVec2 ic(p0.x + r, p0.y + r);
     dl->AddCircleFilled(ic, r, st == Status::Empty ? (c.required ? kBrown : kGrey) : status_color(st));
-    theme_icon(dl, c.icon, ic, r * 0.6f, kWhite);
+    draw_icon(dl, c.icon, ic, r * 0.6f, kWhite);
     if (st != Status::Empty) status_mark(dl, ImVec2(ic.x + r * 0.75f, ic.y + r * 0.75f), S(9), st);
     // Title, Required/Optional, what it is.
     const float tx = 2 * r + S(14), text_w = narrow ? avail - tx : avail - tx - btns - S(20);
@@ -1486,7 +1551,7 @@ void page_install() {
         ImVec2 p = ImGui::GetCursorScreenPos();
         float r = S(22);
         dl->AddCircleFilled(ImVec2(p.x + r, p.y + r), r, kBlue);
-        theme_icon(dl, nx::ui::kIconFolder, ImVec2(p.x + r, p.y + r), r * 0.6f, kWhite);
+        draw_icon(dl, nx::ui::kIconFolder, ImVec2(p.x + r, p.y + r), r * 0.6f, kWhite);
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 2 * r + S(14));
         ImGui::BeginGroup();
         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + (narrow ? avail - 2 * r - S(14) : avail - 2 * r - bw - S(34)));
@@ -1997,7 +2062,7 @@ void prep_options_card() {
     const ImVec2 p0 = ImGui::GetCursorScreenPos();
     const float r = S(g_portrait ? 20 : 24), x0 = ImGui::GetCursorPosX(), tx = 2 * r + S(14);
     dl->AddCircleFilled(ImVec2(p0.x + r, p0.y + r), r, kPurple);
-    theme_icon(dl, nx::ui::kIconGear, ImVec2(p0.x + r, p0.y + r), r * 0.6f, kWhite);
+    draw_icon(dl, nx::ui::kIconGear, ImVec2(p0.x + r, p0.y + r), r * 0.6f, kWhite);
     ImGui::SetCursorPosX(x0 + tx);
     ImGui::BeginGroup();
     ImGui::PushTextWrapPos(0);
@@ -2431,7 +2496,7 @@ bool big_button(const char* label, int icon, ImU32 color, float w, float h, cons
     float total = std::max(ts.x, ss.x) + ir * 2 + pad;
     float x = p.x + (w - total) * 0.5f;
     float ty = p.y + (h - text_h) * 0.5f;
-    theme_icon(dl, icon, ImVec2(x + ir, p.y + h * 0.5f), ir, kInk);
+    draw_icon(dl, icon, ImVec2(x + ir, p.y + h * 0.5f), ir, kInk);
     float tx = x + ir * 2 + pad;
     dl->AddText(g_title, fs, ImVec2(tx + (std::max(ts.x, ss.x) - ts.x) * 0.5f, ty), kInk, label);
     if (sub && *sub)
@@ -2467,7 +2532,7 @@ void hero(int icon, ImU32 color, float r) {
     ImVec2 c(p.x + w * 0.5f, p.y + r);
     dl->AddCircleFilled(c, r + S(10), kSandDeep);
     dl->AddCircleFilled(c, r, color);
-    theme_icon(dl, icon, c, r * 0.6f, kWhite);
+    draw_icon(dl, icon, c, r * 0.6f, kWhite);
     ImGui::Dummy(ImVec2(w, 2 * r + S(14)));
 }
 
@@ -2540,7 +2605,7 @@ bool action_card(const char* id, int icon, ImU32 color, const char* title, const
     ImU32 col = enabled ? color : kGrey;
     dl->AddCircleFilled(c, r, shade(col, 1.62f));
     dl->AddCircle(c, r - S(1), shade(col, 1.25f), 0, S(2));
-    theme_icon(dl, icon, c, r * 0.6f, shade(col, 0.72f));
+    draw_icon(dl, icon, c, r * 0.6f, shade(col, 0.72f));
     float x = c.x + r + S(14), arrow = S(30), inner = q.x - pad - arrow - x;
     float tfs = font_size(g_title) * 0.72f, dfs = font_size(g_body) * 0.82f;
     float th = measure(g_title, tfs, title, inner).y, dh = measure(g_body, dfs, desc, inner).y;
@@ -2551,7 +2616,7 @@ bool action_card(const char* id, int icon, ImU32 color, const char* title, const
         ImVec2 a(q.x - pad - S(12), c.y);
         a.x += t * S(3);  // the arrow leans the way it leads
         dl->AddCircleFilled(a, S(13), focus ? kYellow : mix(kSand, kYellow, t));
-        theme_icon(dl, nx::ui::kIconPlay, ImVec2(a.x + S(1), a.y), S(8), hov || focus ? kInk : kInkSoft);
+        draw_icon(dl, nx::ui::kIconPlay, ImVec2(a.x + S(1), a.y), S(8), hov || focus ? kInk : kInkSoft);
     }
     return clicked && enabled;
 }
@@ -2604,7 +2669,7 @@ bool pill(const char* id, int icon, ImU32 color, const char* text, bool clickabl
     dl->AddRect(p, q, focus ? kLagoonDeep : mix(kSandDeep, kMint, t), S(12), 0, focus ? S(3) : S(1.5f));
     ImVec2 c(p.x + pad + r, p.y + h * 0.5f);
     dl->AddCircleFilled(c, r, color);
-    theme_icon(dl, icon, c, r * 0.62f, kWhite);
+    draw_icon(dl, icon, c, r * 0.62f, kWhite);
     if (dot) {
         ImVec2 d(c.x + r * 0.72f, c.y - r * 0.72f);
         dl->AddCircleFilled(d, S(5), kBoard);
@@ -2634,7 +2699,7 @@ std::string active_island_pill_text() {
     return trf("launcher.home.save_file", tr("launcher.profiles.empty"));
 }
 
-// Version, add-ons, save file and mods under the title: as many chips on a line as fit, each line centred.
+// Version, add-ons, save file and mods under the title.
 void contents_row() {
     const BuildContents& c = contents();
     std::string ver = c.version.empty() ? tr("launcher.home.version_unknown") : trf("launcher.home.version", c.version);
@@ -2649,46 +2714,46 @@ void contents_row() {
     bool has_save = false;
     for (const nx::save_profiles::ProfileInfo& p : g_save_profiles)
         if (p.id == g_save_profile_active && p.has_save) has_save = true;
-    const std::string* texts[4] = {&ver, &add, &save, &mods};
+    // Two columns meeting at the middle: version over add-ons, save file over mods; one centred column when the
+    // two do not fit side by side.
     float avail = ImGui::GetContentRegionAvail().x, gap = S(8), x0 = ImGui::GetCursorScreenPos().x;
-    float y = ImGui::GetCursorScreenPos().y, row_h = S(38);
-    for (int k = 0; k < 4;) {
-        int n = 0;
-        float row_w = 0;
-        while (k + n < 4) {
-            float w = pill_width(texts[k + n]->c_str()) + (n ? gap : 0);
-            if (n && row_w + w > avail) break;
-            row_w += w, n++;
-        }
-        float x = x0 + std::floor((avail - row_w) * 0.5f);
-        for (int i = k; i < k + n; i++) {
-            ImGui::SetCursorScreenPos(ImVec2(x, y));
-            if (i == 0) {
-                pill("##version", nx::ui::kIconLeaf, kGreen, ver.c_str(), false, false, x);
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", g_build.data.c_str());
-            } else if (i == 1) {
-                if (pill("##addons", nx::ui::kIconBox, c.addons.empty() ? kGrey : kPurple, add.c_str(), true,
-                         !c.addons.empty(), x)) {
-                    contents(true);
-                    g_addons_open = true, g_addons_since = ImGui::GetTime();
-                }
-            } else if (i == 2) {
-                if (pill("##savefile", nx::ui::kIconHouse, has_save ? kRed : kGrey, save.c_str(), true, has_save, x)) {
-                    refresh_save_profiles();
-                    g_saves_open = true;
-                    g_saves_since = ImGui::GetTime();
-                }
-            } else if (pill("##mods", nx::ui::kIconText, g_mods.empty() ? kGrey : kOrange, mods.c_str(), true, mods_on > 0,
-                            x)) {
-                refresh_mods();
-                g_mods_open = true;
-                g_mods_since = ImGui::GetTime();
-            }
-            x += pill_width(texts[i]->c_str()) + gap;
-        }
-        k += n, y += row_h + gap;
+    const float y0 = ImGui::GetCursorScreenPos().y, row_h = S(38);
+    const float wl = std::max(pill_width(ver.c_str()), pill_width(add.c_str()));
+    const float wr = std::max(pill_width(save.c_str()), pill_width(mods.c_str()));
+    const bool two = wl + gap + wr <= avail;
+    const float mid = x0 + std::floor(two ? (avail - (wl + gap + wr)) * 0.5f + wl : avail * 0.5f);
+    auto at = [&](int i, const std::string& t) {
+        const float w = pill_width(t.c_str());
+        if (!two) return ImVec2(std::floor(mid - w * 0.5f), y0 + float(i) * (row_h + gap));
+        const bool left = i == 0 || i == 1;
+        return ImVec2(left ? mid - w : mid + gap, y0 + float(i % 2) * (row_h + gap));
+    };
+    // Order: version, add-ons, save file, mods (top to bottom when stacked).
+    ImVec2 p = at(0, ver);
+    ImGui::SetCursorScreenPos(p);
+    pill("##version", nx::ui::kIconLeaf, kGreen, ver.c_str(), false, false, p.x);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", g_build.data.c_str());
+    p = at(1, add);
+    ImGui::SetCursorScreenPos(p);
+    if (pill("##addons", nx::ui::kIconBox, c.addons.empty() ? kGrey : kPurple, add.c_str(), true, !c.addons.empty(), p.x)) {
+        contents(true);
+        g_addons_open = true, g_addons_since = ImGui::GetTime();
     }
-    ImGui::SetCursorScreenPos(ImVec2(x0, y - gap + S(4)));
+    p = at(2, save);
+    ImGui::SetCursorScreenPos(p);
+    if (pill("##savefile", nx::ui::kIconHouse, has_save ? kRed : kGrey, save.c_str(), true, has_save, p.x)) {
+        refresh_save_profiles();
+        g_saves_open = true;
+        g_saves_since = ImGui::GetTime();
+    }
+    p = at(3, mods);
+    ImGui::SetCursorScreenPos(p);
+    if (pill("##mods", kIconPuzzle, g_mods.empty() ? kGrey : kOrange, mods.c_str(), true, mods_on > 0, p.x)) {
+        refresh_mods();
+        g_mods_open = true;
+        g_mods_since = ImGui::GetTime();
+    }
+    ImGui::SetCursorScreenPos(ImVec2(x0, y0 + float(two ? 2 : 4) * (row_h + gap) - gap + S(4)));
 }
 
 // The add-on content, one card each: its number, size and files, and that the game loads it.
@@ -2703,7 +2768,7 @@ void addons_popup() {
         ImVec2 p = ImGui::GetCursorScreenPos();
         float r = S(18);
         dl->AddCircleFilled(ImVec2(p.x + r, p.y + r), r, c.addons.empty() ? kGrey : kPurple);
-        theme_icon(dl, nx::ui::kIconBox, ImVec2(p.x + r, p.y + r), r * 0.6f, kWhite);
+        draw_icon(dl, nx::ui::kIconBox, ImVec2(p.x + r, p.y + r), r * 0.6f, kWhite);
         float fs = font_size(g_title) * 0.8f;
         dl->AddText(g_title, fs, ImVec2(p.x + 2 * r + S(12), p.y + r - fs * 0.6f), kInk, tr("launcher.addons.title"));
         ImGui::Dummy(ImVec2(0, 2 * r + S(12)));
@@ -2724,7 +2789,7 @@ void addons_popup() {
             float cr = S(15);
             ImVec2 cc(q.x + S(14) + cr, q.y + h * 0.5f);
             dl->AddCircleFilled(cc, cr, kPurple);
-            theme_icon(dl, nx::ui::kIconBox, cc, cr * 0.6f, kWhite);
+            draw_icon(dl, nx::ui::kIconBox, cc, cr * 0.6f, kWhite);
             std::string title = trf("launcher.addons.item", std::to_string(o.index));
             std::string sub = size_text(o.bytes) + "  \xC2\xB7  " + trf("launcher.addons.files", std::to_string(o.files));
             float bfs = font_size(g_body);
@@ -2737,7 +2802,7 @@ void addons_popup() {
             dl->AddText(g_body, bfs * 0.85f, ImVec2(ox, q.y + (h - os.y) * 0.5f), rgb(70, 140, 60), ok);
             ImVec2 kc(ox - S(16), q.y + h * 0.5f);
             dl->AddCircleFilled(kc, S(10), kGreen);
-            theme_icon(dl, nx::ui::kIconCheck, kc, S(6), kWhite);
+            draw_icon(dl, nx::ui::kIconCheck, kc, S(6), kWhite);
             ImGui::Dummy(ImVec2(w, h + S(8)));
         }
         ImGui::Dummy(ImVec2(0, S(4)));
@@ -2763,7 +2828,7 @@ void saves_popup() {
         ImVec2 p = ImGui::GetCursorScreenPos();
         float r = S(18);
         dl->AddCircleFilled(ImVec2(p.x + r, p.y + r), r, kRed);
-        theme_icon(dl, nx::ui::kIconHouse, ImVec2(p.x + r, p.y + r), r * 0.6f, kWhite);
+        draw_icon(dl, nx::ui::kIconHouse, ImVec2(p.x + r, p.y + r), r * 0.6f, kWhite);
         float fs = font_size(g_title) * 0.8f;
         dl->AddText(g_title, fs, ImVec2(p.x + 2 * r + S(12), p.y + r - fs * 0.6f), kInk, tr("launcher.profiles.title"));
         ImGui::Dummy(ImVec2(0, 2 * r + S(8)));
@@ -2805,13 +2870,16 @@ void saves_popup() {
 
                 const bool active = prof.id == g_save_profile_active;
                 ImVec2 tile_min = ImGui::GetCursorScreenPos();
-                ImGui::PushStyleColor(ImGuiCol_ChildBg, col4(active ? rgb(255, 232, 160) : rgb(252, 246, 228)));
+                // The Importer's chips: the chosen one pale leaf with a leaf edge, the others paper with a sand edge.
+                ImGui::PushStyleColor(ImGuiCol_ChildBg, col4(active ? kLeafPale : kBoard));
+                ImGui::PushStyleColor(ImGuiCol_Border, col4(active ? kGreen : kSandDeep));
+                ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, S(1.5f));
                 ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, S(14));
                 ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(12), S(10)));
                 ImGui::BeginChild("##tile", ImVec2(tile_w, tile_h),
                                   ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
-                ImGui::PopStyleVar(2);
-                ImGui::PopStyleColor();
+                ImGui::PopStyleVar(3);
+                ImGui::PopStyleColor(2);
 
                 std::string label =
                     prof.has_save && !prof.island_name.empty() ? prof.island_name : tr("launcher.profiles.empty");
@@ -2829,11 +2897,21 @@ void saves_popup() {
                 ImGui::PopStyleColor(4);
                 if (selected) select_save_profile(prof.id);
                 nav_item();
+                const float pick_t = hover_anim();
 
                 ImDrawList* tdl = ImGui::GetWindowDrawList();
                 float name_fs = font_size(g_body);
                 const float tile_pad = ImGui::GetStyle().WindowPadding.x;
-                ImVec2 name_pos(sel_min.x + S(4), sel_min.y + S(4));
+                // The toggle's mark before the name: filled with a check on the save in use, an empty ring on the others.
+                const float mr = S(8.5f);
+                const ImVec2 mc(sel_min.x + S(4) + mr, sel_min.y + S(4) + name_fs * 0.55f);
+                if (active) {
+                    tdl->AddCircleFilled(mc, mr, kLeafDeep);
+                    draw_icon(tdl, nx::ui::kIconCheck, mc, mr * 0.75f, kWhite);
+                } else {
+                    tdl->AddCircle(mc, mr - S(1), mix(kInkSoft, kLagoonDeep, pick_t), 0, S(1.8f));
+                }
+                ImVec2 name_pos(mc.x + mr + S(8), sel_min.y + S(4));
                 ImVec2 name_sz = measure(g_body, name_fs, label.c_str(), -1);
                 float name_right = tile_min.x + tile_w - tile_pad;
                 if (active) {
@@ -2849,7 +2927,7 @@ void saves_popup() {
                 float y = name_pos.y + name_sz.y + S(4);
                 if (prof.has_save && !prof.last_modified.empty()) {
                     std::string meta = trf("launcher.profiles.last_saved", prof.last_modified);
-                    tdl->AddText(g_body, font_size(g_body) * 0.8f, ImVec2(sel_min.x + S(4), y), kInkSoft, meta.c_str());
+                    tdl->AddText(g_body, font_size(g_body) * 0.8f, ImVec2(name_pos.x, y), kInkSoft, meta.c_str());
                 }
 
                 ImGui::SetCursorPosY(tile_h - ImGui::GetStyle().WindowPadding.y - ImGui::GetFrameHeight() - S(4));
@@ -2879,7 +2957,7 @@ void saves_popup() {
                     const float round = std::max(0.f, S(14) - inset);
                     // Foreground so the stroke is not covered by later tiles / fade.
                     ImGui::GetForegroundDrawList()->AddRect(ImVec2(a.x + inset, a.y + inset),
-                                                           ImVec2(b.x - inset, b.y - inset), rgb(246, 170, 40), round, 0,
+                                                           ImVec2(b.x - inset, b.y - inset), kLagoonDeep, round, 0,
                                                            thick);
                 }
                 ImGui::PopID();
@@ -2950,7 +3028,7 @@ void mods_popup() {
         ImVec2 p = ImGui::GetCursorScreenPos();
         float r = S(18);
         dl->AddCircleFilled(ImVec2(p.x + r, p.y + r), r, kOrange);
-        theme_icon(dl, nx::ui::kIconText, ImVec2(p.x + r, p.y + r), r * 0.6f, kWhite);
+        draw_icon(dl, nx::ui::kIconText, ImVec2(p.x + r, p.y + r), r * 0.6f, kWhite);
         float fs = font_size(g_title) * 0.8f;
         dl->AddText(g_title, fs, ImVec2(p.x + 2 * r + S(12), p.y + r - fs * 0.6f), kInk, tr("launcher.mods.title"));
         ImGui::Dummy(ImVec2(0, 2 * r + S(8)));
@@ -3038,14 +3116,16 @@ void mods_popup() {
                 const float tile_h = tile_hs[i];
 
                 ImVec2 tile_min = ImGui::GetCursorScreenPos();
-                ImGui::PushStyleColor(ImGuiCol_ChildBg, col4(rgb(255, 252, 242)));
+                ImGui::PushStyleColor(ImGuiCol_ChildBg, col4(mod.enabled ? kLeafPale : kBoard));
+                ImGui::PushStyleColor(ImGuiCol_Border, col4(mod.enabled ? kGreen : kSandDeep));
+                ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, S(1.5f));
                 ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, S(14));
                 ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(tile_pad_x, tile_pad_y));
                 ImGui::BeginChild("##tile", ImVec2(tile_w, tile_h),
                                   ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding,
                                   ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
-                ImGui::PopStyleVar(2);
-                ImGui::PopStyleColor();
+                ImGui::PopStyleVar(3);
+                ImGui::PopStyleColor(2);
 
                 // Load-order badge (1-based among enabled mods), centred on the checkbox.
                 ImDrawList* tdl = ImGui::GetWindowDrawList();
@@ -3065,14 +3145,9 @@ void mods_popup() {
                 ImGui::SetCursorScreenPos(ImVec2(row_min.x + 2 * br + S(10), row_min.y));
                 const float row_top_y = ImGui::GetCursorPosY();
                 bool enabled = mod.enabled;
-                // Green fill when on, blue on hover; white check mark for contrast.
-                if (mod.enabled) ImGui::PushStyleColor(ImGuiCol_FrameBg, col4(kGreen));
-                ImGui::PushStyleColor(ImGuiCol_CheckMark, col4(kWhite));
-                ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, col4(kBlue));
-                ImGui::PushStyleColor(ImGuiCol_FrameBgActive, col4(kBlue));
                 // Bundled mods (ptbr / speedfix60) are driven by language / 60 FPS settings — not toggled here.
                 ImGui::BeginDisabled(mod.managed);
-                if (ImGui::Checkbox("##on", &enabled) && !mod.managed) {
+                if (check_mark("##on", &enabled, ImGui::GetFrameHeight()) && !mod.managed) {
                     std::string err;
                     if (nx::mod_manager::set_enabled(g_build.data, mod.id, enabled, &err)) {
                         load_game_ini();
@@ -3093,8 +3168,6 @@ void mods_popup() {
                         g_banner = trf("launcher.mods.toggle_failed", err);
                 }
                 ImGui::EndDisabled();
-                ImGui::PopStyleColor(3 + (mod.enabled ? 1 : 0));
-                nav_item();
                 // Max two lines; first line flush with the top of the checkbox (not its baseline).
                 // SameLine+Text would apply CurrLineTextBaseOffset and drop the name to the bottom of the box.
                 {
@@ -3289,7 +3362,7 @@ void page_home() {
     if (valid) acts.push_back({"##online", nx::ui::kIconGlobe, kMint, tr("tab.online"), tr("online.home.desc"), true, 4});
     const bool player = !player_beside().empty();  // a release: the folder is played as it is, nothing to rebuild
     if (setup_supported() && !player)
-        acts.push_back({"##rebuild", nx::ui::kIconLeaf, kOrange, tr("launcher.home.rebuild"),
+        acts.push_back({"##rebuild", kIconHammer, kOrange, tr("launcher.home.rebuild"),
                         tr(can_rebuild ? "launcher.home.rebuild.desc" : "launcher.home.rebuild.unavailable"), can_rebuild, 1});
     // The game folder's code built for another ACNHRecomp, or not for this computer: prepared again here, keeping the
     // rest (prepare/README.md: run again on the same folder).
@@ -3297,18 +3370,18 @@ void page_home() {
     const bool again = player && prepare_built() && is_prepared_folder(folder) &&
                        ((valid && g_build_stale) || std::strcmp(g_build_problem, "launcher.reason.no_game_lib") == 0);
     if (again)
-        acts.push_back({"##again", nx::ui::kIconLeaf, kGreen, tr("launcher.home.prepare_again"),
+        acts.push_back({"##again", kIconRefresh, kGreen, tr("launcher.home.prepare_again"),
                         tr(valid ? "launcher.home.prepare_again.stale" : "launcher.home.prepare_again.desc"), true, 5});
 #if defined(__APPLE__)
-    acts.push_back({"##desktop", nx::ui::kIconPlus, kGreen, tr("launcher.home.install_app"),
+    acts.push_back({"##desktop", kIconMonitorDown, kGreen, tr("launcher.home.install_app"),
                     tr("launcher.home.install_app.desc"), true, 3});
 #else
-    acts.push_back({"##desktop", nx::ui::kIconPlus, kGreen, tr("launcher.home.desktop"), tr("launcher.home.desktop.desc"),
+    acts.push_back({"##desktop", kIconMonitorDown, kGreen, tr("launcher.home.desktop"), tr("launcher.home.desktop.desc"),
                     true, 3});
 #endif
     acts.push_back({"##change", nx::ui::kIconFolder, kBlue, tr(player ? "launcher.home.change_game" : "launcher.home.change"),
                     tr(player ? "launcher.home.change_game.desc" : "launcher.home.change.desc"), true, 2});
-    acts.push_back({"##credits", nx::ui::kIconInfo, kOrange, tr("launcher.credits"), tr("launcher.credits.text"), true, 6});
+    acts.push_back({"##credits", kIconHeart, kRed, tr("launcher.credits"), tr("launcher.credits.text"), true, 6});
 
     const float avail = ImGui::GetContentRegionAvail().x, gap = S(26);
     const bool two = valid && !g_portrait && avail >= S(820);
@@ -3360,6 +3433,17 @@ void page_home() {
     float w = ImGui::GetContentRegionAvail().x;
     if (!valid) w = std::min(w, S(720)), ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (ImGui::GetContentRegionAvail().x - w) * 0.5f);
     const float x = ImGui::GetCursorPosX();
+    // Beside the island panel the list fits the page: the rows keep their size and only the space around the dashes
+    // between them gives way, so a sixth row (Rebuild, Prepare again) needs no scrolling.
+    float sp = ImGui::GetStyle().ItemSpacing.y;
+    if (two && acts.size() > 1) {
+        float rows = 0;
+        for (const A& a : acts) rows += action_height(a.title, a.desc, w);
+        const float n = float(acts.size() - 1);
+        const float room = ImGui::GetContentRegionAvail().y - S(4);
+        sp = std::clamp((room - rows - n * S(2.5f)) / (2 * n), S(2), sp);
+    }
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, sp));
     for (size_t k = 0; k < acts.size(); k++) {
         const A& a = acts[k];
         if (k) {
@@ -3381,6 +3465,7 @@ void page_home() {
         }
     }
     list_h = ImGui::GetCursorPosY() - y0 - ImGui::GetStyle().ItemSpacing.y;
+    ImGui::PopStyleVar();
     ImGui::EndGroup();
 }
 
@@ -3661,7 +3746,7 @@ void credit_entry(const char* name, const char* desc, const char* url = nullptr)
     if (arrow > 0) {
         ImVec2 c(q.x - pad - S(12) + t * S(3), p.y + h * 0.5f);
         dl->AddCircleFilled(c, S(13), focus ? kYellow : mix(kBoard, kYellow, t));
-        theme_icon(dl, nx::ui::kIconPlay, ImVec2(c.x + S(1), c.y), S(8), t > 0 || focus ? kInk : kInkSoft);
+        draw_icon(dl, nx::ui::kIconPlay, ImVec2(c.x + S(1), c.y), S(8), t > 0 || focus ? kInk : kInkSoft);
     }
     ImGui::PopID();
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + S(12));
@@ -3706,6 +3791,7 @@ void page_credits() {
     credit_entry("ACNH 60 FPS + SpeedFix", tr("launcher.credits.ref.speedfix"),
                  "https://github.com/tmouh/acnh-60fps");
     credit_entry("SDL3, Capstone, Unicorn, libvpx, libvorbis, FSR 1", tr("launcher.credits.ref.libs"));
+    credit_entry("Fredoka, Nunito, Lucide, IconFontCppHeaders", tr("launcher.credits.ref.fonts"));
     credit_entry("LASRecomp", tr("launcher.credits.ref.las"), "https://github.com/peiikai/LASRecomp");
     credit_entry("SwitchRecomp", tr("launcher.credits.ref.switchrecomp"), "https://github.com/bgyss/SwitchRecomp");
     credit_entry("uDPR", tr("launcher.credits.ref.udpr"), "https://github.com/shatter9652/uDPR");
@@ -3804,6 +3890,8 @@ void pages_init(SDL_Window* window) {
         if (n == "done") g_page = Page::Done;
         if (n == "home") g_page = Page::Home;
         if (n == "addons") g_page = Page::Home, g_addons_open = true, g_addons_since = -1;  // the add-on panel open
+        if (n == "saves") g_page = Page::Home, g_saves_open = true, g_saves_since = -1;  // the save files open
+        if (n == "mods") g_page = Page::Home, g_mods_open = true, g_mods_since = -1;    // the mods open
         if (n == "settings") g_page = Page::Settings;
         if (n == "credits") g_page = Page::Credits;
         // a folder chosen as the game folder (NX_LAUNCHER_PICK), as the welcome page's card or a drop gives it
@@ -3907,9 +3995,9 @@ void pages_style(float scale) {
     c[ImGuiCol_ModalWindowDimBg] = col4(rgb(107, 84, 68, 102));
 }
 
-bool pages_draw(float scale, ImFont* title) {
+bool pages_draw(float scale, ImFont* title, ImFont* icons) {
     g_animating = false;
-    g_scale = scale, g_title = title, g_body = ImGui::GetFont();
+    g_scale = scale, g_title = title, g_body = ImGui::GetFont(), g_icons = icons;
     ImGuiIO& io = ImGui::GetIO();
     ImGuiContext& ctx = *ImGui::GetCurrentContext();
     static bool controller_navigation = false, controller_connected = false, popup_last_frame = false;
@@ -4006,7 +4094,7 @@ bool pages_draw(float scale, ImFont* title) {
     g_nav_items.clear();
     g_nav_section = 0;
     ribbon();
-    float footer = ImGui::GetFrameHeight() + S(20);
+    float footer = ImGui::GetFrameHeight() + S(24);  // + the buttons' lip (button())
     const bool paper_page = g_page == Page::Settings || g_page == Page::Credits;
     ImGui::PushStyleColor(ImGuiCol_ChildBg, paper_page ? col4(kPaper) : ImVec4(0, 0, 0, 0));
     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, S(22));

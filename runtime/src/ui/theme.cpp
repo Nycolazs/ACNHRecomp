@@ -193,7 +193,7 @@ struct Embedded {
     const void* data = nullptr;
     int size = 0;
 };
-Embedded g_embedded_body, g_embedded_title;
+Embedded g_embedded_body, g_embedded_title, g_embedded_icons;
 
 }  // namespace
 
@@ -201,6 +201,8 @@ void theme_set_embedded_fonts(const void* body, int body_size, const void* title
     g_embedded_body = {body, body_size};
     g_embedded_title = {title, title_size};
 }
+
+void theme_set_embedded_icons(const void* data, int size) { g_embedded_icons = {data, size}; }
 
 float theme_scale(float width, float height) {
     if (height > width) return std::clamp(width / 720.0f, 0.6f, 4.0f);
@@ -305,9 +307,20 @@ ThemeFonts theme_build_fonts(float scale, const std::string& user_font) {
         merge_embedded();
         return f;
     };
+    // The icons: their own font, so each is drawn at the size it needs.
+    auto add_icons = [&]() -> ImFont* {
+        if (!g_embedded_icons.data) return nullptr;
+        static const ImWchar pua[] = {0xe000, 0xf8ff, 0};
+        ImFontConfig cfg;
+        cfg.FontDataOwnedByAtlas = false;
+        cfg.OversampleH = 2;
+        return io.Fonts->AddFontFromMemoryTTF(const_cast<void*>(g_embedded_icons.data), g_embedded_icons.size,
+                                              std::round(56.0f * scale), &cfg, pua);
+    };
     ThemeFonts fonts;
     fonts.body = add(std::round(20.0f * scale), g_embedded_body);
     fonts.title = add(std::round(30.0f * scale), g_embedded_title);
+    fonts.icons = add_icons();
     // A font file the atlas cannot use makes the whole build fail and leaves it empty (0x0): on Android the backend then
     // made a zero-sized texture and the driver crashed. Then: the built-in font alone.
     unsigned char* px = nullptr;
@@ -320,6 +333,7 @@ ThemeFonts theme_build_fonts(float scale, const std::string& user_font) {
         embed = true;
         fonts.body = add(std::round(20.0f * scale), g_embedded_body);
         fonts.title = add(std::round(30.0f * scale), g_embedded_title);
+        fonts.icons = add_icons();
     } else if (embed) {
         THEME_LOG("ui: no system CJK font stb can draw: the embedded Noto subset (%d bytes)", kUiCjkTtfSize);
     }
@@ -332,6 +346,7 @@ ThemeFonts theme_build_fonts(float scale, const std::string& user_font) {
         fonts.body = io.Fonts->AddFontDefault(&d);
         ImFontConfig t;
         t.SizePixels = std::round(30.0f * scale);
+        fonts.icons = nullptr;
         fonts.title = io.Fonts->AddFontDefault(&t);
         io.Fonts->Build();
     }

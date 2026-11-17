@@ -14,11 +14,15 @@ namespace nx::ui {
 struct ThemeFonts {
     ImFont* body = nullptr;   // 20 design pixels
     ImFont* title = nullptr;  // 30 design pixels
+    ImFont* icons = nullptr;  // the embedded icon font (theme_set_embedded_icons), 56 design pixels; else nullptr
 };
 
 // Fonts compiled into the program (the launcher's Fredoka and Nunito), used in place of the system's for the body or the
 // title; the system's cover and CJK fonts are still merged under them. Call before theme_build_fonts.
 void theme_set_embedded_fonts(const void* body, int body_size, const void* title, int title_size);
+// An icon font compiled into the program (the launcher's Lucide), built as ThemeFonts::icons over the private-use
+// area. Call before theme_build_fonts.
+void theme_set_embedded_icons(const void* data, int size);
 
 // Design 1280x720: the shorter side decides (a portrait window is laid out on its width).
 float theme_scale(float width, float height);

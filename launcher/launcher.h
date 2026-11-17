@@ -32,7 +32,7 @@ namespace launcher {
 void pages_init(SDL_Window* window);
 void pages_style(float scale);  // the launcher's colours over theme_apply_style's (the island notice board of the Importer)
 // One frame of the current page inside an ImGui frame; false once the launcher should exit (the game started).
-bool pages_draw(float scale, ImFont* title);
+bool pages_draw(float scale, ImFont* title, ImFont* icons);  // icons: Lucide (nullptr: the drawn ones)
 void pages_drop(const std::string& path, float x, float y);  // a file dropped on the window, at x, y
 void pages_drag(bool over, float x, float y);                // files dragged over the window (or no longer)
 void pages_close_requested();                                // the window's close button (asks first while it builds)

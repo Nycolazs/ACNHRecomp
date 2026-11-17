@@ -33,6 +33,7 @@
 
 #include "Fredoka-600.inc"  // launcher.cmake: assets/fonts compiled in
 #include "Nunito-700.inc"
+#include "Lucide-launcher.inc"
 
 using namespace launcher;
 
@@ -88,6 +89,7 @@ int main(int argc, char** argv) {
     ImGui_ImplSDLRenderer3_Init(renderer);
     pages_init(window);
     nx::ui::theme_set_embedded_fonts(kNunito_700, int(sizeof kNunito_700), kFredoka_600, int(sizeof kFredoka_600));
+    nx::ui::theme_set_embedded_icons(kLucide_launcher, int(sizeof kLucide_launcher));
 
     float font_scale = 0;
     std::string font_lang;
@@ -127,7 +129,7 @@ int main(int argc, char** argv) {
         ImGui_ImplSDL3_NewFrame();
         ImGui::NewFrame();
         ImGui::PushFont(fonts.body);
-        run = pages_draw(scale, fonts.title);
+        run = pages_draw(scale, fonts.title, fonts.icons);
         ImGui::PopFont();
         ImGui::Render();
         SDL_SetRenderScale(renderer, io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y);
