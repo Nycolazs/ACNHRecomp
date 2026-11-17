@@ -4086,7 +4086,7 @@ bool pages_draw(float scale, ImFont* title, ImFont* icons) {
     ImGui::Begin("##launcher", nullptr,
                  ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
                      ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollbar |
-                     ImGuiWindowFlags_NoBringToFrontOnFocus);
+                     ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoBringToFrontOnFocus);
     ImGui::PopStyleVar();
     draw_stitch(ImGui::GetWindowDrawList(), ImVec2(pos.x + S(8), pos.y + S(8)),
                 ImVec2(pos.x + size.x - S(8), pos.y + size.y - S(8)), S(23), kSandDeep, S(2));
@@ -4099,7 +4099,13 @@ bool pages_draw(float scale, ImFont* title, ImFont* icons) {
     ImGui::PushStyleColor(ImGuiCol_ChildBg, paper_page ? col4(kPaper) : ImVec4(0, 0, 0, 0));
     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, S(22));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(14), S(12)));
-    ImGui::BeginChild("##page", ImVec2(0, -footer), ((paper_page ? ImGuiChildFlags_AlwaysUseWindowPadding : ImGuiChildFlags_None) | ImGuiChildFlags_NavFlattened));
+    // A page that overflows by a few pixels only (rounding, the buttons' lip) does not scroll: the wheel moved the
+    // home page by that much with nothing to see. Its overflow from the last frame.
+    static float overflow[int(Page::Count)] = {};
+    const bool still = overflow[int(g_page)] < S(12);
+    ImGui::BeginChild("##page", ImVec2(0, -footer), ((paper_page ? ImGuiChildFlags_AlwaysUseWindowPadding : ImGuiChildFlags_None) | ImGuiChildFlags_NavFlattened),
+                      still ? ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoScrollbar : ImGuiWindowFlags_None);
+    if (still && ImGui::GetScrollY() != 0) ImGui::SetScrollY(0);
     ImGui::PopStyleVar(2);
     ImGui::PopStyleColor();
     g_nav_section = 1;
@@ -4140,6 +4146,7 @@ bool pages_draw(float scale, ImFont* title, ImFont* icons) {
     if (int(g_page) == pi) content_h[pi] = ImGui::GetCursorPosY() - start;
     static const char* scroll = std::getenv("NX_LAUNCHER_SCROLL");  // tests: 0..1 of the page's scroll range
     if (scroll) ImGui::SetScrollY(ImGui::GetScrollMaxY() * float(std::atof(scroll)));
+    overflow[pi] = ImGui::GetScrollMaxY();
     ImGui::EndChild();
     g_nav_section = 2;
     ImGui::Dummy(ImVec2(0, S(2)));
