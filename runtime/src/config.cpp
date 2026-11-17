@@ -263,7 +263,7 @@ std::vector<std::pair<std::string, std::string>> config_preset(const std::string
 
 namespace {
 
-// The NX_* variables set before the game (a .bat's `set`, a script, the launcher, config.txt on Android), as the
+// The NX_* variables (and Mesa/Turnip's TU_*, MESA_*, FD_*) set before the game (a .bat's `set`, a script, the launcher, config.txt on Android), as the
 // player sees them: whether a switch reached it shows in the log (issue #49: one that did not looked tested).
 void log_environment() {
 #if defined(_WIN32)
@@ -274,7 +274,8 @@ void log_environment() {
 #endif
     std::string list;
     for (char** e = env; e && *e; e++)
-        if (std::strncmp(*e, "NX_", 3) == 0) {
+        if (std::strncmp(*e, "NX_", 3) == 0 || std::strncmp(*e, "TU_", 3) == 0 || std::strncmp(*e, "MESA_", 5) == 0 ||
+            std::strncmp(*e, "FD_", 3) == 0) {  // Turnip's switches too (config.txt on Android): a test shows it ran
             std::string v = *e;
             if (v.size() > 120) v = v.substr(0, 117) + "...";
             list += (list.empty() ? "" : " ") + v;
