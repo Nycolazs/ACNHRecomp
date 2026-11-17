@@ -166,6 +166,7 @@ const Entry kLauncherEn[] = {
     {"launcher.credits.ref.renodx", "By Carlos Lopez Jr. (MIT). HDR output and tonemapping (SwapChainPass, ToneMapPass, RenoDRT), compiled into the HDR shaders."},
     {"launcher.credits.ref.speedfix", "By tmouh (CC BY-NC 4.0). The 60 FPS game-speed rescaling: its patches of main for 3.0.2 and 3.0.3, unchanged, are built into the preparation, which recompiles main with them (SPEEDFIX.txt)."},
     {"launcher.credits.ref.libs", "Supporting libraries used across input, disassembly, differential tests, video, audio and upscaling."},
+    {"launcher.credits.ref.fonts", "The launcher's look: Fredoka and Nunito (SIL OFL) for its text, Lucide (ISC) for its icons, through IconFontCppHeaders (zlib)."},
     {"launcher.credits.ref.las", "Studied before starting: clock, saves, shared fonts, and keyboard ideas."},
     {"launcher.credits.ref.switchrecomp", "Studied before starting: HIPC/CMIF/TIPC specifications and validation."},
     {"launcher.credits.ref.udpr", "Studied before starting: resumable staged setup."},
