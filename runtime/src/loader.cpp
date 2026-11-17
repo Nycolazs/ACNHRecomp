@@ -158,6 +158,9 @@ void fatal(const char* fmt, ...) {
     vsnprintf(buf, sizeof buf, fmt, ap);
     va_end(ap);
     log("FATAL: %s", buf);
+    log_flush();
+    static std::atomic_flag shown = ATOMIC_FLAG_INIT;  // one dialog: another thread's fatal meanwhile only logs and ends
+    if (!shown.test_and_set()) plat::show_fatal(buf);
     plat::exit_process(1);
 }
 

@@ -177,6 +177,11 @@ bool init() {
     auto gipa = reinterpret_cast<PFN_vkGetInstanceProcAddr>(plat::vulkan_get_instance_proc_addr());
     if (!gipa) {
         log("nvn/vk: no Vulkan loader");
+        // Nothing would ever be drawn: the game ran on unseen, its sound playing (Discord: a driver updated without a
+        // restart). Said and ended instead.
+        if (!plat::headless())
+            fatal("Vulkan, which the game draws with, could not be loaded on this computer (vulkan-1.dll / libvulkan "
+                  "not found). Update or reinstall your graphics card's driver, restart the computer, then try again.");
         return false;
     }
     for (size_t k = 0; k < g_entry_count; k++) *g_entries[k].pfn = gipa(nullptr, g_entries[k].name);

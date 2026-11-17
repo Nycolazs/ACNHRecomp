@@ -532,6 +532,12 @@ void update_refresh_hz() {
 }
 int display_refresh_hz() { return g_refresh_hz.load(); }
 
+void show_fatal(const char* text) {
+    if (headless()) return;
+    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "ACNHRecomp", text, nullptr);
+}
+
+
 void set_fullscreen(bool on) {
     run_on_main([on] {
         if (g_window) SDL_SetWindowFullscreen(g_window, on);
