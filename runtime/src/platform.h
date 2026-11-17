@@ -239,6 +239,9 @@ void input_script(PadState& p);  // NX_INPUT_SCRIPT presses (input_script.cpp), 
 // ---- for the settings screen (ui/settings.cpp) ----
 void set_fullscreen(bool on);                  // live
 int display_refresh_hz();                      // the display the window is on (60 when unknown)
+// A fatal error said to the player in a dialog box (desktop; not headless, not Android), before the process ends: a
+// game that stops before its window shows otherwise closes with the launcher and nothing said.
+void show_fatal(const char* text);
 void set_master_volume(float v);               // 0..1, live (scales the device output)
 std::string controller_name();                 // the connected controller ("" = none)
 std::string controller_kind();                 // "switch", "xbox", "playstation", "generic" or "" (none)

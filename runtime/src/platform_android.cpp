@@ -965,6 +965,7 @@ void set_fullscreen(bool) {}
 // was light enough, interiors running twice as fast (Discord, 0.10.0). The frame's threads only load it.
 std::atomic<int> g_refresh_hz{60};
 int display_refresh_hz() { return g_refresh_hz.load(std::memory_order_relaxed); }
+void show_fatal(const char*) {}  // the app's own screens explain (Home.java reads nx.log's FATAL line)
 void set_master_volume(float) {}
 std::string controller_name() { return ""; }
 std::string controller_kind() { return ""; }

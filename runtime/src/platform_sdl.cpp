@@ -365,6 +365,12 @@ void update_refresh_hz() {
 }
 int display_refresh_hz() { return g_refresh_hz.load(); }
 
+void show_fatal(const char* text) {
+    if (headless()) return;
+    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "ACNHRecomp", text, nullptr);
+}
+
+
 std::atomic<float> g_volume{-1.0f};  // master volume 0..1 (-1: not read from config.ini yet; audio_cb applies it)
 
 void set_fullscreen(bool on) {
