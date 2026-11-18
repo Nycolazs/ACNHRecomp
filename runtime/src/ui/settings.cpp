@@ -1347,7 +1347,7 @@ void page_controls() {
                 ImGui::PushID(alt);
                 std::string cur = alt ? config_get(std::string("input.key2.") + b.key, "")
                                       : config_get(std::string("input.key.") + b.key, b.def);
-                if (cur.empty()) cur = "-";
+                cur = cur.empty() ? "-" : ui_key_label(cur);  // the key as the keyboard's layout names it
                 const bool capturing = g_capturing == k && g_capturing_alt == bool(alt);
                 std::string text = capturing ? std::string(tr(alt ? "controls.press_key_alt" : "controls.press_key")) : cur;
                 if (ImGui::Button(text.c_str(), ImVec2(-1, 0))) {
