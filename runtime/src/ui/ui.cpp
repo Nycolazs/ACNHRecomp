@@ -85,6 +85,21 @@ void push(const Input& in) {
 }
 
 #if !defined(__ANDROID__)
+// The keys' names in the player's keyboard layout, by scancode, for the Controls page (ui_key_label). The bindings are
+// key positions named as on a US keyboard: a German keyboard's Y is the "Z" key, an AZERTY's A the "Q" key. SDL's
+// keymap is the main thread's, so the names are read there (ui_event) and the pages take them under the lock.
+std::mutex g_key_names_lock;
+std::vector<std::string> g_key_names;  // "" where SDL has no name
+
+void read_key_names() {
+    std::vector<std::string> names(SDL_SCANCODE_COUNT);
+    for (int sc = 1; sc < SDL_SCANCODE_COUNT; sc++)
+        if (const char* n = SDL_GetKeyName(SDL_GetKeyFromScancode(SDL_Scancode(sc), SDL_KMOD_NONE, false)); n)
+            names[sc] = n;
+    std::lock_guard lk(g_key_names_lock);
+    g_key_names = std::move(names);
+}
+
 Input mouse_at(SDL_WindowID id, float x, float y) {
     int w = 0, h = 0;
     SDL_Window* win = SDL_GetWindowFromID(id);
@@ -672,6 +687,11 @@ void ui_shutdown() {
 
 #if !defined(__ANDROID__)
 void ui_event(const SDL_Event& e) {
+    static bool key_names_read = false;  // and again when the player switches layouts
+    if (!key_names_read || e.type == SDL_EVENT_KEYMAP_CHANGED) {
+        key_names_read = true;
+        read_key_names();
+    }
     switch (e.type) {
         case SDL_EVENT_KEY_DOWN:
         case SDL_EVENT_KEY_UP: {
@@ -884,6 +904,15 @@ void ui_cancel_key_capture() {
 }
 
 int ui_take_captured_key() { return g_captured.exchange(0); }
+
+#if !defined(__ANDROID__)
+std::string ui_key_label(const std::string& name) {
+    SDL_Scancode sc = SDL_GetScancodeFromName(name.c_str());
+    std::lock_guard lk(g_key_names_lock);
+    if (sc > SDL_SCANCODE_UNKNOWN && size_t(sc) < g_key_names.size() && !g_key_names[sc].empty()) return g_key_names[sc];
+    return name;
+}
+#endif
 
 void ui_notice(const std::string& text) {
     {
