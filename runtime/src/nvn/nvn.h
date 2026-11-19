@@ -24,6 +24,7 @@
 
 #include <nx/runtime.h>
 
+#include "nvn_polygon.h"
 #include "vk_bridge.h"  // Vulkan headers without prototypes; the dispatch table is vk_gen.h
 
 namespace nx::nvn {
@@ -419,11 +420,8 @@ struct DepthStencilInfo {
     uint32_t depth_func = 0;
     uint32_t stencil_func[2] = {}, stencil_fail[2] = {}, depth_fail[2] = {}, depth_pass[2] = {};
 };
-struct PolygonInfo {
-    uint32_t cull = 0, front = 0, mode = 0, offset_enables = 0;
-};
 // nvn_raster.cpp: an EQUAL colour pass after a depth pre-pass (tested, not written), drawn with a small depth bias
-// toward the camera (DEBUG.md #60). NX_EQUAL_SLACK=<units> (default 4, 0: off); the slope term is 1 per unit of it.
+// toward the camera (DEBUG.md #60). NX_EQUAL_SLACK=<units> (default 4, 0: off).
 bool equal_slack_pass(const DepthStencilInfo& d);
 
 struct TargetViews {  // SetRenderTargets' blob: level and layer per color target (0..7) and depth (8)

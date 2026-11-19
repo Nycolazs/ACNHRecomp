@@ -1061,8 +1061,7 @@ PipelineKey canonical_key(const PipelineKey& in) {
     k.polygon.cull = in.polygon.cull;
     k.polygon.front = in.polygon.front == 0 ? 0 : 1;
     k.polygon.mode = in.polygon.mode <= 1 ? in.polygon.mode : 2;
-    uint32_t offset_bit = in.polygon.mode <= 2 ? 1u << in.polygon.mode : 4u;
-    k.polygon.offset_enables = in.polygon.offset_enables & offset_bit ? 7 : 0;
+    k.polygon.offset_enables = in.polygon.offset_enabled() ? 7 : 0;
     k.depth_clamp = in.depth_clamp && vk_features().depthClamp ? 1 : 0;
     k.alpha_to_coverage = in.alpha_to_coverage ? 1 : 0;
     k.uw_x = in.uw_x;
@@ -1191,8 +1190,7 @@ std::unique_ptr<PipeBuild> prepare_graphics_pipeline(const PipelineKey& key, con
     // Polygon offset: NVNpolygonOffsetEnable has a bit per polygon mode (POINT 1, LINE 2, FILL 4; modes are POINT 0,
     // LINE 1, FILL 2), and the bit of the mode drawn with decides. Factor, units and clamp are dynamic (SetDepthBias
     // at each draw, nvn_raster.cpp): the game sets them on the command buffer, not in the state object.
-    uint32_t offset_bit = key.polygon.mode <= 2 ? 1u << key.polygon.mode : 4u;
-    rs.depthBiasEnable = key.polygon.offset_enables & offset_bit || equal_slack_pass(key.depth) ? VK_TRUE : VK_FALSE;
+    rs.depthBiasEnable = key.polygon.offset_enabled() || equal_slack_pass(key.depth) ? VK_TRUE : VK_FALSE;
 
     VkPipelineMultisampleStateCreateInfo& ms = B.ms;
     ms = {VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};

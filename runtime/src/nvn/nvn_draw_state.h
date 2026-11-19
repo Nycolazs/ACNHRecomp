@@ -38,7 +38,7 @@ struct State {
     float depth_near = 0, depth_far = 1;
     // Command-buffer rasterizer state (nvn_raster.cpp), per face 0 front, 1 back. NVN's defaults: masks 0xFF, ref 0.
     uint8_t stencil_ref[2] = {0, 0}, stencil_compare_mask[2] = {0xFF, 0xFF}, stencil_write_mask[2] = {0xFF, 0xFF};
-    float bias_factor = 0, bias_units = 0, bias_clamp = 0;  // SetPolygonOffsetClamp
+    PolygonOffset polygon_offset;  // SetPolygonOffsetClamp
     bool depth_bounds = false, depth_clamp = false;
     bool alpha_to_coverage = false;  // BindMultisampleState (G7)
     float depth_bounds_range[2] = {0, 1};
@@ -186,7 +186,7 @@ bool debug_shader_overrides(const std::vector<const ShaderInfo*>*& shaders, cons
 // nvn_raster.cpp: the stencil, polygon offset, depth bounds and depth clamp commands into g_state (false for other
 // commands), and their dynamic state for the next draw (stencil reference and masks, depth bias).
 bool raster_command(const Cmd& c);
-void raster_dynamic(VkCommandBuffer cb, bool slack);  // slack: equal_slack_pass (nvn.h)
+void raster_dynamic(VkCommandBuffer cb, bool slack, PolygonOffset offset);  // slack: equal_slack_pass (nvn.h)
 
 void trace_compute_once(const ShaderInfo* cs, uint32_t x, uint32_t y, uint32_t z);
 

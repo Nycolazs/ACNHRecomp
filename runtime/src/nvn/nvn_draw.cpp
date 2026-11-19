@@ -107,8 +107,11 @@ void set_dynamic(VkCommandBuffer cb, const VkViewport& vp, const VkRect2D& sc) {
     const State& s = (*g_state);
     uint32_t raster[10] = {s.stencil_ref[0],        s.stencil_ref[1],        s.stencil_compare_mask[0],
                           s.stencil_compare_mask[1], s.stencil_write_mask[0], s.stencil_write_mask[1]};
-    std::memcpy(raster + 6, &s.bias_factor, 4), std::memcpy(raster + 7, &s.bias_units, 4);
-    std::memcpy(raster + 8, &s.bias_clamp, 4);
+    // The EQUAL workaround enables Vulkan depth bias even when the game disables polygon offset.
+    // Cache the offset the draw uses so toggling its enable also updates the Vulkan command.
+    PolygonOffset offset = s.polygon.effective_offset(s.polygon_offset);
+    static_assert(sizeof(offset) == 3 * sizeof(uint32_t));
+    std::memcpy(raster + 6, &offset, sizeof offset);
     bool slack = s.depth.depth_test && equal_slack_pass(s.depth);
     raster[9] = slack;
     bool all = !b.has_dynamic;
@@ -119,7 +122,7 @@ void set_dynamic(VkCommandBuffer cb, const VkViewport& vp, const VkRect2D& sc) {
     if (differs(std::memcmp(b.blend, s.blend_color, sizeof b.blend) != 0))
         p_vkCmdSetBlendConstants(cb, s.blend_color), std::memcpy(b.blend, s.blend_color, sizeof b.blend);
     if (differs(std::memcmp(b.raster, raster, sizeof raster) != 0))  // stencil reference and masks, depth bias
-        raster_dynamic(cb, slack), std::memcpy(b.raster, raster, sizeof raster);  // (nvn_raster.cpp)
+        raster_dynamic(cb, slack, offset), std::memcpy(b.raster, raster, sizeof raster);  // (nvn_raster.cpp)
 }
 
 // A 16:9 layer laid over a widened target (the UI's composite quad, squeezed into the middle): when nothing else covered

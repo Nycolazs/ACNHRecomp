@@ -69,7 +69,7 @@ float equal_slack_factor() {
 // The colour pass after a pre-pass tests EQUAL (taken as LESS_OR_EQUAL, nvn_pipeline.cpp) against depth another
 // vertex shader wrote: Metal compiles the two apart, and where the colour pass lands a few ulps behind, the pixel
 // keeps the pre-pass's clear (black silhouettes, black/white wedges on slopes). A bias toward the camera of a few
-// units, plus one per unit of slope, covers that; it lets through only what lies within that distance of the
+// units covers that; it lets through only what lies within that distance of the
 // surface the pre-pass kept.
 // GREATER without depth writes is the same case the other way (DEBUG-2.md #65): the world map's "behind scenery"
 // silhouette draws the player again with GREATER after the G-buffer wrote it with LESS, and must fail where the player
@@ -101,7 +101,7 @@ bool raster_command(const Cmd& c) {
             return true;
         }
         case Cmd::SetPolygonOffsetClamp:
-            s.bias_factor = c.f[0], s.bias_units = c.f[1], s.bias_clamp = c.f[2];
+            s.polygon_offset = {c.f[0], c.f[1], c.f[2]};
             return true;
         case Cmd::SetDepthBounds: {
             // Recorded only: MoltenVK has no depthBounds feature (Metal has no depth bounds test), and Wonder keeps
@@ -118,7 +118,7 @@ bool raster_command(const Cmd& c) {
 }
 
 // Before each draw (every pipeline declares these dynamic, nvn_pipeline.cpp, so they must all be set).
-void raster_dynamic(VkCommandBuffer cb, bool slack) {
+void raster_dynamic(VkCommandBuffer cb, bool slack, PolygonOffset offset) {
     const State& s = (*g_state);
     auto set = [&](PFN_vkCmdSetStencilReference fn, const uint8_t* v) {  // the three setters share the signature
         if (v[0] == v[1]) {
@@ -144,8 +144,8 @@ void raster_dynamic(VkCommandBuffer cb, bool slack) {
     static const char* factor_env = std::getenv("NX_DEPTH_BIAS_FACTOR");
     static const float factor_scale = factor_env ? float(std::atof(factor_env)) : 2.0f;
     // A non-zero clamp needs the depthBiasClamp feature (MoltenVK has it: Metal's setDepthBias clamp).
-    float clamp = vk_features().depthBiasClamp ? s.bias_clamp : 0.0f;
-    float units = s.bias_units * units_scale, factor = s.bias_factor * factor_scale;
+    float clamp = vk_features().depthBiasClamp ? offset.clamp : 0.0f;
+    float units = offset.units * units_scale, factor = offset.factor * factor_scale;
     // When slack is enabled for the EQUAL (taken as LESS_OR_EQUAL) color pass, we apply a tiny constant bias
     // (units -= equal_slack_units(), default 4.0 units = 4 ULPs) toward the camera to cover minor floating-point
     // rounding discrepancies between VS_depth and VS_color.
