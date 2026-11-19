@@ -28,6 +28,26 @@ inline bool uw_on() { return uw_factor() != 1.0f; }
 bool uw_scaling();                       // any resizing at all in the current generation
 bool uw_widen_texture(Texture& t);       // nvnTextureInitialize: a screen target is marked (t.uw) and sized
 void uw_resize(Texture& t);              // a screen target sized for the current generation (image_of)
+
+// video.shadows (issue #54): on; low, the shadow maps drawn at half their size; off, not drawn (nvn_draw.cpp). Read
+// live: the game makes its shadow map anew every frame. NX_SHADOWS=0 / off / low / 1 set before the game wins.
+enum class Shadows { On, Low, Off };
+Shadows shadows_quality();
+// nvnTextureInitialize: with video.shadows = low a shadow map (a square depth render target of 1024 texels or more,
+// not a screen target, never drawn with colour targets) is marked (t.uw, t.shadow) and sized at half. Its viewports,
+// scissors, clears and the render scale of the shaders drawing into it follow as for a screen target. The shaders
+// that sample it get no scale of its own: the game's only read them by normalized depth-compare samples (no texel
+// fetch or size query on a depth image in any of its 9,452 shaders), which no scale changes.
+bool uw_shadow_texture(Texture& t);
+// Whether draws into this depth target with no colour target draw a shadow map (video.shadows = off skips them): one
+// halved by low, or one of a shadow map's shape never drawn with colour targets.
+bool uw_shadow_map(const Texture& t);
+// draw(): a depth target tested or written with colour targets. A square one is no shadow map: from now on neither
+// skipped nor halved.
+void uw_shadow_not_a_map(const Texture& t);
+// A halved shadow map back at its full size (drawn with colour targets, or video.shadows no longer low and the
+// texture not made again since).
+void uw_shadow_full_size(Texture& t);
 float uw_render_ratio();                 // the current generation's 3D scene share (temporal AA upscaling)
 uint32_t uw_generation();
 void uw_update(uint64_t present);        // game thread, each present: settings and window -> the wanted scale

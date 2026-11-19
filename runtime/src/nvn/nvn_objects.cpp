@@ -316,6 +316,7 @@ void TextureInitialize(CPU& c) {  // NVNboolean (NVNtexture*, const NVNtextureBu
     t.offset = driver(c, "nvnTextureBuilderGetMemoryOffset", {builder});
     t.storage_size = texture_storage_size(c, builder);
     uw_widen_texture(t);  // screen-sized render targets get the screen scale's size (nvn_ultrawide.cpp)
+    uw_shadow_texture(t);  // a shadow map at half its size with video.shadows = low (nvn_ultrawide.cpp)
     if (old) {
         std::lock_guard lk(objects_lock());
         pool_textures()[t.pool].insert(guest);
@@ -472,6 +473,7 @@ uint64_t make_snapshot(uint64_t guest) {  // under objects_lock
     copy->samples = t->samples, copy->depth_stencil_mode = t->depth_stencil_mode;
     copy->width = t->width, copy->height = t->height, copy->depth = t->depth, copy->stride = t->stride;
     copy->uw = t->uw, copy->base_w = t->base_w, copy->base_h = t->base_h, copy->uw_gen = t->uw_gen;
+    copy->shadow = t->shadow;
     copy->pool = t->pool, copy->offset = t->offset, copy->storage_size = t->storage_size;
     copy->memory = t->memory, copy->gpu = t->gpu, copy->block_height_gobs = t->block_height_gobs;
     std::memcpy(copy->swizzle, t->swizzle, sizeof copy->swizzle);

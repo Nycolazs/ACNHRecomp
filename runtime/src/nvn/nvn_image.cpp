@@ -72,9 +72,10 @@ bool image_supported(VkImageCreateInfo& ci, uint32_t nvn_format) {
 struct StorageKey {
     uint64_t memory = 0;
     uint32_t format = 0, width = 0, height = 0, depth = 0, levels = 0, target = 0, samples = 0, swizzle = 0;
+    bool shadow = false;  // a halved shadow map's image (scaled draws) is never another texture's of that size
     bool operator<(const StorageKey& o) const {
-        return std::tie(memory, format, width, height, depth, levels, target, samples, swizzle) <
-               std::tie(o.memory, o.format, o.width, o.height, o.depth, o.levels, o.target, o.samples, o.swizzle);
+        return std::tie(memory, format, width, height, depth, levels, target, samples, swizzle, shadow) <
+               std::tie(o.memory, o.format, o.width, o.height, o.depth, o.levels, o.target, o.samples, o.swizzle, o.shadow);
     }
 };
 std::map<StorageKey, std::weak_ptr<GpuImage>> g_live_images;
@@ -122,7 +123,7 @@ GpuImage* image_of(uint64_t guest) {
     // With them, the shadow map and the UI's text strips were sampled as stale uploads (#46). Env: bisecting.
     static const bool key_swizzle = std::getenv("NX_KEY_SWIZZLE") != nullptr;
     if (!key_swizzle) swizzle = 0;
-    StorageKey key{t->memory, t->format, t->width, t->height, t->depth, t->levels, t->target, t->samples, swizzle};
+    StorageKey key{t->memory, t->format, t->width, t->height, t->depth, t->levels, t->target, t->samples, swizzle, t->shadow};
     static const bool share = std::getenv("NX_NO_IMAGE_SHARE") == nullptr;  // bisecting
     // An R8 image widened for alpha-from-red keeps its own.
     static const bool old_rule = std::getenv("NX_SHARE_NO_POOL_SWIZZLE") != nullptr;  // bisecting
