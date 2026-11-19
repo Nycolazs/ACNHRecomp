@@ -892,9 +892,27 @@ bool prepared_holds(const Prepared& p) {
     return true;
 }
 
+// video.shadows = off (issue #54): the shadow maps are not drawn. The game draws them depth only into square targets
+// of 1024 texels or more (2048x2048 in TV mode, in the opening and on the island: ~750 of ~3,600 draws a frame there;
+// docs/PARALLEL_REPLAY.md counted 1536x1536), the only depth-only targets it has. Their clear still runs (a clear no
+// draw takes gets a pass of its own, nvn_clears.cpp), so every lookup reads the far plane: everything is lit. A
+// square depth target once drawn with colour targets is not one, and never skipped (uw_shadow_not_a_map below).
+// (video.shadows = low halves them instead: nvn_ultrawide.cpp, uw_shadow_texture.)
+bool shadow_target(const Targets& t) {
+    if (!t.depth) return false;
+    for (uint32_t k = 0; k < t.color_count; k++)
+        if (t.colors[k]) return false;
+    const Texture* d = get<Texture>(t.depth);
+    return d && uw_shadow_map(*d);
+}
+
 bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, const Cmd& c) {
     (*g_stats).total++;
     if ((*g_state).rasterizer_discard || !(*g_state).render_enable) return false;  // nothing reaches the targets
+    if (shadows_quality() == Shadows::Off && shadow_target(t)) {
+        (*g_stats).shadows_skipped++;
+        return false;
+    }
     Prepared& prep = *g_prep;
     if (prep.valid && prep.gen == *g_state_gen && prep.cb == cb && prep.mode == mode && *g_rendering &&
         targets_same(prep.t, t) && fast_draw_on() && prepared_holds(prep)) {
@@ -1075,6 +1093,22 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
             }
         return t;
     }();
+    // Shadow maps (video.shadows, nvn_ultrawide.cpp): a depth target this draw tests or writes with colour targets is
+    // not one (from now on never skipped nor halved). A halved one gets its full size back then (it would not fit the
+    // colour targets' pass; what was drawn into it earlier in the frame is lost, once), and also when the setting is no
+    // longer low and the game did not make it again since.
+    if (Texture* dt = tt.depth ? get<Texture>(tt.depth) : nullptr) {
+        const DepthStencilInfo& ds = (*g_state).depth;
+        bool colour = false;
+        for (uint32_t i = 0; i < tt.color_count; i++) colour |= tt.colors[i] != 0;
+        colour = colour && (ds.depth_test || ds.depth_write || ds.stencil_test);
+        if (colour) uw_shadow_not_a_map(*dt);
+        if (dt->shadow && (colour || shadows_quality() != Shadows::Low)) {
+            if (worker_bail("shadow map at full size")) return false;
+            uw_shadow_full_size(*dt);
+            if (pass_open_on(tt)) draw_end_rendering(cb, 1);  // the open pass holds the halved image
+        }
+    }
     if (tt.depth && (*g_state).depth.depth_write && temporal_on()) temporal_note_depth(image_of(tt.depth));
     vertex_read_barrier(cb, vs);  // G4
     // Is this draw's target a scaled screen target (viewport, scissor, render scale, UI squeeze; nvn_ultrawide.cpp)
@@ -1473,9 +1507,9 @@ void draw_log_stats() {
     Stats& t = (*g_stats);
     log("nvn draws: %llu recorded, %llu replayed:", (unsigned long long)recorded_draws(), (unsigned long long)t.total);
     log("nvn draws: %llu total, %llu done, %llu no program, %llu no vertex shader, %llu no pipeline, %llu no indices, "
-        "%llu missing a stage", (unsigned long long)t.total, (unsigned long long)t.done, (unsigned long long)t.no_program,
-        (unsigned long long)t.no_vertex, (unsigned long long)t.no_pipeline, (unsigned long long)t.no_indices,
-        (unsigned long long)t.missing_stage);
+        "%llu missing a stage, %llu shadows off", (unsigned long long)t.total, (unsigned long long)t.done,
+        (unsigned long long)t.no_program, (unsigned long long)t.no_vertex, (unsigned long long)t.no_pipeline,
+        (unsigned long long)t.no_indices, (unsigned long long)t.missing_stage, (unsigned long long)t.shadows_skipped);
     log("nvn passes: %llu ended by a draw's texture uploads or layout changes, %llu by new targets, %llu dispatches",
         (unsigned long long)t.breaks_textures, (unsigned long long)t.breaks_targets, (unsigned long long)t.dispatches);
 }

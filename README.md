@@ -449,7 +449,7 @@ Japanese, Korean, Simplified Chinese and Traditional Chinese.
 | Page | Options |
 |---|---|
 | Game | Game language (automatic from the system, the game's 14 languages, Brazilian Portuguese fan translation); menu language |
-| Video | Quality preset (quality, balanced, low), windowed / fullscreen, window size, game mode (1080p TV mode or 720p handheld mode), internal resolution (360p to 2160p/4K, or the window's), upscaling (bilinear or FSR 1, with sharpness), anti-aliasing (FXAA, supersampling), anisotropic filtering, aspect ratio (16:9, automatic from the window, 16:10, 4:3, 21:9, 32:9, phone ratios; applied live), frame rate, frame generation (built-in, or lsfg-vk if installed), GPU (automatic, dedicated, integrated), prepare shaders at startup |
+| Video | Quality preset (quality, balanced, low), windowed / fullscreen, window size, game mode (1080p TV mode or 720p handheld mode), internal resolution (360p to 2160p/4K, or the window's), upscaling (bilinear or FSR 1, with sharpness), anti-aliasing (FXAA, supersampling), anisotropic filtering, shadows (on, low at half resolution, or off for slower computers and phones; applied live), aspect ratio (16:9, automatic from the window, 16:10, 4:3, 21:9, 32:9, phone ratios; applied live), frame rate, frame generation (built-in, or lsfg-vk if installed), GPU (automatic, dedicated, integrated), prepare shaders at startup |
 | Audio | Master volume, environmental reverb, mute when the window is in the background |
 | Controls | Connected controller, confirm/cancel layout, button icons, vibration, stick dead zone, keyboard remapping |
 | Saves | Open the save folder, back up now, import, export, saves found on this computer, restore backups |
@@ -475,6 +475,7 @@ restart are marked on the screen. Environment variables set on the command line 
 | `video.resolution` | `native`, `360`, `432`, `480`, `540`, `720`, `900`, `1080`, `1440`, `2160`, `window` | `NX_RENDER_HEIGHT` |
 | `video.antialiasing` | `off`, `fxaa`, `ssaa15`, `ssaa2` (supersampling 1.5x / 2x) | `NX_AA` |
 | `video.anisotropy` | `game`, `2`, `4`, `8`, `16` | `NX_ANISOTROPY` |
+| `video.shadows` | `on`, `low`, `off` (read live) | `NX_SHADOWS` |
 | `video.aspect` | `16:9`, `auto`, `16:10`, `4:3`, `21:9`, `32:9`, phone ratios, any `W:H` | `NX_ULTRAWIDE` |
 | `video.gpu` | `auto`, `discrete`, `integrated` | `NX_GPU` |
 | `video.frame_rate` | `30`, `60` | `NX_PRESENT_INTERVAL` |

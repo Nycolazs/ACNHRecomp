@@ -47,6 +47,7 @@ struct State {
 struct Stats {
     uint64_t total = 0, no_program = 0, no_vertex = 0, no_pipeline = 0, no_indices = 0, done = 0, to_window = 0;
     uint64_t missing_stage = 0;  // drawn with a program that lost an untranslated stage
+    uint64_t shadows_skipped = 0;  // into a shadow map with video.shadows = off (nvn_draw.cpp)
     uint64_t dispatches = 0;
     uint64_t breaks_textures = 0, breaks_targets = 0;  // render passes ended by a draw: uploads/layouts, new targets
 };

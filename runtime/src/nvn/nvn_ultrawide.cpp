@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -269,8 +270,81 @@ bool uw_picture_target(const Texture& t) {
     return false;
 }
 
+Shadows shadows_quality() {
+    // The config generation and the quality in one word: a refresh racing another never keeps a stale pair.
+    static std::atomic<uint64_t> cached{~0ull};
+    const uint64_t now = config_generation() & (~0ull >> 2);
+    uint64_t c = cached.load(std::memory_order_relaxed);
+    if (c == ~0ull || c >> 2 != now) {
+        const char* e = config_env_override("NX_SHADOWS");
+        std::string v = e ? e : config_get("video.shadows", "on");
+        for (char& ch : v) ch = char(std::tolower(static_cast<unsigned char>(ch)));
+        const Shadows q = v == "low" ? Shadows::Low
+                          : v == "0" || v == "off" || v == "false" || v == "no" ? Shadows::Off
+                                                                               : Shadows::On;
+        c = now << 2 | uint64_t(q);
+        cached.store(c, std::memory_order_relaxed);
+    }
+    return Shadows(c & 3);
+}
+
+namespace {
+std::mutex g_shadow_lock;
+// Shapes of square depth targets a draw tested or wrote with colour targets: not shadow maps, so neither skipped nor
+// halved from then on (under the lock). Learned in every mode. By the game's size and the format only: the structs
+// over the same storage differ in their flags.
+std::set<std::string> g_not_shadow;
+std::string shadow_shape(const Texture& t) {
+    char key[48];
+    std::snprintf(key, sizeof key, "%ux%u fmt%x", t.uw ? t.base_w : t.width, t.uw ? t.base_h : t.height, t.format);
+    return key;
+}
+// The shape of the game's shadow maps: a square depth render target of 1024 texels or more (ACNH's: 2048x2048, 2D,
+// format 0x32, made anew in its transient pool every frame). Not a screen target.
+bool square_depth(const Texture& t) {
+    const uint32_t w = t.uw ? t.base_w : t.width, h = t.uw ? t.base_h : t.height;
+    return (!t.uw || t.shadow) && (t.target == 1 || t.target == 4) && (format_aspect(t.format) & 1) && w == h &&
+           w >= 1024 && !t.stride && t.samples <= 1;
+}
+bool not_shadow(const Texture& t) {
+    std::lock_guard lk(g_shadow_lock);
+    return g_not_shadow.count(shadow_shape(t)) != 0;
+}
+}  // namespace
+
+bool uw_shadow_map(const Texture& t) { return t.shadow || (square_depth(t) && !not_shadow(t)); }
+
+void uw_shadow_not_a_map(const Texture& t) {
+    if (!square_depth(t)) return;
+    const std::string key = shadow_shape(t);
+    if (std::lock_guard lk(g_shadow_lock); g_not_shadow.insert(key).second)
+        log("nvn: depth target %s is drawn with colour targets: not a shadow map (never skipped nor halved)", key.c_str());
+}
+
+void uw_shadow_full_size(Texture& t) {
+    t.shadow = false;
+    keep_game_size(t);
+}
+
+bool uw_shadow_texture(Texture& t) {
+    if (t.uw || shadows_quality() != Shadows::Low || !square_depth(t) || not_shadow(t)) return false;
+    static std::set<std::string> seen;  // each shape once in the log
+    if (std::lock_guard lk(g_shadow_lock); seen.insert(shadow_shape(t)).second)
+        log("nvn: shadow map %s t%u f%x drawn at half size", shadow_shape(t).c_str(), t.target, t.flags);
+    init_scale();
+    t.uw = t.shadow = true;
+    t.base_w = t.width, t.base_h = t.height;
+    uw_resize(t);
+    return true;
+}
+
 void uw_resize(Texture& t) {
     if (!t.uw) return;
+    if (t.shadow) {  // half the game's size whatever the screen scale (uw_shadow_texture)
+        t.width = std::max(1u, t.base_w / 2), t.height = std::max(1u, t.base_h / 2);
+        t.uw_gen = g_gen.load();
+        return;
+    }
     Scale c;
     uint32_t gen;
     {

@@ -142,9 +142,10 @@ std::vector<std::tuple<uint64_t, VkBuffer, VkDeviceMemory>> g_staging;  // stagi
 struct ReuseKey {
     uint64_t memory = 0;
     uint32_t format = 0, width = 0, height = 0, depth = 0, levels = 0, target = 0, samples = 0, swizzle = 0;
+    bool shadow = false;  // as image_of's key: a halved shadow map's image stays its own
     bool operator<(const ReuseKey& o) const {
-        return std::tie(memory, format, width, height, depth, levels, target, samples, swizzle) <
-               std::tie(o.memory, o.format, o.width, o.height, o.depth, o.levels, o.target, o.samples, o.swizzle);
+        return std::tie(memory, format, width, height, depth, levels, target, samples, swizzle, shadow) <
+               std::tie(o.memory, o.format, o.width, o.height, o.depth, o.levels, o.target, o.samples, o.swizzle, o.shadow);
     }
 };
 ReuseKey reuse_key(const Texture& t) {
@@ -152,7 +153,7 @@ ReuseKey reuse_key(const Texture& t) {
                   uint32_t(t.swizzle[3]) << 24;
     static const bool key_swizzle = std::getenv("NX_KEY_SWIZZLE") != nullptr;  // as image_of's key (#46)
     if (!key_swizzle) swizzle = 0;
-    return {t.memory, t.format, t.width, t.height, t.depth, t.levels, t.target, t.samples, swizzle};
+    return {t.memory, t.format, t.width, t.height, t.depth, t.levels, t.target, t.samples, swizzle, t.shadow};
 }
 std::map<ReuseKey, std::pair<uint64_t, std::shared_ptr<GpuImage>>> g_reusable;  // key -> (kept at, image)
 uint64_t g_reuse_clock = 0, g_reused = 0;

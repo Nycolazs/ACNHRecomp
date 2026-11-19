@@ -242,6 +242,7 @@ struct Texture : Object {
     // scale of generation uw_gen (internal resolution, wider or taller aspect). The game is told the base size.
     bool uw = false;
     uint32_t base_w = 0, base_h = 0, uw_gen = 0;
+    bool shadow = false;  // with uw: a shadow map drawn at half its size, whatever the screen scale (video.shadows = low)
     uint64_t sides_cleared = 0;  // a widened window texture: the present before its sides were last cleared (nvn_draw.cpp)
     bool window = false;         // one of an NVNwindow's textures (nvnWindowInitialize): RGBA16F with HDR (nvn_image.cpp)
     uint32_t block_height_gobs = 0;  // packaged (BNTX) textures carry their own; 0: the layout's default

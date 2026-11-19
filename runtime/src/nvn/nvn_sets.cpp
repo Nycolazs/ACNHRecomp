@@ -553,7 +553,8 @@ void build_sets(VkCommandBuffer cb, const std::vector<const ShaderInfo*>& shader
         uw_span(y, h, UINT32_MAX, (*g_uw).sy);
         vw = float(w), vh = float(h);
     }
-    if (uw_scaling()) {
+    // A draw into a halved shadow map (video.shadows = low) is scaled while the screen is not: its scale too.
+    if (uw_scaling() || (*g_uw).on) {
         if ((*g_uw).on) scales.rt = (*g_uw).s();
         const ShaderInfo* fs = nullptr;
         for (const ShaderInfo* s : shaders)
