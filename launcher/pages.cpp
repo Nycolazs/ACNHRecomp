@@ -185,6 +185,11 @@ std::vector<nx::mod_manager::ModInfo> g_mods;
 bool g_mods_open = false;
 double g_mods_since = 0;
 std::string g_mods_delete_id;
+std::string g_mods_rename_id;   // the mod being renamed (the "rename_mod" popup over the Mods window)
+char g_mods_rename_buf[128];
+bool g_mods_rename_open = false;   // open the popup on the next frame
+bool g_mods_rename_focus = false;  // put the keyboard in the field on its first frame
+std::string g_mods_rename_error;   // why the last try failed, shown in the popup
 bool g_mods_refresh = false;           // reload list after the grid finishes drawing
 bool g_mods_refresh_wait_pad = false;  // gamepad: wait until FaceDown is released before reshuffling
 void refresh_mods();
@@ -383,6 +388,8 @@ void SDLCALL on_picked(void* user, const char* const* list, int) {
 
 void pick(Target t) {
     static const SDL_DialogFileFilter zip[] = {{"ZIP", "zip"}, {"*", "*"}};
+    // A mod: a .zip, or one NookKit JSON patch (mod_manager.cpp).
+    static const SDL_DialogFileFilter mod[] = {{"Mod (.zip, NookKit .json)", "zip;json"}, {"*", "*"}};
     // The folder of the last file chosen, else Downloads.
     static std::string last;
     last = settings().get("files.last_dir");
@@ -404,7 +411,7 @@ void pick(Target t) {
         case kPickBuild: SDL_ShowOpenFolderDialog(on_picked, user, g_window, nullptr, false); break;
         case kPickSaveImport: SDL_ShowOpenFolderDialog(on_picked, user, g_window, where, false); break;
         case kPickModImportFolder: SDL_ShowOpenFolderDialog(on_picked, user, g_window, where, false); break;
-        case kPickModImportZip: SDL_ShowOpenFileDialog(on_picked, user, g_window, zip, 2, where, false); break;
+        case kPickModImportZip: SDL_ShowOpenFileDialog(on_picked, user, g_window, mod, 2, where, false); break;
         case kPickPrepGame:
         case kPickPrepDlc: SDL_ShowOpenFolderDialog(on_picked, user, g_window, where, false); break;
         case kPickPrepOut: {
@@ -924,6 +931,44 @@ void badge(const char* text, ImU32 bg, ImU32 fg, float line_h, float room) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     dl->AddRectFilled(p, ImVec2(p.x + size.x, p.y + size.y), bg, size.y * 0.5f);
     dl->AddText(g_body, fs, ImVec2(p.x + S(9), p.y + S(3)), fg, text);
+}
+
+// A mod's kinds as chips under its name: RomFS (files replaced as they are), NookKit (JSON patches applied by the
+// runtime), ExeFS (code the pack had, not run here). Wrapped to `width`; the height they take (drawn when `draw`).
+const char* managed_mod_text(const std::string& id);
+
+float mod_chips(const nx::mod_manager::ModInfo& m, float width, bool draw) {
+    struct Chip {
+        const char* text;
+        ImU32 bg, fg;
+        const char* tip = nullptr;
+    } chips[4];
+    int n = 0;
+    // Bundled with the Native release; what turns it on or off is in the chip's tooltip.
+    if (m.managed) chips[n++] = {"Native", rgb(253, 232, 196), rgb(170, 105, 20), managed_mod_text(m.id)};
+    if (m.has_romfs) chips[n++] = {"RomFS", rgb(216, 230, 248), rgb(40, 90, 170)};
+    if (m.has_nookkit) chips[n++] = {"NookKit", rgb(214, 238, 204), rgb(50, 120, 50)};
+    if (m.has_exefs) chips[n++] = {tr("launcher.mods.chip_exefs"), rgb(250, 216, 210), rgb(170, 50, 40)};
+    if (!n) return 0.f;
+    float fs = font_size(g_body) * 0.78f, gap = S(6), x = 0.f, y = 0.f, h = 0.f;
+    ImVec2 origin = ImGui::GetCursorScreenPos();
+    for (int i = 0; i < n; i++) {
+        ImVec2 ts = measure(g_body, fs, chips[i].text, -1);
+        ImVec2 size(ts.x + S(14), ts.y + S(6));
+        h = size.y;
+        if (x > 0.f && x + size.x > width) x = 0.f, y += size.y + gap;  // next line
+        if (draw) {
+            ImVec2 p(origin.x + x, origin.y + y);
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            dl->AddRectFilled(p, ImVec2(p.x + size.x, p.y + size.y), chips[i].bg, size.y * 0.5f);
+            dl->AddText(g_body, fs, ImVec2(p.x + S(7), p.y + S(3)), chips[i].fg, chips[i].text);
+            if (chips[i].tip && ImGui::IsMouseHoveringRect(p, ImVec2(p.x + size.x, p.y + size.y)) && ImGui::IsWindowHovered())
+                ImGui::SetTooltip("%s", chips[i].tip);
+        }
+        x += size.x + gap;
+    }
+    if (draw) ImGui::Dummy(ImVec2(width, y + h));
+    return y + h;
 }
 
 // A small square button at the right of a row.
@@ -2687,7 +2732,6 @@ void mods_popup() {
         const char* open_l = tr("launcher.mods.open");
         const char* close_l = tr("launcher.addons.close");
         float footer = S(56) + ImGui::GetFrameHeight();
-        if (!g_mods_delete_id.empty()) footer += S(72);
         float grid_h = std::max(S(140), ImGui::GetContentRegionAvail().y - footer);
 
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(12), S(12)));
@@ -2734,8 +2778,7 @@ void mods_popup() {
                 float name_h = ImGui::CalcTextSize(name_labels[i].c_str(), nullptr, false, name_wrap).y;
                 name_h = std::min(name_h, line_h * 2.f);
                 float content = std::max(fh, name_h);
-                if (m.managed)
-                    content += item_sp + ImGui::CalcTextSize(managed_mod_text(m.id), nullptr, false, inner_w).y;
+                if (float chips = mod_chips(m, inner_w, false)) content += item_sp + chips;
                 if (m.has_exefs)
                     content += item_sp + ImGui::CalcTextSize(tr("launcher.mods.exefs_warn"), nullptr, false, inner_w).y;
                 // Button row + spacing; extra item_sp so actions stay inside bottom padding.
@@ -2831,13 +2874,31 @@ void mods_popup() {
                     ImGui::PushTextWrapPos(name_x + name_wrap);
                     ImGui::TextUnformatted(name_label.c_str());
                     ImGui::PopTextWrapPos();
+                    // Rename: the name is a button (mouse, keyboard and pad: focus it and press A). Bundled mods
+                    // keep their name.
+                    bool rename = false;
+                    if (!mod.managed) {
+                        const ImVec2 after = ImGui::GetCursorScreenPos();
+                        const ImVec2 nmin = ImGui::GetItemRectMin(), nmax = ImGui::GetItemRectMax();
+                        ImGui::SetCursorScreenPos(nmin);
+                        rename = ImGui::InvisibleButton("##name", ImVec2(std::max(1.f, nmax.x - nmin.x), std::max(1.f, nmax.y - nmin.y)));
+                        nav_item();
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                            ImGui::SetTooltip("%s", tr("launcher.mods.rename"));
+                        }
+                        if (ImGui::IsItemHovered() || ImGui::IsItemFocused())  // underlined, as a link
+                            for (float y = nmin.y + line_h; y <= nmax.y + S(1); y += line_h)
+                                tdl->AddLine(ImVec2(nmin.x, y), ImVec2(nmax.x, y), kOrange, S(2));
+                        ImGui::SetCursorScreenPos(after);
+                    }
+                    if (rename) {
+                        g_mods_rename_id = mod.id, g_mods_rename_open = g_mods_rename_focus = true;
+                        std::snprintf(g_mods_rename_buf, sizeof g_mods_rename_buf, "%s", mod.id.c_str());
+                    }
                     ImGui::SetCursorPosY(std::max(ImGui::GetCursorPosY(), row_top_y + title_h));
                 }
-                if (mod.managed) {
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-                    ImGui::TextWrapped("%s", managed_mod_text(mod.id));
-                    ImGui::PopStyleColor();
-                }
+                mod_chips(mod, inner_w, true);
                 if (mod.has_exefs) {
                     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
                     ImGui::TextWrapped("%s", tr("launcher.mods.exefs_warn"));
@@ -2896,29 +2957,77 @@ void mods_popup() {
             }
         }
 
-        if (!g_mods_delete_id.empty()) {
-            ImGui::Dummy(ImVec2(0, S(6)));
-            ImGui::PushStyleColor(ImGuiCol_Text, col4(kInkSoft));
+        // Delete and rename: popups over the Mods window. Escape or B there closes the popup, not the Mods window.
+        if (!g_mods_delete_id.empty() && !ImGui::IsPopupOpen("delete_mod")) ImGui::OpenPopup("delete_mod");
+        if (g_mods_rename_open) ImGui::OpenPopup("rename_mod"), g_mods_rename_open = false;
+        const bool rename_escape = ImGui::IsPopupOpen("rename_mod") || ImGui::IsPopupOpen("delete_mod");
+
+        ImGui::SetNextWindowSize(ImVec2(std::min(ImGui::GetIO().DisplaySize.x * 0.9f, S(480)), 0));
+        if (ImGui::BeginPopupModal("delete_mod", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize)) {
             const bool managed = [&] {
                 for (const nx::mod_manager::ModInfo& m : g_mods)
                     if (m.id == g_mods_delete_id) return m.managed;
                 return false;
             }();
+            ImGui::TextUnformatted(g_mods_delete_id.c_str());
+            ImGui::Dummy(ImVec2(0, S(2)));
+            ImGui::PushStyleColor(ImGuiCol_Text, col4(kInkSoft));
             ImGui::TextWrapped("%s", tr(managed ? "launcher.mods.delete_confirm_managed" : "launcher.mods.delete_confirm"));
             ImGui::PopStyleColor();
+            ImGui::Dummy(ImVec2(0, S(6)));
+            bool done = false;
             if (button(tr("launcher.mods.delete"), kRed)) {
                 std::string err;
-                std::string id = g_mods_delete_id;
-                g_mods_delete_id.clear();
-                if (nx::mod_manager::delete_mod(g_build.data, id, &err)) {
+                if (nx::mod_manager::delete_mod(g_build.data, g_mods_delete_id, &err)) {
                     load_game_ini();
                     refresh_mods();
                     toast(tr("launcher.mods.deleted"));
                 } else
                     g_banner = trf("launcher.mods.delete_failed", err);
+                done = true;
             }
             ImGui::SameLine();
-            if (button(tr("common.no"), kWhite)) g_mods_delete_id.clear();
+            bool cancel = button(tr("common.cancel"), kWhite);
+            ImGui::SetItemDefaultFocus();  // a stray A on a controller keeps the mod
+            if (cancel || ImGui::IsKeyPressed(ImGuiKey_Escape) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false))
+                done = true;
+            if (done) g_mods_delete_id.clear(), ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
+        }
+
+        ImGui::SetNextWindowSize(ImVec2(std::min(ImGui::GetIO().DisplaySize.x * 0.9f, S(480)), 0));
+        if (ImGui::BeginPopupModal("rename_mod", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize)) {
+            ImGui::TextWrapped("%s", trf("launcher.mods.rename_prompt", g_mods_rename_id).c_str());
+            ImGui::Dummy(ImVec2(0, S(4)));
+            if (g_mods_rename_focus) ImGui::SetKeyboardFocusHere(), g_mods_rename_focus = false;
+            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+            bool enter = ImGui::InputText("##mod_name", g_mods_rename_buf, sizeof g_mods_rename_buf,
+                                          ImGuiInputTextFlags_EnterReturnsTrue);
+            nav_item();
+            if (ImGui::IsItemEdited()) g_mods_rename_error.clear();
+            if (!g_mods_rename_error.empty()) {
+                ImGui::PushStyleColor(ImGuiCol_Text, col4(kRed));
+                ImGui::TextWrapped("%s", g_mods_rename_error.c_str());
+                ImGui::PopStyleColor();
+            }
+            ImGui::Dummy(ImVec2(0, S(6)));
+            bool done = false;
+            if (button(tr("launcher.mods.rename"), kBlue) || enter) {
+                std::string err, to;
+                if (nx::mod_manager::rename_mod(g_build.data, g_mods_rename_id, g_mods_rename_buf, &to, &err)) {
+                    if (to != g_mods_rename_id) toast(trf("launcher.mods.renamed", to));
+                    load_game_ini();
+                    refresh_mods();
+                    done = true;
+                } else
+                    g_mods_rename_error = trf("launcher.mods.rename_failed", err);
+            }
+            ImGui::SameLine();
+            if (button(tr("common.cancel"), kWhite) || ImGui::IsKeyPressed(ImGuiKey_Escape) ||
+                ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false))
+                done = true;
+            if (done) g_mods_rename_id.clear(), g_mods_rename_error.clear(), ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
         }
 
         ImGui::Dummy(ImVec2(0, S(8)));
@@ -2929,9 +3038,9 @@ void mods_popup() {
         ImGui::SameLine();
         if (button(open_l, kWhite, true, pair_w)) open_folder(g_build.data + "/mods");
         align_right({close_l});
-        if (button(close_l, kWhite) || ImGui::IsKeyPressed(ImGuiKey_Escape) ||
-            ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false))
-            g_mods_open = false, g_mods_delete_id.clear(), ImGui::CloseCurrentPopup();
+        if (button(close_l, kWhite) ||
+            (!rename_escape && (ImGui::IsKeyPressed(ImGuiKey_Escape) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false))))
+            g_mods_open = false, g_mods_delete_id.clear(), g_mods_rename_id.clear(), ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
     ImGui::PopStyleColor();
@@ -3441,6 +3550,7 @@ void page_credits() {
     credit_entry("RenoDX", tr("launcher.credits.ref.renodx"), "https://github.com/clshortfuse/renodx");
     credit_entry("ACNH 60 FPS + SpeedFix", tr("launcher.credits.ref.speedfix"),
                  "https://github.com/tmouh/acnh-60fps");
+    credit_entry("NookKit", tr("launcher.credits.ref.nookkit"), "https://github.com/acnhmodding/nookkit");
     credit_entry("SDL3, Capstone, Unicorn, libvpx, libvorbis, FSR 1", tr("launcher.credits.ref.libs"));
     credit_entry("LASRecomp", tr("launcher.credits.ref.las"), "https://github.com/peiikai/LASRecomp");
     credit_entry("SwitchRecomp", tr("launcher.credits.ref.switchrecomp"), "https://github.com/bgyss/SwitchRecomp");
