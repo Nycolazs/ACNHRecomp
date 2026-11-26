@@ -24,6 +24,7 @@
 
 #include <nx/runtime.h>
 
+#include "nookkit.h"
 #include "platform.h"
 #include "users.h"
 
@@ -279,8 +280,11 @@ void QueryMountRomCacheSize(CPU& c) {
 }
 
 void MountRom(CPU& c) {
-    std::lock_guard lk(g_fs);
-    mount(cstr(c.x[0]), romfs_root());
+    {
+        std::lock_guard lk(g_fs);
+        mount(cstr(c.x[0]), romfs_root());
+    }
+    nookkit_install();  // adds virtual files: outside g_fs
     c.x[0] = kOk;
 }
 
@@ -940,10 +944,31 @@ void add_virtual_file(const std::string& path, std::string data) {
     g_virtual[virtual_key(fs::u8path(path))] = std::move(data);
 }
 
+std::vector<std::string> romfs_mod_roots() {
+    std::vector<std::string> v;
+    for (const fs::path& root : mod_roots()) v.push_back(utf8(root));
+    return v;
+}
+
 std::string read_game_file(const std::string& relative_to_romfs) {
-    FILE* f = plat::fopen_utf8(utf8(romfs_root() / fs::u8path(relative_to_romfs)), "rb");
-    if (!f) return {};
     std::string s;
+    fs::path p = romfs_root() / fs::u8path(relative_to_romfs);
+    std::error_code ec;
+    for (const fs::path& root : mod_roots())  // LayeredFS, as resolve()
+        if (fs::is_regular_file(root / fs::u8path(relative_to_romfs), ec)) {
+            p = root / fs::u8path(relative_to_romfs);
+            break;
+        }
+    std::string rel;
+    if (const Pak* k = in_pak(p, rel)) {
+        auto it = k->files.find(rel);
+        if (it == k->files.end()) return {};
+        s.resize(size_t(it->second.second));
+        s.resize(size_t(plat::read_at(k->f, it->second.first, s.data(), s.size())));
+        return s;
+    }
+    FILE* f = plat::fopen_utf8(utf8(p), "rb");
+    if (!f) return {};
     char buf[65536];
     size_t n;
     while ((n = std::fread(buf, 1, sizeof buf, f)) > 0) s.append(buf, n);

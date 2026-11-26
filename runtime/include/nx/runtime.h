@@ -147,7 +147,8 @@ uint64_t system_tick();
 // A file the game can open under a mount (e.g. "Content/Mods/X/a.lua" for Content:/Mods/X/a.lua), served from
 // memory; it takes precedence over a real file of the same path (hle_fs.cpp).
 void add_virtual_file(const std::string& path, std::string data);
-// The contents of a real game file under the data folder ("" if missing).
+// The contents of a game file (RomFS path), as the game would read it without virtual files: from an enabled mod
+// when one has it, else the RomFS (loose or romfs.pak); "" if missing.
 std::string read_game_file(const std::string& relative_to_romfs);
 // Guest memory written by the host behind the GPU's back (a movie frame): textures over it are uploaded again
 // (nvn_objects.cpp).

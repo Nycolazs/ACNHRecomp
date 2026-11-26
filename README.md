@@ -105,8 +105,10 @@ starring the repository help just as much. Thank you! 💚
 - **Save management:** import from Switch backups (JKSV, Checkpoint), from emulators (yuzu and its forks,
   Ryujinx/Ryubing) or from another ACNHRecomp; export in a format JKSV and Checkpoint can restore on a console;
   automatic backups.
-- **Mod management (launcher):** import RomFS LayeredFS mod folders or zips, toggle them on or off, reorder
-  priority, open a mod's folder, or delete it (ExeFS / Skyline plugins are not loaded).
+- **Mod management (launcher):** import RomFS LayeredFS mod folders or zips and NookKit JSON patch mods, toggle them
+  on or off, reorder priority, rename, open a mod's folder, or delete it (ExeFS / Skyline plugins are not loaded).
+- **NookKit JSON patch mods:** Message, Bcsv and Pack patches are applied to the game's files in memory when it
+  starts; the files on disk are never changed.
 - **All 14 game languages**, plus Brazilian Portuguese through a fan translation you install yourself, loaded as a
   RomFS mod (LayeredFS).
 - **DLC** (add-on content) from your game folder's `aoc/`.
@@ -591,7 +593,18 @@ the same path wins; otherwise the original is used. Mods can only replace files 
 
 In a **release build**, open the launcher home screen and use the **Mods** pill (next to add-ons and save profiles)
 to import a mod folder or zip, toggle mods on or off, reorder priority, open a mod's folder, or delete it. Enablement
-is stored as `game.mods = <name>[,<name>...]` in `config.ini` and applies the next time you Play.
+is stored as `game.mods = <name>[,<name>...]` in `config.ini` and applies the next time you Play. Each mod shows
+chips for what it contains (RomFS, NookKit, ExeFS not supported, Native for the bundled ones); click a mod's name to
+rename it.
+
+**NookKit JSON patch mods** ([NookKit](https://github.com/acnhmodding/nookkit)) edit the game's data instead of
+replacing whole files. The launcher imports them in any of these layouts: an Atmosphere pack
+(`atmosphere/contents/01006F8002326000/romfs/NookKit/...`, NookKit's own Skyline runtime is not needed and is left
+out), a bare `NookKit/` folder, a folder or zip of loose `.json` patches, or a single `.json` file. They are stored
+in `mods/<name>/romfs/NookKit/{Message,Bcsv,Pack}/`. When the game mounts its RomFS, ACNHRecomp reads the patches of
+the enabled mods and applies them in memory (MSBT text, BCSV rows, BYML files in SARC packs, recompressing with
+zstd and raising the ResourceSizeTable as needed); the game files on disk are never modified. Patches from a mod
+higher in the list win over a lower one.
 
 From a **source checkout**, you can still install with setup:
 
@@ -782,7 +795,7 @@ More detail: [docs/ACNH.md](docs/ACNH.md) (the game's modules, RomFS and shader 
 - [erickgodev](https://github.com/erickgodev): controller navigation in the launcher and in-game settings, controller
   vibration, launcher fullscreen, and related UI fixes.
 - [SirOMGitsYOU](https://github.com/SirOMGitsYOU): Amiibo / NFC support, Time Travel, Auto-start overhaul, Mod Manager,
-  Multi Save system, Discord Rich Presence integration, Camera App functionality, Nextendo + Online support,
+  NookKit JSON patch mod support, Multi Save system, Discord Rich Presence integration, Camera App functionality, Nextendo + Online support,
   Ultrawide flicker fix, and FidelityFX / DLSS in the Windows release.
 - [vzeol](https://github.com/vzeol): online / local play between computers, Discord Rich Presence, Windows packaging
   fixes, present pacing, and SpeedFix for 3.0.3.
@@ -811,6 +824,10 @@ More detail: [docs/ACNH.md](docs/ACNH.md) (the game's modules, RomFS and shader 
   rescaling, downloaded by `tools/setup_60fps.sh` (or, with a release, at the first start) and applied on your
   machine. Its patches of main for 3.0.2 and 3.0.3 are in `prepare/recomp/acnh/`, unchanged, under that license
   (`prepare/recomp/acnh/SPEEDFIX.md`).
+- [NookKit](https://github.com/acnhmodding/nookkit) by acnhmodding: the JSON patch mod format (Message, Bcsv, Pack)
+  that ACNHRecomp applies in memory (`runtime/src/nookkit.cpp`, reimplemented in C++).
+- [zstd](https://github.com/facebook/zstd) (BSD): decompressing and recompressing the game's `.zs` files for NookKit
+  patches.
 - [SDL3](https://github.com/libsdl-org/SDL), [Capstone](https://www.capstone-engine.org/),
   [Unicorn](https://www.unicorn-engine.org/), libvpx, libvorbis, AMD FidelityFX FSR 1.
 - Projects studied before starting (summary in [docs/REFERENCES.md](docs/REFERENCES.md)):

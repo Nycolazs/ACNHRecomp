@@ -100,6 +100,13 @@ if(NX_TESTS AND NOT ANDROID)
         target_link_libraries(nextendo_test PRIVATE Threads::Threads)
     endif()
     add_test(NAME nextendo COMMAND nextendo_test)
+    add_executable(mod_import_test tests/mod_import_test.cpp)
+    target_link_libraries(mod_import_test PRIVATE nx_mod_manager)
+    add_test(NAME mod_import COMMAND mod_import_test)
+    # Needs the game's RomFS: run by hand, nookkit_test <data root>/extract/romfs.
+    add_executable(nookkit_test tests/nookkit_test.cpp runtime/src/nookkit.cpp)
+    target_include_directories(nookkit_test PRIVATE runtime/src runtime/include)
+    target_link_libraries(nookkit_test PRIVATE libzstd_static)
     add_executable(tiling_test tests/tiling_test.cpp runtime/src/nvn/nvn_tiling.cpp)
     target_include_directories(tiling_test PRIVATE runtime/src/nvn)
     add_test(NAME tiling COMMAND tiling_test --selftest)
@@ -623,6 +630,23 @@ endif()
 target_sources(${NX_GAME} PRIVATE runtime/src/hle_ssl.cpp runtime/src/hle_npns.cpp runtime/src/nextendo_token.cpp
     runtime/src/nextendo_status.cpp runtime/src/save_unlink.cpp)
 target_link_libraries(${NX_GAME} PRIVATE mbedtls mbedx509 mbedcrypto)
+# zstd (BSD): the NookKit message patches unpack and repack the game's Message/*.sarc.zs in memory
+# (runtime/src/nookkit.cpp). Fetched as a release archive on the first configure, static, library only.
+set(ZSTD_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_STATIC ON CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_DICTBUILDER OFF CACHE BOOL "" FORCE)
+set(ZSTD_LEGACY_SUPPORT OFF CACHE BOOL "" FORCE)
+set(ZSTD_MULTITHREAD_SUPPORT OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(zstd
+    URL https://github.com/facebook/zstd/releases/download/v1.5.7/zstd-1.5.7.tar.gz
+    URL_HASH SHA256=eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3
+    SOURCE_SUBDIR build/cmake
+    EXCLUDE_FROM_ALL)
+FetchContent_MakeAvailable(zstd)
+target_sources(${NX_GAME} PRIVATE runtime/src/nookkit.cpp)
+target_link_libraries(${NX_GAME} PRIVATE libzstd_static)
 if(WIN32)
     set(ZLIB_USE_STATIC_LIBS ON)  # vcpkg's static zlib (tools/setup_acnh.py): zs.lib
 endif()

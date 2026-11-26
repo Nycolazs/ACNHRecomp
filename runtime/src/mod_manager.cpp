@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <set>
 #include <sstream>
 
@@ -66,6 +67,41 @@ bool ieq_romfs(const std::string& name) {
 bool ieq_exefs(const std::string& name) {
     std::string l = lower(name);
     return l == "exefs" || l == "exefs_patches";
+}
+
+bool ieq_nookkit(const std::string& name) { return lower(name) == "nookkit"; }
+
+// Left in an imported mod's folder when its pack had ExeFS code, which is not imported: listed as such after.
+constexpr const char* kExefsMark = "exefs-not-imported.txt";
+
+// Wrapper folders allowed above a mod's romfs/: atmosphere/contents/<title id>/romfs is three.
+constexpr int kMaxWrappers = 3;
+
+// NookKit's JSON patches (runtime/src/nookkit.cpp) go in romfs/NookKit/<kind>/: the kind of a loose one.
+// shortcut: told by its field names, not parsed; the runtime reports a patch that does not read.
+const char* nookkit_kind(const std::string& json) {
+    if (json.find("\"messages\"") != std::string::npos) return "Message";
+    if (json.find("\"rows\"") != std::string::npos) return "Bcsv";
+    if (json.find("\"data\"") != std::string::npos && json.find("\"archive\"") != std::string::npos) return "Pack";
+    return nullptr;
+}
+
+bool ends_with_json(const std::string& s) { return s.size() > 5 && lower(s.substr(s.size() - 5)) == ".json"; }
+
+// A pack whose only code is NookKit's runtime (Skyline in exefs/, NookKit's own plugins in romfs/skyline/plugins/)
+// and which has JSON patches for it: ACNHRecomp applies the patches itself, so there is no ExeFS to warn about.
+// `files` are '/' separated, relative to the pack (the folder that holds romfs/).
+bool exefs_is_nookkit(const std::vector<std::string>& files) {
+    bool patches = false;
+    for (const std::string& f : files) {
+        std::string l = lower(f), name = l.substr(l.rfind('/') + 1);
+        if (l.rfind("romfs/nookkit/", 0) == 0) patches = true;
+        else if (l.rfind("romfs/skyline/plugins/", 0) == 0 && name.find("nookkit") == std::string::npos) return false;
+        else if (l.rfind("exefs/", 0) == 0 && name != "main.npdm" && name.rfind("subsdk", 0) != 0) return false;
+        else if (l.rfind("exefs_patches/", 0) == 0 || l.rfind("skyline/", 0) == 0 || l.rfind("atmosphere/", 0) == 0)
+            return false;
+    }
+    return patches;
 }
 
 // ---- config.ini game.mods ---------------------------------------------------
@@ -175,15 +211,17 @@ bool write_game_mods_key(const std::string& data_root, const std::string& value,
     return true;
 }
 
-fs::path find_romfs_child(const fs::path& dir) {
+fs::path find_child(const fs::path& dir, bool (*named)(const std::string&)) {
     std::error_code ec;
     if (!fs::is_directory(dir, ec)) return {};
     for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
         if (!it->is_directory(ec)) continue;
-        if (ieq_romfs(path_utf8(it->path().filename()))) return it->path();
+        if (named(path_utf8(it->path().filename()))) return it->path();
     }
     return {};
 }
+
+fs::path find_romfs_child(const fs::path& dir) { return find_child(dir, ieq_romfs); }
 
 bool dir_has_exefs(const fs::path& dir) {
     std::error_code ec;
@@ -203,63 +241,54 @@ bool dir_has_exefs(const fs::path& dir) {
     return false;
 }
 
-// Find romfs/ in `path` itself, or one/two levels below (Atmosphere / wrapper folders).
-bool find_romfs_root(const fs::path& path, fs::path* romfs, fs::path* pack_root, bool* had_exefs, std::string* error) {
-    std::error_code ec;
-    if (!fs::is_directory(path, ec)) return set_err(error, "folder not found"), false;
+enum class Found { None, One, Several };
 
-    auto try_at = [&](const fs::path& pack) -> bool {
-        fs::path r = find_romfs_child(pack);
-        if (r.empty()) return false;
-        *romfs = r;
-        *pack_root = pack;
-        if (had_exefs) *had_exefs = dir_has_exefs(pack);
-        return true;
-    };
-
-    if (try_at(path)) return true;
-    // path itself named romfs
-    if (ieq_romfs(path_utf8(path.filename()))) {
-        *romfs = path;
+// The folder `named` (romfs/, NookKit/) in `path` itself or up to kMaxWrappers folders below it, the shallowest;
+// *pack_root is the folder that holds it.
+Found find_named_root(const fs::path& path, bool (*named)(const std::string&), fs::path* found, fs::path* pack_root) {
+    if (named(path_utf8(path.filename()))) {
+        *found = path;
         *pack_root = path.parent_path();
-        if (had_exefs) *had_exefs = dir_has_exefs(*pack_root);
-        return true;
+        return Found::One;
     }
-
-    std::vector<fs::path> level1;
-    for (fs::directory_iterator it(path, ec), end; !ec && it != end; it.increment(ec))
-        if (it->is_directory(ec)) level1.push_back(it->path());
-    std::sort(level1.begin(), level1.end());
-
-    std::vector<fs::path> found_packs;
-    for (const fs::path& a : level1) {
-        if (try_at(a)) found_packs.push_back(a);
-    }
-    if (found_packs.size() == 1) {
-        try_at(found_packs[0]);
-        return true;
-    }
-    if (found_packs.size() > 1) return set_err(error, "several romfs/ folders found; pick one mod folder"), false;
-
-    for (const fs::path& a : level1) {
-        std::vector<fs::path> level2;
-        for (fs::directory_iterator it(a, ec), end; !ec && it != end; it.increment(ec))
-            if (it->is_directory(ec)) level2.push_back(it->path());
-        for (const fs::path& b : level2) {
-            if (try_at(b)) found_packs.push_back(b);
+    std::error_code ec;
+    std::vector<fs::path> level{path};
+    for (int depth = 0; depth <= kMaxWrappers && !level.empty(); depth++) {
+        std::vector<fs::path> packs, next;
+        for (const fs::path& d : level) {
+            if (!find_child(d, named).empty()) packs.push_back(d);
+            for (fs::directory_iterator it(d, ec), end; !ec && it != end; it.increment(ec))
+                if (it->is_directory(ec) && !named(path_utf8(it->path().filename()))) next.push_back(it->path());
         }
+        if (packs.size() > 1) return Found::Several;
+        if (packs.size() == 1) {
+            *found = find_child(packs[0], named);
+            *pack_root = packs[0];
+            return Found::One;
+        }
+        std::sort(next.begin(), next.end());
+        level.swap(next);
     }
-    if (found_packs.size() == 1) {
-        try_at(found_packs[0]);
-        return true;
-    }
-    if (found_packs.size() > 1) return set_err(error, "several romfs/ folders found; pick one mod folder"), false;
-    return set_err(error, "no romfs/ folder found"), false;
+    return Found::None;
+}
+
+// Every file under `dir`, '/' separated and relative to it.
+std::vector<std::string> files_under(const fs::path& dir) {
+    std::vector<std::string> out;
+    std::error_code ec;
+    for (fs::recursive_directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec))
+        if (it->is_regular_file(ec)) {
+            std::string rel = path_utf8(it->path().lexically_relative(dir));
+            std::replace(rel.begin(), rel.end(), '\\', '/');
+            out.push_back(rel);
+        }
+    return out;
 }
 
 std::string sanitize_id(std::string name) {
-    // Strip .zip extension if present.
+    // Strip a .zip or .json extension if present.
     if (name.size() > 4 && lower(name.substr(name.size() - 4)) == ".zip") name.resize(name.size() - 4);
+    if (ends_with_json(name)) name.resize(name.size() - 5);
     for (char& c : name) {
         if (c == '/' || c == '\\' || c == ':' || c == '<' || c == '>' || c == '"' || c == '|' || c == '?' || c == '*')
             c = '-';
@@ -406,58 +435,73 @@ bool zip_inflate(const std::string& in, std::string& out, std::string* error) {
 #endif
 }
 
-// Find the shortest path prefix ending at .../romfs/ (case-insensitive).
-bool zip_find_romfs_prefix(const std::vector<ZipEntry>& entries, std::string* prefix, bool* had_exefs,
-                          std::string* error) {
+// The shortest path prefix ending at .../<named>/ (case-insensitive), at most kMaxWrappers folders deep.
+Found zip_find_prefix(const std::vector<ZipEntry>& entries, bool (*named)(const std::string&), std::string* prefix) {
     std::set<std::string> prefixes;
     for (const ZipEntry& e : entries) {
-        std::string n = e.name;
-        std::replace(n.begin(), n.end(), '\\', '/');
-        // Walk components looking for romfs
+        const std::string& n = e.name;
         size_t start = 0;
-        int depth = 0;
-        while (start < n.size()) {
+        for (int depth = 0; depth <= kMaxWrappers; ++depth) {
             size_t slash = n.find('/', start);
-            std::string part = n.substr(start, slash == std::string::npos ? std::string::npos : slash - start);
-            if (ieq_romfs(part) && slash != std::string::npos) {
-                std::string p = n.substr(0, slash + 1);  // includes trailing /
-                // Depth of folders before romfs (0–2 wrappers)
-                if (depth <= 2) prefixes.insert(p);
+            if (slash == std::string::npos) break;
+            if (named(n.substr(start, slash - start))) {
+                prefixes.insert(n.substr(0, slash + 1));  // includes the trailing /
                 break;
             }
-            if (slash == std::string::npos) break;
-            ++depth;
             start = slash + 1;
-            if (depth > 3) break;
         }
     }
-    if (prefixes.empty()) return set_err(error, "no romfs/ folder in the zip"), false;
-    // Prefer the shortest prefix; if several distinct packs at same depth, fail.
+    if (prefixes.empty()) return Found::None;
     std::string best = *prefixes.begin();
     for (const std::string& p : prefixes)
         if (p.size() < best.size()) best = p;
-    std::set<std::string> same_len;
+    size_t same = 0;
     for (const std::string& p : prefixes)
-        if (p.size() == best.size()) same_len.insert(p);
-    if (same_len.size() > 1) return set_err(error, "several romfs/ folders in the zip; it must hold one mod"), false;
+        same += std::count(p.begin(), p.end(), '/') == std::count(best.begin(), best.end(), '/');
+    if (same > 1) return Found::Several;  // several packs side by side
     *prefix = best;
+    return Found::One;
+}
 
-    if (had_exefs) {
-        *had_exefs = false;
-        size_t slash = best.size() >= 2 ? best.rfind('/', best.size() - 2) : std::string::npos;
-        std::string pack_prefix = slash == std::string::npos ? std::string() : best.substr(0, slash + 1);
-        for (const ZipEntry& e : entries) {
-            std::string n = e.name;
-            if (!pack_prefix.empty() && n.compare(0, pack_prefix.size(), pack_prefix) != 0) continue;
-            std::string rest = pack_prefix.empty() ? n : n.substr(pack_prefix.size());
-            size_t s = rest.find('/');
-            std::string top = s == std::string::npos ? rest : rest.substr(0, s);
-            if (ieq_exefs(top) || lower(top) == "skyline" || lower(top) == "atmosphere") {
-                *had_exefs = true;
-                break;
-            }
-        }
+// The files of the pack around `prefix` (the folder that holds romfs/), relative to it.
+std::vector<std::string> zip_pack_files(const std::vector<ZipEntry>& entries, const std::string& prefix) {
+    size_t slash = prefix.size() >= 2 ? prefix.rfind('/', prefix.size() - 2) : std::string::npos;
+    std::string pack = slash == std::string::npos ? std::string() : prefix.substr(0, slash + 1);
+    std::vector<std::string> out;
+    for (const ZipEntry& e : entries)
+        if (e.name.compare(0, pack.size(), pack) == 0) out.push_back(e.name.substr(pack.size()));
+    return out;
+}
+
+bool zip_read(std::ifstream& f, const ZipEntry& e, uint64_t& total, std::string& plain, std::string* error) {
+    if (e.flags & 1) return set_err(error, "encrypted zip entries are not supported"), false;
+    if (e.method != 0 && e.method != 8) return set_err(error, "unsupported zip compression in " + e.name), false;
+    total += e.usize;
+    if (total > kMaxZipBytes) return set_err(error, "zip too large for a mod"), false;
+    std::string head, data;
+    if (!read_at(f, e.offset, 30, head) || rd32(reinterpret_cast<const unsigned char*>(head.data())) != 0x04034b50)
+        return set_err(error, "damaged zip file"), false;
+    const auto* h = reinterpret_cast<const unsigned char*>(head.data());
+    uint64_t at = uint64_t(e.offset) + 30 + rd16(h + 26) + rd16(h + 28);
+    if (!read_at(f, at, e.csize, data)) return set_err(error, "damaged zip file"), false;
+    if (e.method == 0) {
+        if (e.csize != e.usize) return set_err(error, "damaged zip file"), false;
+        plain.swap(data);
+    } else {
+        plain.assign(e.usize, '\0');
+        if (!zip_inflate(data, plain, error)) return false;
     }
+    if (crc32_of(plain) != e.crc) return set_err(error, "damaged zip file (CRC mismatch in " + e.name + ")"), false;
+    return true;
+}
+
+bool write_file(const fs::path& out, const std::string& data, std::string* error) {
+    std::error_code ec;
+    fs::create_directories(out.parent_path(), ec);
+    std::ofstream o(out, std::ios::binary | std::ios::trunc);
+    o.write(data.data(), std::streamsize(data.size()));
+    o.close();
+    if (!o) return set_err(error, "cannot write " + path_utf8(out)), false;
     return true;
 }
 
@@ -466,54 +510,42 @@ bool zip_extract_prefix(const fs::path& zip, const std::vector<ZipEntry>& entrie
     std::ifstream f(zip, std::ios::binary);
     if (!f) return set_err(error, "cannot open " + path_utf8(zip)), false;
     uint64_t total = 0;
-    std::string head, data, plain;
+    std::string plain;
     for (const ZipEntry& e : entries) {
         if (e.name.compare(0, prefix.size(), prefix) != 0) continue;
-        if (e.flags & 1) return set_err(error, "encrypted zip entries are not supported"), false;
-        if (e.method != 0 && e.method != 8) return set_err(error, "unsupported zip compression in " + e.name), false;
-        total += e.usize;
-        if (total > kMaxZipBytes) return set_err(error, "zip too large for a mod"), false;
-        if (!read_at(f, e.offset, 30, head) || rd32(reinterpret_cast<const unsigned char*>(head.data())) != 0x04034b50)
-            return set_err(error, "damaged zip file"), false;
-        const auto* h = reinterpret_cast<const unsigned char*>(head.data());
-        uint64_t at = uint64_t(e.offset) + 30 + rd16(h + 26) + rd16(h + 28);
-        if (!read_at(f, at, e.csize, data)) return set_err(error, "damaged zip file"), false;
-        if (e.method == 0) {
-            if (e.csize != e.usize) return set_err(error, "damaged zip file"), false;
-            plain.swap(data);
-        } else {
-            plain.assign(e.usize, '\0');
-            if (!zip_inflate(data, plain, error)) return false;
-        }
-        if (crc32_of(plain) != e.crc) return set_err(error, "damaged zip file (CRC mismatch in " + e.name + ")"), false;
-        fs::path out = dest / u8_path(e.name.substr(prefix.size()));
-        std::error_code ec;
-        fs::create_directories(out.parent_path(), ec);
-        std::ofstream o(out, std::ios::binary | std::ios::trunc);
-        o.write(plain.data(), std::streamsize(plain.size()));
-        o.close();
-        if (!o) return set_err(error, "cannot write " + path_utf8(out)), false;
+        if (!zip_read(f, e, total, plain, error) || !write_file(dest / u8_path(e.name.substr(prefix.size())), plain, error))
+            return false;
     }
     return true;
 }
 
-bool import_from_folder(const std::string& data_root, const fs::path& src, std::string* out_id, bool* had_exefs,
-                        std::string* error) {
-    fs::path romfs, pack;
-    bool exefs = false;
-    if (!find_romfs_root(src, &romfs, &pack, &exefs, error)) return false;
-    if (had_exefs) *had_exefs = exefs;
+// Loose NookKit patches, (file name, JSON), into staging/romfs/NookKit/<kind>/.
+bool write_loose_json(const fs::path& staging, const std::vector<std::pair<std::string, std::string>>& jsons,
+                      std::string* error) {
+    int n = 0;
+    for (const auto& [name, json] : jsons) {
+        const char* kind = nookkit_kind(json);
+        if (!kind) {
+            log("mod_manager: %s is not a NookKit patch (no \"messages\", \"rows\" or \"data\"): skipped", name.c_str());
+            continue;
+        }
+        if (!write_file(staging / "romfs" / "NookKit" / kind / u8_path(name), json, error)) return false;
+        n++;
+    }
+    return n ? true : (set_err(error, "no romfs/ folder and no NookKit patch found"), false);
+}
 
-    std::string want = stem_of(pack.empty() ? src : pack);
-    if (ieq_romfs(want)) want = stem_of(src);
+// Fills a new mod folder through `fill` (given its staging folder) and installs it as `want` (or want-2, ...).
+template <typename Fill>
+bool install_staged(const std::string& data_root, const std::string& want, std::string* out_id, std::string* error,
+                    Fill fill) {
     std::string id = unique_mod_id(data_root, want);
-
     fs::path dst = mods_root(data_root) / u8_path(id);
     fs::path staging = mods_root(data_root) / u8_path(id + ".new");
     std::error_code ec;
     fs::remove_all(staging, ec);
     fs::create_directories(staging / "romfs", ec);
-    if (!copy_tree(romfs, staging / "romfs", error)) {
+    if (!fill(staging)) {
         fs::remove_all(staging, ec);
         return false;
     }
@@ -524,38 +556,86 @@ bool import_from_folder(const std::string& data_root, const fs::path& src, std::
         return set_err(error, "cannot install the mod: " + ec.message()), false;
     }
     if (out_id) *out_id = id;
-    log("mod_manager: imported folder as %s", id.c_str());
+    log("mod_manager: imported as %s", id.c_str());
     return true;
 }
 
+std::string read_file(const fs::path& p) {
+    std::ifstream f(p, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(f), {});
+}
+
+// A folder: its romfs/ (up to kMaxWrappers folders down); else its NookKit/ (taken as romfs/NookKit/); else the
+// NookKit patches (*.json) in it.
+bool import_from_folder(const std::string& data_root, const fs::path& src, std::string* out_id, bool* had_exefs,
+                        std::string* error) {
+    fs::path found, pack;
+    Found romfs = find_named_root(src, ieq_romfs, &found, &pack);
+    if (romfs == Found::Several) return set_err(error, "several romfs/ folders found; pick one mod folder"), false;
+    if (romfs == Found::One) {
+        if (had_exefs) *had_exefs = dir_has_exefs(pack) && !exefs_is_nookkit(files_under(pack));
+        std::string want = stem_of(pack);
+        // atmosphere/contents/<title id>/romfs: named after the folder picked, not the title id
+        bool title_id = want.size() == 16 && std::all_of(want.begin(), want.end(), [](char c) { return std::isxdigit(uint8_t(c)); });
+        if (ieq_romfs(want) || pack.empty() || title_id) want = stem_of(src);
+        return install_staged(data_root, want, out_id, error,
+                              [&](const fs::path& staging) { return copy_tree(found, staging / "romfs", error); });
+    }
+    Found nookkit = find_named_root(src, ieq_nookkit, &found, &pack);
+    if (nookkit == Found::Several) return set_err(error, "several NookKit/ folders found; pick one mod folder"), false;
+    if (nookkit == Found::One)
+        return install_staged(data_root, stem_of(pack.empty() ? src : pack), out_id, error, [&](const fs::path& staging) {
+            return copy_tree(found, staging / "romfs" / "NookKit", error);
+        });
+    std::vector<std::pair<std::string, std::string>> jsons;
+    std::error_code ec;
+    for (fs::directory_iterator it(src, ec), end; !ec && it != end; it.increment(ec))
+        if (it->is_regular_file(ec) && ends_with_json(path_utf8(it->path().filename())))
+            jsons.emplace_back(path_utf8(it->path().filename()), read_file(it->path()));
+    if (jsons.empty()) return set_err(error, "no romfs/ folder found"), false;
+    std::sort(jsons.begin(), jsons.end());
+    return install_staged(data_root, stem_of(src), out_id, error,
+                          [&](const fs::path& staging) { return write_loose_json(staging, jsons, error); });
+}
+
+// A zip: as a folder (romfs/, else NookKit/, else its *.json files).
 bool import_from_zip(const std::string& data_root, const fs::path& zip, std::string* out_id, bool* had_exefs,
                      std::string* error) {
     std::vector<ZipEntry> entries;
     if (!zip_list(zip, entries, error)) return false;
     std::string prefix;
-    bool exefs = false;
-    if (!zip_find_romfs_prefix(entries, &prefix, &exefs, error)) return false;
-    if (had_exefs) *had_exefs = exefs;
-
-    std::string id = unique_mod_id(data_root, stem_of(zip));
-    fs::path dst = mods_root(data_root) / u8_path(id);
-    fs::path staging = mods_root(data_root) / u8_path(id + ".new");
-    std::error_code ec;
-    fs::remove_all(staging, ec);
-    fs::create_directories(staging / "romfs", ec);
-    if (!zip_extract_prefix(zip, entries, prefix, staging / "romfs", error)) {
-        fs::remove_all(staging, ec);
-        return false;
+    Found romfs = zip_find_prefix(entries, ieq_romfs, &prefix);
+    if (romfs == Found::Several) return set_err(error, "several romfs/ folders in the zip; it must hold one mod"), false;
+    if (romfs == Found::One) {
+        if (had_exefs) {
+            std::vector<std::string> files = zip_pack_files(entries, prefix);
+            *had_exefs = std::any_of(files.begin(), files.end(), [](const std::string& f) {
+                std::string top = lower(f.substr(0, f.find('/')));
+                return f.find('/') != std::string::npos && (ieq_exefs(top) || top == "skyline" || top == "atmosphere");
+            }) && !exefs_is_nookkit(files);
+        }
+        return install_staged(data_root, stem_of(zip), out_id, error, [&](const fs::path& staging) {
+            return zip_extract_prefix(zip, entries, prefix, staging / "romfs", error);
+        });
     }
-    fs::remove_all(dst, ec);
-    fs::rename(staging, dst, ec);
-    if (ec) {
-        fs::remove_all(staging, ec);
-        return set_err(error, "cannot install the mod: " + ec.message()), false;
+    Found nookkit = zip_find_prefix(entries, ieq_nookkit, &prefix);
+    if (nookkit == Found::Several) return set_err(error, "several NookKit/ folders in the zip; it must hold one mod"), false;
+    if (nookkit == Found::One)
+        return install_staged(data_root, stem_of(zip), out_id, error, [&](const fs::path& staging) {
+            return zip_extract_prefix(zip, entries, prefix, staging / "romfs" / "NookKit", error);
+        });
+    std::ifstream f(zip, std::ios::binary);
+    uint64_t total = 0;
+    std::vector<std::pair<std::string, std::string>> jsons;
+    for (const ZipEntry& e : entries) {
+        if (!ends_with_json(e.name)) continue;
+        std::string plain;
+        if (!zip_read(f, e, total, plain, error)) return false;
+        jsons.emplace_back(e.name.substr(e.name.rfind('/') + 1), std::move(plain));
     }
-    if (out_id) *out_id = id;
-    log("mod_manager: imported zip as %s", id.c_str());
-    return true;
+    if (jsons.empty()) return set_err(error, "no romfs/ folder in the zip"), false;
+    return install_staged(data_root, stem_of(zip), out_id, error,
+                          [&](const fs::path& staging) { return write_loose_json(staging, jsons, error); });
 }
 
 }  // namespace
@@ -579,7 +659,19 @@ std::vector<ModInfo> list_mods(const std::string& data_root) {
         m.id = id;
         m.enabled = enabled_set.count(id) != 0;
         m.managed = is_managed(id);
-        m.has_exefs = dir_has_exefs(it->path());
+        // Bundled mods ship their ExeFS for the console; ACNHRecomp has it built in (speedfix60: the recompiled
+        // variant), so nothing of theirs is unsupported.
+        m.has_exefs = !m.managed && (dir_has_exefs(it->path()) || fs::exists(it->path() / kExefsMark, ec));
+        // What the RomFS holds: NookKit's patches, other files (Skyline's plugins are neither: never loaded).
+        for (fs::recursive_directory_iterator f(romfs, ec), fend; !ec && f != fend && !(m.has_romfs && m.has_nookkit);
+             f.increment(ec)) {
+            if (!f->is_regular_file(ec)) continue;
+            std::string top = lower(path_utf8(f->path().lexically_relative(romfs)));
+            std::replace(top.begin(), top.end(), '\\', '/');
+            if (top.rfind("nookkit/", 0) == 0) m.has_nookkit |= ends_with_json(top);
+            else if (top.rfind("skyline/", 0) != 0) m.has_romfs = true;
+        }
+        ec.clear();
         out.push_back(std::move(m));
     }
 
@@ -644,11 +736,19 @@ bool import_mod(const std::string& data_root, const std::string& source_path, st
     bool ok = false;
     if (fs::is_regular_file(src, ec) && ends_with_zip(source_path))
         ok = import_from_zip(data_root, src, &id, had_exefs, error);
+    else if (fs::is_regular_file(src, ec) && ends_with_json(source_path))  // one loose NookKit patch
+        ok = install_staged(data_root, stem_of(src), &id, error, [&](const fs::path& staging) {
+            return write_loose_json(staging, {{path_utf8(src.filename()), read_file(src)}}, error);
+        });
     else if (fs::is_directory(src, ec))
         ok = import_from_folder(data_root, src, &id, had_exefs, error);
     else
-        return set_err(error, "pick a mod folder or a .zip"), false;
+        return set_err(error, "pick a mod folder, a .zip or a NookKit .json"), false;
     if (!ok) return false;
+    if (had_exefs && *had_exefs)
+        std::ofstream(mods_root(data_root) / u8_path(id) / kExefsMark)
+            << "The pack this mod came from had ExeFS or Skyline code, which ACNHRecomp does not run: only its RomFS "
+               "was imported.\n";
     if (!set_enabled(data_root, id, true, error)) return false;
     if (out_id) *out_id = id;
     return true;
@@ -663,6 +763,45 @@ bool delete_mod(const std::string& data_root, const std::string& id, std::string
     fs::remove_all(dir, ec);
     if (ec) return set_err(error, "cannot delete mod: " + ec.message()), false;
     log("mod_manager: deleted %s", id.c_str());
+    return true;
+}
+
+bool rename_mod(const std::string& data_root, const std::string& id, const std::string& name, std::string* new_id,
+                std::string* error) {
+    if (!valid_id(id)) return set_err(error, "invalid mod id"), false;
+    if (is_managed(id)) return set_err(error, "bundled mods keep their name"), false;
+    std::string to = trim(name);
+    // Same rules as an imported mod's name (no path characters, no trailing dot or space); not ".new", the staging
+    // suffix, nor a bundled mod's name.
+    if (to.empty()) return set_err(error, "the name is empty"), false;
+    to = sanitize_id(to);
+    if (to.size() > 4 && lower(to.substr(to.size() - 4)) == ".new") to += "-mod";
+    if (is_managed(to)) return set_err(error, "that name belongs to a bundled mod"), false;
+    if (new_id) *new_id = to;
+    if (to == id) return true;
+    fs::path root = mods_root(data_root), from = root / u8_path(id), dst = root / u8_path(to);
+    std::error_code ec;
+    if (!fs::is_directory(from, ec)) return set_err(error, "mod folder not found"), false;
+    bool case_only = lower(to) == lower(id);  // the same folder on Windows and macOS: through a temporary name
+    if (!case_only && fs::exists(dst, ec)) return set_err(error, "another mod is already named " + to), false;
+    if (case_only) {
+        fs::path tmp = root / u8_path(id + ".rename");
+        fs::rename(from, tmp, ec);
+        if (!ec && (fs::rename(tmp, dst, ec), ec)) {
+            std::error_code back;
+            fs::rename(tmp, from, back);  // its old name again; ec keeps why
+        }
+    } else {
+        fs::rename(from, dst, ec);
+    }
+    if (ec) return set_err(error, "cannot rename the mod folder: " + ec.message()), false;
+    std::vector<std::string> enabled = read_enabled(data_root);
+    auto it = std::find(enabled.begin(), enabled.end(), id);
+    if (it != enabled.end()) {
+        *it = to;
+        if (!write_enabled(data_root, enabled, error)) return false;
+    }
+    log("mod_manager: renamed %s to %s", id.c_str(), to.c_str());
     return true;
 }
 
